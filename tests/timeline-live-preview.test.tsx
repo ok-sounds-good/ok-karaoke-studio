@@ -2,7 +2,7 @@
  * @vitest-environment happy-dom
  */
 
-import { act, useMemo, useState } from 'react'
+import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 
@@ -71,13 +71,15 @@ function initialProject() {
 
 function Harness() {
   const [project, setProject] = useState<KaraokeProject>(initialProject)
-  const [draft, setDraft] = useState<ProjectTimingDraft | null>(null)
-  const previewDraft = useMemo<ActiveTimingDraft | null>(
-    () => draft ? { revision: 0, timings: draft } : null,
-    [draft],
-  )
-  const previewProject = projectForTimingPreview(project, 0, previewDraft)
+  const [revision, setRevision] = useState(0)
+  const [draft, setDraft] = useState<ActiveTimingDraft | null>(null)
+  const previewProject = projectForTimingPreview(project, revision, draft)
   const heldWord = project.tracks[0].lines[0].words[0]
+
+  const replaceProject = (updater: (current: KaraokeProject) => KaraokeProject) => {
+    setProject(updater)
+    setRevision((current) => current + 1)
+  }
 
   return (
     <>
@@ -100,18 +102,31 @@ function Harness() {
         onSeek={() => undefined}
         onZoom={() => undefined}
         onSelectWord={() => undefined}
-        onShiftWords={(ids, deltaMs) => setProject((current) => shiftWords(current, ids, deltaMs))}
+        onShiftWords={(ids, deltaMs) => replaceProject((current) => shiftWords(current, ids, deltaMs))}
         onResizeWord={(wordId, startMs, endMs) => (
-          setProject((current) => patchWord(current, wordId, { startMs, endMs }))
+          replaceProject((current) => patchWord(current, wordId, { startMs, endMs }))
         )}
-        onTimingDraftChange={setDraft}
+        onTimingDraftChange={(timings: ProjectTimingDraft | null) => (
+          setDraft(timings ? { revision, timings } : null)
+        )}
       />
       <output data-testid="saved-timing">{`${heldWord.startMs}:${heldWord.endMs}`}</output>
       <output data-testid="draft-state">{draft ? 'draft' : 'committed'}</output>
       <button
         data-testid="untime-held-word"
-        onClick={() => setProject((current) => patchWord(current, 'hold', { startMs: null, endMs: null }))}
+        onClick={() => replaceProject((current) => patchWord(current, 'hold', { startMs: null, endMs: null }))}
       >Untime held word</button>
+      <button
+        data-testid="refresh-metadata"
+        onClick={() => replaceProject((current) => ({
+          ...current,
+          durationMs: (current.durationMs ?? 0) + 1,
+        }))}
+      >Refresh metadata</button>
+      <button
+        data-testid="change-held-timing"
+        onClick={() => replaceProject((current) => patchWord(current, 'hold', { startMs: 1_100 }))}
+      >Change held timing</button>
     </>
   )
 }
@@ -230,5 +245,42 @@ describe('mounted Timeline live-preview wiring', () => {
     dispatchPointer(next, 'pointerdown', 52, 100)
     dispatchPointer(next, 'pointermove', 52, 136)
     expect(scope.querySelector('[data-testid="draft-state"]')?.textContent).toBe('draft')
+  })
+
+  it('keeps a draft through metadata-only project replacement and commits on pointer-up', () => {
+    const scope = renderHarness()
+    const held = timelineWord(scope)
+
+    dispatchPointer(held, 'pointerdown', 61, 100)
+    dispatchPointer(held, 'pointermove', 61, 136)
+    expect(previewProgress(scope)).toBe('0%')
+    expect(scope.querySelector('[data-testid="saved-timing"]')?.textContent).toBe('1000:2000')
+
+    const refreshMetadata = scope.querySelector<HTMLButtonElement>('[data-testid="refresh-metadata"]')!
+    act(() => refreshMetadata.click())
+    expect(scope.querySelector('[data-testid="draft-state"]')?.textContent).toBe('draft')
+    expect(previewProgress(scope)).toBe('0%')
+    expect(scope.querySelector('[data-testid="saved-timing"]')?.textContent).toBe('1000:2000')
+
+    dispatchPointer(held, 'pointerup', 61, 136)
+    expect(scope.querySelector('[data-testid="draft-state"]')?.textContent).toBe('committed')
+    expect(scope.querySelector('[data-testid="saved-timing"]')?.textContent).toBe('1500:2500')
+  })
+
+  it('cancels when an affected timing changes during the gesture', () => {
+    const scope = renderHarness()
+    const held = timelineWord(scope)
+
+    dispatchPointer(held, 'pointerdown', 62, 100)
+    dispatchPointer(held, 'pointermove', 62, 136)
+    expect(previewProgress(scope)).toBe('0%')
+
+    const changeTiming = scope.querySelector<HTMLButtonElement>('[data-testid="change-held-timing"]')!
+    act(() => changeTiming.click())
+    expect(scope.querySelector('[data-testid="draft-state"]')?.textContent).toBe('committed')
+    expect(scope.querySelector('[data-testid="saved-timing"]')?.textContent).toBe('1100:2000')
+
+    dispatchPointer(held, 'pointerup', 62, 136)
+    expect(scope.querySelector('[data-testid="saved-timing"]')?.textContent).toBe('1100:2000')
   })
 })

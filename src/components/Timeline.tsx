@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import { AudioWaveform, ChevronLeft, ChevronRight, Focus, Minus, Plus, ZoomIn } from 'lucide-react'
 import type { KaraokeProject, LyricWord } from '../lib/model'
 import { formatTime } from '../lib/model'
@@ -90,20 +90,49 @@ export function createTimelineGestureSession(
 ) {
   let active: TimelinePointerGesture | null = null
   let activeProject: KaraokeProject | null = null
+  let affectedTimingSnapshot = new Map<string, { startMs: number; endMs: number | null }>()
+  let draftPublished = false
 
-  const activeWordStillExists = (project: KaraokeProject) => (
-    active !== null && project.tracks.some((track) =>
-      track.lines.some((line) =>
-        line.words.some((word) => word.id === active!.wordId && word.startMs !== null),
-      ),
-    )
-  )
+  const snapshotAffectedTimings = (project: KaraokeProject, gesture: TimelinePointerGesture) => {
+    const affectedIds = gesture.mode === 'move' ? gesture.ids : new Set([gesture.wordId])
+    const snapshot = new Map<string, { startMs: number; endMs: number | null }>()
+    project.tracks.forEach((track) => {
+      track.lines.forEach((line) => {
+        line.words.forEach((word) => {
+          if (affectedIds.has(word.id) && word.startMs !== null) {
+            snapshot.set(word.id, { startMs: word.startMs, endMs: word.endMs })
+          }
+        })
+      })
+    })
+    return snapshot
+  }
+
+  const affectedTimingsUnchanged = (project: KaraokeProject) => {
+    if (!activeProject || project.id !== activeProject.id || affectedTimingSnapshot.size === 0) return false
+    const remaining = new Map(affectedTimingSnapshot)
+    project.tracks.forEach((track) => {
+      track.lines.forEach((line) => {
+        line.words.forEach((word) => {
+          const timing = remaining.get(word.id)
+          if (
+            timing &&
+            word.startMs === timing.startMs &&
+            word.endMs === timing.endMs
+          ) remaining.delete(word.id)
+        })
+      })
+    })
+    return remaining.size === 0
+  }
 
   const clear = (pointerId: number, captureTarget: EventTarget) => {
     if (active?.pointerId !== pointerId || active.captureTarget !== captureTarget) return null
     const gesture = active
     active = null
     activeProject = null
+    affectedTimingSnapshot = new Map()
+    draftPublished = false
     getContext().onTimingDraftChange(null)
     return gesture
   }
@@ -113,18 +142,24 @@ export function createTimelineGestureSession(
       if (active) return false
       active = gesture
       activeProject = getContext().project
+      affectedTimingSnapshot = snapshotAffectedTimings(activeProject, gesture)
+      draftPublished = false
       return true
     },
     move(pointerId: number, captureTarget: EventTarget, clientX: number) {
       if (active?.pointerId !== pointerId || active.captureTarget !== captureTarget) return false
       const context = getContext()
-      if (context.project !== activeProject || !activeWordStillExists(context.project)) {
-        clear(pointerId, captureTarget)
-        return false
+      if (context.project !== activeProject) {
+        if (!affectedTimingsUnchanged(context.project)) {
+          clear(pointerId, captureTarget)
+          return false
+        }
+        activeProject = context.project
       }
       const deltaMs = Math.round(((clientX - active.clientX) / context.pixelsPerSecond) * 1000)
       active = { ...active, deltaMs }
       context.onTimingDraftChange(timingDraftForGesture(context.project, active))
+      draftPublished = true
       return true
     },
     finish(pointerId: number, captureTarget: EventTarget) {
@@ -132,10 +167,13 @@ export function createTimelineGestureSession(
       if (
         active?.pointerId === pointerId &&
         active.captureTarget === captureTarget &&
-        (currentProject !== activeProject || !activeWordStillExists(currentProject))
+        currentProject !== activeProject
       ) {
-        clear(pointerId, captureTarget)
-        return false
+        if (!affectedTimingsUnchanged(currentProject)) {
+          clear(pointerId, captureTarget)
+          return false
+        }
+        activeProject = currentProject
       }
       const gesture = clear(pointerId, captureTarget)
       if (!gesture) return false
@@ -174,13 +212,22 @@ export function createTimelineGestureSession(
     },
     invalidateProject(project: KaraokeProject) {
       if (!active) return false
-      if (project === activeProject && activeWordStillExists(project)) return false
-      return clear(active.pointerId, active.captureTarget) !== null
+      if (project === activeProject) return false
+      if (!affectedTimingsUnchanged(project)) {
+        return clear(active.pointerId, active.captureTarget) !== null
+      }
+      activeProject = project
+      if (draftPublished) {
+        getContext().onTimingDraftChange(timingDraftForGesture(project, active))
+      }
+      return false
     },
     abandon() {
       const hadActiveGesture = active !== null
       active = null
       activeProject = null
+      affectedTimingSnapshot = new Map()
+      draftPublished = false
       return hadActiveGesture
     },
   }
@@ -268,7 +315,7 @@ export function Timeline({
     if (gestureSessionRef.current?.abandon()) parentDraftCallbackRef.current(null)
   }, [])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     gestureSessionRef.current!.invalidateProject(project)
   }, [project])
 
