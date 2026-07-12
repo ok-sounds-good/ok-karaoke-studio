@@ -120,6 +120,56 @@ interface ToastState {
   tone: 'success' | 'warning' | 'neutral'
 }
 
+interface WorkflowGuideActionDependencies {
+  canStartSync: boolean
+  close: () => void
+  startNew: () => void
+  open: () => void
+  attachAudio: () => void
+  editLyrics: () => void
+  importLrc: () => void
+  startSync: () => void
+  save: () => void
+  exportProject: () => void
+}
+
+export const EDITABLE_PROJECT_EXPORT_FORMAT: StudioExportFormat = 'oks'
+
+export function createWorkflowGuideActions({
+  canStartSync,
+  close,
+  startNew,
+  open,
+  attachAudio,
+  editLyrics,
+  importLrc,
+  startSync,
+  save,
+  exportProject,
+}: WorkflowGuideActionDependencies) {
+  const closeThen = (action: () => void) => () => {
+    close()
+    action()
+  }
+
+  return {
+    canStartSync,
+    onClose: close,
+    onNew: closeThen(startNew),
+    onOpen: closeThen(open),
+    onAttachAudio: closeThen(attachAudio),
+    onEditLyrics: closeThen(editLyrics),
+    onImportLrc: closeThen(importLrc),
+    onStartSync: () => {
+      if (!canStartSync) return
+      close()
+      startSync()
+    },
+    onSave: closeThen(save),
+    onExport: closeThen(exportProject),
+  }
+}
+
 function inputHasTypingFocus() {
   const element = document.activeElement
   return element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement || (element instanceof HTMLElement && element.isContentEditable)
@@ -398,12 +448,12 @@ export default function App() {
         : format === 'ass'
           ? exportAss(project)
           : serializeProject(project)
-      const suggestedName = `${base}.${format === 'json' ? 'oks' : format}`
+      const suggestedName = `${base}.${format}`
       if (window.studio) {
         const result = await window.studio.exportText({ suggestedName, contents, format })
         if (!result) return
       } else {
-        downloadText(suggestedName, contents, format === 'json' ? 'application/json' : 'text/plain')
+        downloadText(suggestedName, contents, format === 'oks' ? 'application/json' : 'text/plain')
       }
       setExportDialogOpen(false)
       showToast(`${format.toUpperCase()} export created`, 'success')
@@ -600,6 +650,19 @@ export default function App() {
     })
   }, [handleImportAudio, handleImportLrc, handleNew, handleOpen, handleSave, history.redo, history.undo, playback.toggle, showToast])
 
+  const workflowGuideActions = createWorkflowGuideActions({
+    canStartSync: syncWords.length > 0,
+    close: () => setWorkflowGuideOpen(false),
+    startNew: handleNew,
+    open: () => void handleOpen(),
+    attachAudio: () => void handleImportAudio(),
+    editLyrics: () => setLyricsDialogOpen(true),
+    importLrc: () => void handleImportLrc(),
+    startSync: toggleSyncMode,
+    save: () => void handleSave(false),
+    exportProject: () => setExportDialogOpen(true),
+  })
+
   const syncWordId = heldWordId ?? (syncMode ? syncWords[syncCursor]?.id ?? null : null)
 
   return (
@@ -750,18 +813,7 @@ export default function App() {
         />
       )}
       {workflowGuideOpen && activeTrack && (
-        <WorkflowGuideDialog
-          canStartSync={syncWords.length > 0}
-          onClose={() => setWorkflowGuideOpen(false)}
-          onNew={() => { setWorkflowGuideOpen(false); handleNew() }}
-          onOpen={() => { setWorkflowGuideOpen(false); void handleOpen() }}
-          onAttachAudio={() => { setWorkflowGuideOpen(false); void handleImportAudio() }}
-          onEditLyrics={() => { setWorkflowGuideOpen(false); setLyricsDialogOpen(true) }}
-          onImportLrc={() => { setWorkflowGuideOpen(false); void handleImportLrc() }}
-          onStartSync={() => { setWorkflowGuideOpen(false); toggleSyncMode() }}
-          onSave={() => { setWorkflowGuideOpen(false); void handleSave(false) }}
-          onExport={() => { setWorkflowGuideOpen(false); setExportDialogOpen(true) }}
-        />
+        <WorkflowGuideDialog {...workflowGuideActions} />
       )}
       {exportDialogOpen && activeTrack && (
         <ExportDialog
@@ -773,7 +825,7 @@ export default function App() {
           onExportAss={() => void exportText('ass')}
           onExportVideo={() => void exportVideo()}
           onCancelVideo={cancelVideoExport}
-          onExportProject={() => void exportText('json')}
+          onExportProject={() => void exportText(EDITABLE_PROJECT_EXPORT_FORMAT)}
           videoAvailable={Boolean(window.studio?.exportVideo && project.audioPath && playback.hasAudio)}
           videoProgress={videoExportProgress}
         />

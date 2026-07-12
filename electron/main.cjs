@@ -12,6 +12,11 @@ const {
   writeUtf8FileAtomically,
 } = require('./project-files.cjs')
 const { exportKaraokeVideo, MAX_VIDEO_DURATION_MS } = require('./video-export.cjs')
+const {
+  EXPORT_FILTERS,
+  ensureExportExtension,
+  normalizeExportFormat,
+} = require('./text-export.cjs')
 
 const APP_NAME = 'Okay Karaoke Studio'
 const APP_SCHEME = 'studio-app'
@@ -112,11 +117,6 @@ const LRC_FILTERS = [
   { name: 'All Files', extensions: ['*'] },
 ]
 
-const EXPORT_FILTERS = Object.freeze({
-  lrc: [{ name: 'LRC Lyrics', extensions: ['lrc'] }],
-  ass: [{ name: 'Advanced SubStation Alpha', extensions: ['ass'] }],
-  json: [{ name: 'JSON', extensions: ['json'] }],
-})
 const VIDEO_FILTERS = [{ name: 'MPEG-4 Karaoke Video', extensions: ['mp4'] }]
 
 const mediaFiles = new Map()
@@ -399,17 +399,6 @@ function ensureProjectExtension(fileName) {
   return ['.oks', '.okstudio', '.json'].includes(extension) ? fileName : `${fileName}.oks`
 }
 
-function ensureExportExtension(fileName, format) {
-  const currentExtension = path.extname(fileName).toLowerCase()
-  if (currentExtension === `.${format}`) return fileName
-
-  const knownExtensions = new Set(['.lrc', '.ass', '.json', '.mp4', '.txt'])
-  if (!knownExtensions.has(currentExtension)) return `${fileName}.${format}`
-
-  const stem = path.basename(fileName, currentExtension)
-  return `${stem || 'lyrics'}.${format}`
-}
-
 function documentsPath(fileName) {
   return path.join(app.getPath('documents'), fileName)
 }
@@ -497,10 +486,7 @@ function normalizeProjectRequest(value) {
 function normalizeExportRequest(value) {
   if (!isRecord(value)) throw new TypeError('exportText requires an options object')
 
-  const format = requireString(value.format, 'format').toLowerCase()
-  if (!Object.hasOwn(EXPORT_FILTERS, format)) {
-    throw new TypeError('format must be lrc, ass, or json')
-  }
+  const format = normalizeExportFormat(value.format)
 
   return {
     format,

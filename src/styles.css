@@ -2026,6 +2026,17 @@ button:disabled {
   gap: 3px;
 }
 
+@media (max-height: 720px) {
+  .workflow-guide {
+    gap: 4px;
+  }
+
+  .workflow-guide > li {
+    min-height: 52px;
+    padding: 6px 8px;
+  }
+}
+
 @media (max-width: 760px) {
   .workflow-guide > li {
     grid-template-columns: 38px minmax(0, 1fr);
