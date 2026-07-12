@@ -26,10 +26,12 @@ import {
   effectiveDuration,
   flattenProject,
   flattenTrack,
+  applyTimingDraft,
   patchWord,
   recalculateLine,
   shiftWords,
   slugify,
+  type ProjectTimingDraft,
 } from './utils'
 
 interface HistoryEntry {
@@ -170,6 +172,11 @@ export function createWorkflowGuideActions({
   }
 }
 
+interface ActiveTimingDraft {
+  revision: number
+  timings: ProjectTimingDraft
+}
+
 function inputHasTypingFocus() {
   const element = document.activeElement
   return element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement || (element instanceof HTMLElement && element.isContentEditable)
@@ -196,6 +203,7 @@ export default function App() {
   const [validationDialogOpen, setValidationDialogOpen] = useState(false)
   const [workflowGuideOpen, setWorkflowGuideOpen] = useState(false)
   const [toast, setToast] = useState<ToastState | null>(null)
+  const [timingDraft, setTimingDraft] = useState<ActiveTimingDraft | null>(null)
   const projectInputRef = useRef<HTMLInputElement>(null)
   const audioInputRef = useRef<HTMLInputElement>(null)
   const lrcInputRef = useRef<HTMLInputElement>(null)
@@ -216,6 +224,16 @@ export default function App() {
   const playback = usePlayback({ durationMs, audioUrl, onDuration: persistAudioDuration })
   const waveform = useWaveform(audioUrl)
   const lyricTimeMs = lyricTimeAtPlayback(playback.currentMs, project.offsetMs)
+  const previewProject = useMemo(
+    () => timingDraft?.revision === history.revision
+      ? applyTimingDraft(project, timingDraft.timings)
+      : project,
+    [history.revision, project, timingDraft],
+  )
+
+  const updateTimingDraft = useCallback((timings: ProjectTimingDraft | null) => {
+    setTimingDraft(timings ? { revision: history.revision, timings } : null)
+  }, [history.revision])
 
   useEffect(() => {
     currentTimeRef.current = playback.currentMs
@@ -714,7 +732,7 @@ export default function App() {
         <div className="unified-workspace">
           <div className="workspace-top">
             <KaraokePreview
-              project={project}
+              project={previewProject}
               playbackMs={playback.currentMs}
               lyricMs={lyricTimeMs}
               selectedWordIds={selectedWordIds}
@@ -746,6 +764,7 @@ export default function App() {
             onSelectWord={handleSelectWordId}
             onShiftWords={(ids, deltaMs) => commit((current) => shiftWords(current, ids, deltaMs))}
             onResizeWord={(wordId, startMs, endMs) => commit((current) => patchWord(current, wordId, { startMs, endMs }))}
+            onTimingDraftChange={updateTimingDraft}
           />
         </div>
       </main>

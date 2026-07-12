@@ -14,6 +14,13 @@ export interface WordRef {
   lineIndex: number
 }
 
+export interface WordTimingDraft {
+  startMs: number
+  endMs: number
+}
+
+export type ProjectTimingDraft = ReadonlyMap<string, WordTimingDraft>
+
 export function flattenTrack(track: VocalTrack): WordRef[] {
   return track.lines.flatMap((line, lineIndex) =>
     line.words.map((word, wordIndex) => ({ word, line, track, wordIndex, lineIndex })),
@@ -99,6 +106,46 @@ export function patchWord(
       }),
     })),
   }
+}
+
+/**
+ * Produces a render-only view of a project with draft word timings applied.
+ * The project's persisted metadata and the source object are intentionally left
+ * untouched so an in-progress pointer gesture cannot enter history or a save.
+ */
+export function applyTimingDraft(
+  project: KaraokeProject,
+  draft: ProjectTimingDraft | null,
+): KaraokeProject {
+  if (!draft?.size) return project
+
+  let projectChanged = false
+  const tracks = project.tracks.map((track) => {
+    let trackChanged = false
+    const lines = track.lines.map((line) => {
+      let lineChanged = false
+      const words = line.words.map((word) => {
+        const timing = draft.get(word.id)
+        if (
+          !timing ||
+          (word.startMs === timing.startMs && word.endMs === timing.endMs)
+        ) return word
+
+        lineChanged = true
+        return { ...word, startMs: timing.startMs, endMs: timing.endMs }
+      })
+
+      if (!lineChanged) return line
+      trackChanged = true
+      return recalculateLine({ ...line, words })
+    })
+
+    if (!trackChanged) return track
+    projectChanged = true
+    return { ...track, lines }
+  })
+
+  return projectChanged ? { ...project, tracks } : project
 }
 
 export function shiftWords(project: KaraokeProject, wordIds: Set<string>, deltaMs: number): KaraokeProject {

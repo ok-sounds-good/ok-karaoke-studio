@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerE
 import { AudioWaveform, ChevronLeft, ChevronRight, Focus, Minus, Plus, ZoomIn } from 'lucide-react'
 import type { KaraokeProject, LyricWord } from '../lib/model'
 import { formatTime } from '../lib/model'
-import { flattenTrack } from '../utils'
+import { flattenTrack, type ProjectTimingDraft } from '../utils'
 import { IconButton } from './ui'
 
 interface TimelineProps {
@@ -20,20 +20,59 @@ interface TimelineProps {
   onSelectWord: (wordId: string, add: boolean) => void
   onShiftWords: (wordIds: Set<string>, deltaMs: number) => void
   onResizeWord: (wordId: string, startMs: number, endMs: number) => void
+  onTimingDraftChange: (draft: ProjectTimingDraft | null) => void
 }
 
-interface DragState {
+export interface TimelineTimingGesture {
   wordId: string
   mode: 'move' | 'start' | 'end'
-  clientX: number
   originalStart: number
   originalEnd: number
   ids: Set<string>
   deltaMs: number
 }
 
+interface DragState extends TimelineTimingGesture {
+  clientX: number
+}
+
 export function timelineTime(rawTimingMs: number, offsetMs: number) {
   return rawTimingMs + offsetMs
+}
+
+export function timingDraftForGesture(
+  project: KaraokeProject,
+  gesture: TimelineTimingGesture,
+): ProjectTimingDraft {
+  const timingDraft = new Map<string, { startMs: number; endMs: number }>()
+
+  if (gesture.mode === 'move') {
+    project.tracks.forEach((track) => {
+      track.lines.forEach((line) => {
+        line.words.forEach((word) => {
+          if (!gesture.ids.has(word.id) || word.startMs === null) return
+          const duration = Math.max(80, (word.endMs ?? word.startMs + 300) - word.startMs)
+          const startMs = Math.max(0, Math.round(word.startMs + gesture.deltaMs))
+          timingDraft.set(word.id, { startMs, endMs: startMs + duration })
+        })
+      })
+    })
+    return timingDraft
+  }
+
+  const minDuration = 80
+  if (gesture.mode === 'start') {
+    timingDraft.set(gesture.wordId, {
+      startMs: Math.max(0, Math.min(gesture.originalEnd - minDuration, gesture.originalStart + gesture.deltaMs)),
+      endMs: gesture.originalEnd,
+    })
+  } else {
+    timingDraft.set(gesture.wordId, {
+      startMs: gesture.originalStart,
+      endMs: Math.max(gesture.originalStart + minDuration, gesture.originalEnd + gesture.deltaMs),
+    })
+  }
+  return timingDraft
 }
 
 export function Timeline({
@@ -51,10 +90,11 @@ export function Timeline({
   onSelectWord,
   onShiftWords,
   onResizeWord,
+  onTimingDraftChange,
 }: TimelineProps) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<DragState | null>(null)
-  const [draft, setDraft] = useState<DragState | null>(null)
+  const [timingDraft, setTimingDraft] = useState<ProjectTimingDraft | null>(null)
   const pixelsPerSecond = 72 * zoom
   const width = Math.max(1040, (durationMs / 1000) * pixelsPerSecond)
   const playheadLeft = (currentMs / 1000) * pixelsPerSecond
@@ -103,7 +143,7 @@ export function Timeline({
       deltaMs: 0,
     }
     dragRef.current = drag
-    setDraft(drag)
+    setTimingDraft(null)
     event.currentTarget.setPointerCapture(event.pointerId)
   }
 
@@ -112,8 +152,10 @@ export function Timeline({
     if (!drag) return
     const deltaMs = Math.round(((event.clientX - drag.clientX) / pixelsPerSecond) * 1000)
     const next = { ...drag, deltaMs }
+    const nextTimingDraft = timingDraftForGesture(project, next)
     dragRef.current = next
-    setDraft(next)
+    setTimingDraft(nextTimingDraft)
+    onTimingDraftChange(nextTimingDraft)
   }
 
   const pointerUp = (event: ReactPointerEvent<HTMLButtonElement>) => {
@@ -129,7 +171,15 @@ export function Timeline({
       onResizeWord(drag.wordId, drag.originalStart, Math.max(drag.originalStart + minDuration, drag.originalEnd + drag.deltaMs))
     }
     dragRef.current = null
-    setDraft(null)
+    setTimingDraft(null)
+    onTimingDraftChange(null)
+  }
+
+  const pointerCancel = () => {
+    if (!dragRef.current) return
+    dragRef.current = null
+    setTimingDraft(null)
+    onTimingDraftChange(null)
   }
 
   const untimedWords = project.tracks.flatMap((track) =>
@@ -235,19 +285,9 @@ export function Timeline({
                   {flattenTrack(track).map(({ word }) => {
                     if (word.startMs === null) return null
                     const endMs = word.endMs ?? word.startMs + 360
-                    const isDraftWord = draft?.mode === 'move' ? draft.ids.has(word.id) : draft?.wordId === word.id
-                    let draftStart = word.startMs
-                    let draftEnd = endMs
-                    if (isDraftWord && draft) {
-                      if (draft.mode === 'move') {
-                        draftStart = Math.max(0, word.startMs + draft.deltaMs)
-                        draftEnd = draftStart + (endMs - word.startMs)
-                      } else if (draft.mode === 'start') {
-                        draftStart = Math.max(0, Math.min(draft.originalEnd - 80, draft.originalStart + draft.deltaMs))
-                      } else {
-                        draftEnd = Math.max(draft.originalStart + 80, draft.originalEnd + draft.deltaMs)
-                      }
-                    }
+                    const draftTiming = timingDraft?.get(word.id)
+                    const draftStart = draftTiming?.startMs ?? word.startMs
+                    const draftEnd = draftTiming?.endMs ?? endMs
                     const adjustedStart = timelineTime(draftStart, project.offsetMs)
                     const adjustedEnd = timelineTime(draftEnd, project.offsetMs)
                     if (adjustedEnd <= 0) return null
@@ -264,6 +304,7 @@ export function Timeline({
                         onPointerDown={(event) => pointerDown(event, word)}
                         onPointerMove={pointerMove}
                         onPointerUp={pointerUp}
+                        onPointerCancel={pointerCancel}
                         onDoubleClick={() => onSeek(Math.max(0, timelineTime(word.startMs ?? 0, project.offsetMs)))}
                       >
                         <i data-resize="start" className="timeline-word__handle timeline-word__handle--start" />

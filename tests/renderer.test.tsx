@@ -10,15 +10,17 @@ import {
 } from '../src/App'
 import { KaraokePreview } from '../src/components/KaraokePreview'
 import { LyricsPanel } from '../src/components/LyricsPanel'
-import { timelineTime } from '../src/components/Timeline'
+import { timelineTime, timingDraftForGesture } from '../src/components/Timeline'
 import { WorkflowGuideDialog } from '../src/components/Dialogs'
 import { TopBar } from '../src/components/TopBar'
 import {
   createLyricLine,
+  createLyricWord,
   createProject,
   createVocalTrack,
   retimeLine,
 } from '../src/lib/karaoke'
+import { applyTimingDraft } from '../src/utils'
 
 function offsetProject() {
   const line = retimeLine(createLyricLine('Hold'), 1_000, 2_000)
@@ -284,5 +286,86 @@ describe('first-time workflow', () => {
     expect(styles).toMatch(
       /@media \(max-height: 720px\)\s*\{[\s\S]*?\.workflow-guide > li\s*\{[\s\S]*?min-height:\s*52px;/,
     )
+  })
+})
+
+describe('live timeline timing drafts', () => {
+  function timedProject() {
+    const line = createLyricLine('Move resize', {
+      id: 'line',
+      words: [
+        createLyricWord('Move', { id: 'move', startMs: 1_000, endMs: 2_000 }),
+        createLyricWord('resize', { id: 'resize', startMs: 2_100, endMs: 3_000 }),
+      ],
+      startMs: 1_000,
+      endMs: 3_000,
+    })
+    return createProject({
+      updatedAt: '2026-01-02T03:04:05.000Z',
+      tracks: [createVocalTrack({ id: 'lead', lines: [line] })],
+    })
+  }
+
+  it('renders move drafts immediately without changing saved project state', () => {
+    const project = timedProject()
+    const draft = timingDraftForGesture(project, {
+      wordId: 'move',
+      mode: 'move',
+      originalStart: 1_000,
+      originalEnd: 2_000,
+      ids: new Set(['move', 'resize']),
+      deltaMs: 500,
+    })
+    const previewProject = applyTimingDraft(project, draft)
+    const committedMarkup = renderToStaticMarkup(
+      <KaraokePreview
+        project={project}
+        playbackMs={1_500}
+        lyricMs={1_500}
+        selectedWordIds={new Set(['move'])}
+      />,
+    )
+    const previewMarkup = renderToStaticMarkup(
+      <KaraokePreview
+        project={previewProject}
+        playbackMs={1_500}
+        lyricMs={1_500}
+        selectedWordIds={new Set(['move'])}
+      />,
+    )
+
+    expect(draft.get('move')).toEqual({ startMs: 1_500, endMs: 2_500 })
+    expect(draft.get('resize')).toEqual({ startMs: 2_600, endMs: 3_500 })
+    expect(previewProject.tracks[0].lines[0]).toMatchObject({ startMs: 1_500, endMs: 3_500 })
+    expect(committedMarkup).toContain('--word-progress:50%')
+    expect(previewMarkup).toContain('--word-progress:0%')
+    expect(previewMarkup).not.toContain('--word-progress:50%')
+    expect(project.tracks[0].lines[0].words[0]).toMatchObject({ startMs: 1_000, endMs: 2_000 })
+    expect(previewProject.updatedAt).toBe(project.updatedAt)
+  })
+
+  it('renders edge-resize drafts with the same minimum-duration bounds as commit', () => {
+    const project = timedProject()
+    const startDraft = timingDraftForGesture(project, {
+      wordId: 'move',
+      mode: 'start',
+      originalStart: 1_000,
+      originalEnd: 2_000,
+      ids: new Set(['move']),
+      deltaMs: 2_000,
+    })
+    const endDraft = timingDraftForGesture(project, {
+      wordId: 'move',
+      mode: 'end',
+      originalStart: 1_000,
+      originalEnd: 2_000,
+      ids: new Set(['move']),
+      deltaMs: -2_000,
+    })
+
+    expect(startDraft.get('move')).toEqual({ startMs: 1_920, endMs: 2_000 })
+    expect(endDraft.get('move')).toEqual({ startMs: 1_000, endMs: 1_080 })
+    expect(applyTimingDraft(project, startDraft).tracks[0].lines[0].startMs).toBe(1_920)
+    expect(project.tracks[0].lines[0].startMs).toBe(1_000)
   })
 })
