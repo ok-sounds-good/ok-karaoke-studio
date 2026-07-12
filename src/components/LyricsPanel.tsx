@@ -8,7 +8,7 @@ import { Button } from './ui'
 interface LyricsPanelProps {
   tracks: VocalTrack[]
   activeTrackId: string
-  currentMs: number
+  lyricMs: number
   selectedWordIds: Set<string>
   syncWordId: string | null
   onSelectTrack: (trackId: string) => void
@@ -19,7 +19,7 @@ interface LyricsPanelProps {
 export function LyricsPanel({
   tracks,
   activeTrackId,
-  currentMs,
+  lyricMs,
   selectedWordIds,
   syncWordId,
   onSelectTrack,
@@ -28,7 +28,7 @@ export function LyricsPanel({
 }: LyricsPanelProps) {
   const listRef = useRef<HTMLDivElement>(null)
   const activeTrack = tracks.find((track) => track.id === activeTrackId) ?? tracks[0]
-  const activeLine = activeTrack ? getActiveLine(activeTrack, currentMs) : null
+  const activeLine = activeTrack ? getActiveLine(activeTrack, lyricMs) : null
   const words = useMemo(() => (activeTrack ? flattenTrack(activeTrack) : []), [activeTrack])
   const timedCount = words.filter(({ word }) => word.startMs !== null).length
 
@@ -106,8 +106,8 @@ export function LyricsPanel({
                 {line.words.map((word) => {
                   const selected = selectedWordIds.has(word.id)
                   const isSyncWord = syncWordId === word.id
-                  const isPast = word.endMs !== null && currentMs >= word.endMs
-                  const isCurrent = word.startMs !== null && currentMs >= word.startMs && currentMs <= (word.endMs ?? word.startMs + 350)
+                  const isPast = word.endMs !== null && lyricMs >= word.endMs
+                  const isCurrent = word.startMs !== null && lyricMs >= word.startMs && lyricMs <= (word.endMs ?? word.startMs + 350)
                   return (
                     <button
                       key={word.id}

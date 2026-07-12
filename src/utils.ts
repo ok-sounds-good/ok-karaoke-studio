@@ -25,11 +25,16 @@ export function timedWords(track: VocalTrack): WordRef[] {
 }
 
 export function effectiveDuration(project: KaraokeProject): number {
-  const latestWord = Math.max(
-    0,
-    ...flattenProject(project).map(({ word }) => word.endMs ?? word.startMs ?? 0),
-  )
-  return Math.max(project.durationMs ?? 0, latestWord + 4000, 30_000)
+  let latestTiming = 0
+  project.tracks.forEach((track) => {
+    track.lines.forEach((line) => {
+      latestTiming = Math.max(latestTiming, line.endMs ?? line.startMs ?? 0)
+      line.words.forEach((word) => {
+        latestTiming = Math.max(latestTiming, word.endMs ?? word.startMs ?? 0)
+      })
+    })
+  })
+  return Math.max(project.durationMs ?? 0, latestTiming + 4000, 30_000)
 }
 
 export function getActiveLine(track: VocalTrack, timeMs: number): LyricLine | null {

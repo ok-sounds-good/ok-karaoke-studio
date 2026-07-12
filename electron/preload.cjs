@@ -7,6 +7,7 @@ const CHANNELS = Object.freeze({
   saveProject: 'studio:save-project',
   importAudio: 'studio:import-audio',
   resolveAudio: 'studio:resolve-audio',
+  releaseAudio: 'studio:release-audio',
   importLrc: 'studio:import-lrc',
   exportText: 'studio:export-text',
   menuAction: 'studio:menu-action',
@@ -30,6 +31,7 @@ const studio = Object.freeze({
   saveProject: (options) => ipcRenderer.invoke(CHANNELS.saveProject, options),
   importAudio: () => ipcRenderer.invoke(CHANNELS.importAudio),
   resolveAudio: (filePath) => ipcRenderer.invoke(CHANNELS.resolveAudio, filePath),
+  releaseAudio: () => ipcRenderer.invoke(CHANNELS.releaseAudio),
   importLrc: () => ipcRenderer.invoke(CHANNELS.importLrc),
   exportText: (options) => ipcRenderer.invoke(CHANNELS.exportText, options),
   onMenuAction: (callback) => {

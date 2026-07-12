@@ -53,6 +53,7 @@ declare global {
     saveProject(options: StudioSaveProjectOptions): Promise<StudioPathResult | null>
     importAudio(): Promise<StudioAudioImportResult | null>
     resolveAudio(path: string): Promise<StudioAudioImportResult | null>
+    releaseAudio(): Promise<void>
     importLrc(): Promise<StudioLrcImportResult | null>
     exportText(options: StudioExportTextOptions): Promise<StudioPathResult | null>
     onMenuAction(callback: (action: StudioMenuAction) => void): () => void

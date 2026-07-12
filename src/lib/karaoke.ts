@@ -339,11 +339,87 @@ function lineSimilarity(left: string, right: string): number {
   return intersection / Math.max(leftTokens.size, rightTokens.size)
 }
 
+function alignEditedLineSpan(
+  lineTexts: string[],
+  existingLines: LyricLine[],
+  newStart: number,
+  newEnd: number,
+  oldStart: number,
+  oldEnd: number,
+  matches: Map<number, LyricLine>,
+): void {
+  const newCount = newEnd - newStart
+  const oldCount = oldEnd - oldStart
+  if (newCount <= 0 || oldCount <= 0) return
+
+  // With no insertion/deletion inside the span, positional matching preserves
+  // timing even when a line was completely rewritten.
+  if (newCount === oldCount) {
+    for (let index = 0; index < newCount; index += 1) {
+      matches.set(newStart + index, existingLines[oldStart + index])
+    }
+    return
+  }
+
+  // Find the highest-similarity ordered matching for edited lines between the
+  // exact LCS anchors. Backtracking from the right edge deliberately keeps an
+  // edited line adjacent to the following anchor when an earlier line was
+  // deleted.
+  const scores = Array.from({ length: newCount + 1 }, () =>
+    Array<number>(oldCount + 1).fill(0),
+  )
+  for (let newOffset = 1; newOffset <= newCount; newOffset += 1) {
+    for (let oldOffset = 1; oldOffset <= oldCount; oldOffset += 1) {
+      const similarity = lineSimilarity(
+        lineTexts[newStart + newOffset - 1],
+        existingLines[oldStart + oldOffset - 1].text,
+      )
+      const diagonal = similarity >= 0.4
+        ? scores[newOffset - 1][oldOffset - 1] + similarity
+        : Number.NEGATIVE_INFINITY
+      scores[newOffset][oldOffset] = Math.max(
+        diagonal,
+        scores[newOffset - 1][oldOffset],
+        scores[newOffset][oldOffset - 1],
+      )
+    }
+  }
+
+  let newOffset = newCount
+  let oldOffset = oldCount
+  while (newOffset > 0 && oldOffset > 0) {
+    const similarity = lineSimilarity(
+      lineTexts[newStart + newOffset - 1],
+      existingLines[oldStart + oldOffset - 1].text,
+    )
+    const diagonal = scores[newOffset - 1][oldOffset - 1] + similarity
+    if (similarity >= 0.4 && Math.abs(scores[newOffset][oldOffset] - diagonal) < 1e-9) {
+      matches.set(
+        newStart + newOffset - 1,
+        existingLines[oldStart + oldOffset - 1],
+      )
+      newOffset -= 1
+      oldOffset -= 1
+    } else if (scores[newOffset][oldOffset - 1] >= scores[newOffset - 1][oldOffset]) {
+      oldOffset -= 1
+    } else {
+      newOffset -= 1
+    }
+  }
+}
+
 /** Align unchanged lines across insertions/deletions before matching edited lines. */
 function alignExistingLines(
   lineTexts: string[],
   existingLines: LyricLine[],
 ): Map<number, LyricLine> {
+  if (
+    lineTexts.length === existingLines.length &&
+    lineTexts.every((lineText, index) => lineText === existingLines[index].text)
+  ) {
+    return new Map(lineTexts.map((_, index) => [index, existingLines[index]]))
+  }
+
   const rows = lineTexts.length + 1
   const columns = existingLines.length + 1
   const lengths = Array.from({ length: rows }, () => Array<number>(columns).fill(0))
@@ -358,13 +434,13 @@ function alignExistingLines(
   }
 
   const matches = new Map<number, LyricLine>()
-  const usedOldIndexes = new Set<number>()
+  const anchors: Array<{ newIndex: number; oldIndex: number }> = []
   let newIndex = 0
   let oldIndex = 0
   while (newIndex < lineTexts.length && oldIndex < existingLines.length) {
     if (lineTexts[newIndex] === existingLines[oldIndex].text) {
       matches.set(newIndex, existingLines[oldIndex])
-      usedOldIndexes.add(oldIndex)
+      anchors.push({ newIndex, oldIndex })
       newIndex += 1
       oldIndex += 1
     } else if (lengths[newIndex + 1][oldIndex] >= lengths[newIndex][oldIndex + 1]) {
@@ -374,16 +450,24 @@ function alignExistingLines(
     }
   }
 
-  lineTexts.forEach((lineText, index) => {
-    if (matches.has(index) || usedOldIndexes.has(index)) return
-    const candidate = existingLines[index]
-    if (!candidate) return
-    const sameLineCount = lineTexts.length === existingLines.length
-    if (sameLineCount || lineSimilarity(lineText, candidate.text) >= 0.4) {
-      matches.set(index, candidate)
-      usedOldIndexes.add(index)
-    }
-  })
+  const boundaries = [
+    { newIndex: -1, oldIndex: -1 },
+    ...anchors,
+    { newIndex: lineTexts.length, oldIndex: existingLines.length },
+  ]
+  for (let index = 0; index < boundaries.length - 1; index += 1) {
+    const left = boundaries[index]
+    const right = boundaries[index + 1]
+    alignEditedLineSpan(
+      lineTexts,
+      existingLines,
+      left.newIndex + 1,
+      right.newIndex,
+      left.oldIndex + 1,
+      right.oldIndex,
+      matches,
+    )
+  }
 
   return matches
 }
@@ -736,8 +820,10 @@ function parseTimestamp(minutes: string, seconds: string, fraction = ''): number
   return Number(minutes) * 60_000 + Number(seconds) * 1_000 + fractionMs
 }
 
-const LRC_LINE_TIMESTAMP = /\[(\d{1,3}):([0-5]?\d)(?:[.:](\d{1,3}))?\]/gu
-const LRC_WORD_TIMESTAMP = /<(\d{1,3}):([0-5]?\d)(?:[.:](\d{1,3}))?>/gu
+const LRC_LINE_TIMESTAMP = /^\[(\d{1,3}):([0-5]?\d)(?:[.:](\d{1,3}))?\]/u
+const LRC_WORD_TIMESTAMP = /(?<!\\)<(\d{1,3}):([0-5]?\d)(?:[.:](\d{1,3}))?>/gu
+const LRC_WORD_TIMESTAMP_AT_START = /^<(\d{1,3}):([0-5]?\d)(?:[.:](\d{1,3}))?>/u
+const LRC_LITERAL_TIMESTAMP = /(\[\d{1,3}:[0-5]?\d(?:[.:]\d{1,3})?\]|<\d{1,3}:[0-5]?\d(?:[.:]\d{1,3})?>)/gu
 
 interface ImportedLrcLine {
   sourceIndex: number
@@ -746,14 +832,59 @@ interface ImportedLrcLine {
   words: LyricWord[]
 }
 
+function escapeLrcText(text: string): string {
+  return text.replace(LRC_LITERAL_TIMESTAMP, '\\$1')
+}
+
+function unescapeLrcText(text: string): string {
+  let result = ''
+  let index = 0
+  while (index < text.length) {
+    if (text[index] !== '\\' || index + 1 >= text.length) {
+      result += text[index]
+      index += 1
+      continue
+    }
+
+    const escapedRemainder = text.slice(index + 1)
+    if (
+      LRC_LINE_TIMESTAMP.test(escapedRemainder) ||
+      LRC_WORD_TIMESTAMP_AT_START.test(escapedRemainder)
+    ) {
+      result += text[index + 1]
+      index += 2
+      continue
+    }
+
+    result += '\\'
+    index += 1
+  }
+  return result
+}
+
+function splitLeadingLrcTimestamps(rawLine: string): {
+  timestamps: RegExpExecArray[]
+  body: string
+} | null {
+  let remainder = rawLine.trimStart()
+  const timestamps: RegExpExecArray[] = []
+  while (true) {
+    const timestamp = LRC_LINE_TIMESTAMP.exec(remainder)
+    if (!timestamp) break
+    timestamps.push(timestamp)
+    remainder = remainder.slice(timestamp[0].length)
+  }
+  return timestamps.length > 0 ? { timestamps, body: remainder.trim() } : null
+}
+
 function parseEnhancedLrcWords(body: string, offsetMs: number): LyricWord[] {
   const matches = [...body.matchAll(LRC_WORD_TIMESTAMP)]
   if (matches.length === 0) {
-    return tokenizeLyricLine(body).map((word) => createLyricWord(word))
+    return tokenizeLyricLine(unescapeLrcText(body)).map((word) => createLyricWord(word))
   }
 
   const words: LyricWord[] = []
-  const prefix = normalizeText(body.slice(0, matches[0].index))
+  const prefix = normalizeText(unescapeLrcText(body.slice(0, matches[0].index)))
   if (prefix) {
     words.push(...tokenizeLyricLine(prefix).map((word) => createLyricWord(word)))
   }
@@ -761,7 +892,7 @@ function parseEnhancedLrcWords(body: string, offsetMs: number): LyricWord[] {
   matches.forEach((match, index) => {
     const contentStart = (match.index ?? 0) + match[0].length
     const contentEnd = matches[index + 1]?.index ?? body.length
-    const tokens = tokenizeLyricLine(body.slice(contentStart, contentEnd))
+    const tokens = tokenizeLyricLine(unescapeLrcText(body.slice(contentStart, contentEnd)))
     const startMs = Math.max(0, parseTimestamp(match[1], match[2], match[3]) + offsetMs)
     tokens.forEach((token) => {
       words.push(createLyricWord(token, { startMs, endMs: null }))
@@ -774,18 +905,20 @@ export function importLrc(text: string, trackId: string): VocalTrack {
   const normalized = text.replace(/^\uFEFF/u, '').replace(/\r\n?/gu, '\n')
   const offsetMatch = normalized.match(/^\s*\[offset:([+-]?\d+)\]\s*$/imu)
   const offsetMs = offsetMatch ? Number(offsetMatch[1]) : 0
+  if (!Number.isSafeInteger(offsetMs)) {
+    throw new RangeError('LRC offset must be a safe integer millisecond value.')
+  }
   const imported: ImportedLrcLine[] = []
 
   normalized.split('\n').forEach((rawLine, sourceIndex) => {
-    const timestamps = [...rawLine.matchAll(LRC_LINE_TIMESTAMP)]
-    if (timestamps.length === 0) return
-    const body = rawLine.replace(LRC_LINE_TIMESTAMP, '').trim()
-    timestamps.forEach((timestamp) => {
+    const parsedLine = splitLeadingLrcTimestamps(rawLine)
+    if (!parsedLine) return
+    parsedLine.timestamps.forEach((timestamp) => {
       const startMs = Math.max(
         0,
         parseTimestamp(timestamp[1], timestamp[2], timestamp[3]) + offsetMs,
       )
-      const words = parseEnhancedLrcWords(body, offsetMs)
+      const words = parseEnhancedLrcWords(parsedLine.body, offsetMs)
       imported.push({
         sourceIndex,
         startMs,
@@ -797,11 +930,17 @@ export function importLrc(text: string, trackId: string): VocalTrack {
 
   imported.sort((left, right) => left.startMs - right.startMs || left.sourceIndex - right.sourceIndex)
 
+  const nextDistinctStarts = new Array<number | undefined>(imported.length)
+  let nextDistinctStart: number | undefined
+  for (let index = imported.length - 1; index >= 0; index -= 1) {
+    if (index < imported.length - 1 && imported[index + 1].startMs > imported[index].startMs) {
+      nextDistinctStart = imported[index + 1].startMs
+    }
+    nextDistinctStarts[index] = nextDistinctStart
+  }
+
   const lines = imported.map((entry, lineIndex) => {
-    const nextStart = imported.find(
-      (candidate, candidateIndex) =>
-        candidateIndex > lineIndex && candidate.startMs > entry.startMs,
-    )?.startMs
+    const nextStart = nextDistinctStarts[lineIndex]
     const lastWordStart = entry.words.reduce<number | null>(
       (latest, word) =>
         word.startMs === null ? latest : Math.max(latest ?? word.startMs, word.startMs),
@@ -814,20 +953,17 @@ export function importLrc(text: string, trackId: string): VocalTrack {
         (lastWordStart ?? entry.startMs) + 1_500,
       )
 
-    const timedWordIndexes = entry.words
-      .map((word, index) => (word.startMs === null ? -1 : index))
-      .filter((index) => index >= 0)
-    const words = entry.words.map((word, wordIndex) => {
-      if (word.startMs === null) return word
-      const timedPosition = timedWordIndexes.indexOf(wordIndex)
-      const nextTimedIndex = timedWordIndexes[timedPosition + 1]
-      const nextWordStart =
-        nextTimedIndex === undefined ? endMs : entry.words[nextTimedIndex].startMs ?? endMs
-      return {
+    const words = entry.words.map((word) => ({ ...word }))
+    let nextTimedWordStart = endMs
+    for (let wordIndex = words.length - 1; wordIndex >= 0; wordIndex -= 1) {
+      const word = words[wordIndex]
+      if (word.startMs === null) continue
+      words[wordIndex] = {
         ...word,
-        endMs: Math.max(word.startMs + 1, nextWordStart),
+        endMs: Math.max(word.startMs + 1, nextTimedWordStart),
       }
-    })
+      nextTimedWordStart = word.startMs
+    }
 
     return createLyricLine(entry.text, {
       id: `${trackId}-line-${lineIndex + 1}`,
@@ -840,12 +976,27 @@ export function importLrc(text: string, trackId: string): VocalTrack {
     })
   })
 
-  return createVocalTrack({
+  const track = createVocalTrack({
     id: trackId,
     name: 'Imported LRC',
     color: DEFAULT_TRACK_COLOR,
     lines,
   })
+  const validationProject = createProject({
+    id: createId('lrc-validation-project'),
+    tracks: [track],
+  })
+  const firstError = validateProject(validationProject).find(
+    (validationIssue) => validationIssue.severity === 'error',
+  )
+  if (firstError) {
+    const lineIndex = firstError.lineId
+      ? lines.findIndex((line) => line.id === firstError.lineId)
+      : -1
+    const sourceLine = lineIndex >= 0 ? ` on source line ${imported[lineIndex].sourceIndex + 1}` : ''
+    throw new Error(`Invalid LRC timing${sourceLine}: ${firstError.message}`)
+  }
+  return track
 }
 
 function formatLrcTimestamp(ms: number): string {
@@ -887,11 +1038,11 @@ export function exportLrc(project: KaraokeProject, trackId: string): string {
       ? line.words
           .map((word) =>
             word.startMs === null
-              ? word.text
-              : `<${formatLrcTimestamp(word.startMs)}>${word.text}`,
+              ? escapeLrcText(word.text)
+              : `<${formatLrcTimestamp(word.startMs)}>${escapeLrcText(word.text)}`,
           )
           .join(' ')
-      : line.text
+      : escapeLrcText(line.text)
     return [`[${formatLrcTimestamp(startMs)}]${body}`]
   })
 
@@ -930,16 +1081,45 @@ function escapeAssText(text: string): string {
     .replace(/\r?\n/gu, '\\N')
 }
 
-function assLineText(line: LyricLine, lineStartMs: number): string {
+function assLineText(
+  line: LyricLine,
+  offsetMs: number,
+  eventStartCs: number,
+  eventEndCs: number,
+): string {
   if (!line.words.some((word) => word.startMs !== null && word.endMs !== null)) {
     return escapeAssText(line.text)
   }
-  let cursorMs = lineStartMs
-  return line.words.map((word) => {
+  const nextTimedStarts = new Array<number | undefined>(line.words.length)
+  let nextTimedStart: number | undefined
+  for (let index = line.words.length - 1; index >= 0; index -= 1) {
+    nextTimedStarts[index] = nextTimedStart
+    if (line.words[index].startMs !== null) nextTimedStart = line.words[index].startMs ?? undefined
+  }
+  let cursorCs = eventStartCs
+  return line.words.map((word, wordIndex) => {
     if (word.startMs === null || word.endMs === null) return escapeAssText(word.text)
-    const gapCs = Math.max(0, Math.round((word.startMs - cursorMs) / 10))
-    const durationCs = Math.max(1, Math.round((word.endMs - word.startMs) / 10))
-    cursorMs = Math.max(cursorMs, word.endMs)
+
+    const followingStart = nextTimedStarts[wordIndex]
+    const adjustedStartCs = Math.max(
+      eventStartCs,
+      Math.min(eventEndCs, Math.round((word.startMs + offsetMs) / 10)),
+    )
+    const adjustedEndCs = Math.max(
+      eventStartCs,
+      Math.min(
+        eventEndCs,
+        Math.round((Math.min(word.endMs, followingStart ?? word.endMs) + offsetMs) / 10),
+      ),
+    )
+    const wordStartCs = Math.max(cursorCs, adjustedStartCs)
+    if (adjustedEndCs <= wordStartCs || wordStartCs >= eventEndCs) {
+      return escapeAssText(word.text)
+    }
+
+    const gapCs = wordStartCs - cursorCs
+    const durationCs = adjustedEndCs - wordStartCs
+    cursorCs = adjustedEndCs
     const delay = gapCs > 0 ? `{\\k${gapCs}}` : ''
     return `${delay}{\\kf${durationCs}}${escapeAssText(word.text)}`
   }).join(' ')
@@ -994,11 +1174,16 @@ export function exportAss(project: KaraokeProject, trackId?: string): string {
       const adjustedEndMs = timing.endMs + project.offsetMs
       if (adjustedEndMs <= 0) return []
       const adjustedStartMs = Math.max(0, timing.startMs + project.offsetMs)
-      const start = formatAssTimestamp(adjustedStartMs)
-      const end = formatAssTimestamp(Math.max(adjustedStartMs + 10, adjustedEndMs))
+      const eventStartCs = Math.round(adjustedStartMs / 10)
+      const eventEndCs = Math.max(
+        eventStartCs + 1,
+        Math.round(Math.max(adjustedStartMs + 10, adjustedEndMs) / 10),
+      )
+      const start = formatAssTimestamp(eventStartCs * 10)
+      const end = formatAssTimestamp(eventEndCs * 10)
       const style = styleNames[trackIndex]
       return [
-        `Dialogue: ${trackIndex},${start},${end},${style},,0,0,0,,${assLineText(line, adjustedStartMs - project.offsetMs)}`,
+        `Dialogue: ${trackIndex},${start},${end},${style},,0,0,0,,${assLineText(line, project.offsetMs, eventStartCs, eventEndCs)}`,
       ]
     }),
   )
@@ -1061,10 +1246,119 @@ function migrateTrack(value: unknown, fallbackId: string): VocalTrack {
   })
 }
 
+function requireCurrentRecord(value: unknown, path: string): Record<string, unknown> {
+  if (!isRecord(value)) throw new TypeError(`${path} must be an object.`)
+  return value
+}
+
+function requireCurrentString(
+  record: Record<string, unknown>,
+  key: string,
+  path: string,
+): string {
+  const value = record[key]
+  if (typeof value !== 'string') throw new TypeError(`${path}.${key} must be a string.`)
+  return value
+}
+
+function requireCurrentBoolean(
+  record: Record<string, unknown>,
+  key: string,
+  path: string,
+): boolean {
+  const value = record[key]
+  if (typeof value !== 'boolean') throw new TypeError(`${path}.${key} must be a boolean.`)
+  return value
+}
+
+function requireCurrentNullableNumber(
+  record: Record<string, unknown>,
+  key: string,
+  path: string,
+): number | null {
+  const value = record[key]
+  if (value !== null && typeof value !== 'number') {
+    throw new TypeError(`${path}.${key} must be a number or null.`)
+  }
+  return value
+}
+
+function requireCurrentArray(
+  record: Record<string, unknown>,
+  key: string,
+  path: string,
+): unknown[] {
+  const value = record[key]
+  if (!Array.isArray(value)) throw new TypeError(`${path}.${key} must be an array.`)
+  return value
+}
+
+function decodeCurrentWord(value: unknown, path: string): LyricWord {
+  const record = requireCurrentRecord(value, path)
+  return {
+    id: requireCurrentString(record, 'id', path),
+    text: requireCurrentString(record, 'text', path),
+    startMs: requireCurrentNullableNumber(record, 'startMs', path),
+    endMs: requireCurrentNullableNumber(record, 'endMs', path),
+  }
+}
+
+function decodeCurrentLine(value: unknown, path: string): LyricLine {
+  const record = requireCurrentRecord(value, path)
+  return {
+    id: requireCurrentString(record, 'id', path),
+    text: requireCurrentString(record, 'text', path),
+    startMs: requireCurrentNullableNumber(record, 'startMs', path),
+    endMs: requireCurrentNullableNumber(record, 'endMs', path),
+    words: requireCurrentArray(record, 'words', path).map((word, index) =>
+      decodeCurrentWord(word, `${path}.words[${index}]`),
+    ),
+  }
+}
+
+function decodeCurrentTrack(value: unknown, path: string): VocalTrack {
+  const record = requireCurrentRecord(value, path)
+  return {
+    id: requireCurrentString(record, 'id', path),
+    name: requireCurrentString(record, 'name', path),
+    color: requireCurrentString(record, 'color', path),
+    muted: requireCurrentBoolean(record, 'muted', path),
+    solo: requireCurrentBoolean(record, 'solo', path),
+    lines: requireCurrentArray(record, 'lines', path).map((line, index) =>
+      decodeCurrentLine(line, `${path}.lines[${index}]`),
+    ),
+  }
+}
+
+function decodeCurrentProject(value: Record<string, unknown>): KaraokeProject {
+  const audioPath = value.audioPath
+  if (audioPath !== null && typeof audioPath !== 'string') {
+    throw new TypeError('project.audioPath must be a string or null.')
+  }
+  return {
+    schemaVersion: PROJECT_SCHEMA_VERSION,
+    id: requireCurrentString(value, 'id', 'project'),
+    title: requireCurrentString(value, 'title', 'project'),
+    artist: requireCurrentString(value, 'artist', 'project'),
+    audioPath,
+    durationMs: requireCurrentNullableNumber(value, 'durationMs', 'project'),
+    offsetMs: (() => {
+      const offset = value.offsetMs
+      if (typeof offset !== 'number') throw new TypeError('project.offsetMs must be a number.')
+      return offset
+    })(),
+    createdAt: requireCurrentString(value, 'createdAt', 'project'),
+    updatedAt: requireCurrentString(value, 'updatedAt', 'project'),
+    tracks: requireCurrentArray(value, 'tracks', 'project').map((track, index) =>
+      decodeCurrentTrack(track, `project.tracks[${index}]`),
+    ),
+  }
+}
+
 /**
- * Normalizes version 1 and current project objects into the current schema.
+ * Migrates version 1 project objects and strictly clones current projects.
  * Legacy un-suffixed timing fields (`start`, `end`, `duration`, `offset`) are
- * interpreted as seconds; current `*Ms` fields are rounded to integer ms.
+ * interpreted as seconds.
  */
 export function migrateProject(value: unknown): KaraokeProject {
   if (!isRecord(value)) throw new TypeError('Project data must be a JSON object.')
@@ -1085,6 +1379,8 @@ export function migrateProject(value: unknown): KaraokeProject {
       `Unsupported project schema version ${String(declaredVersion)}. Supported versions are 1 and ${PROJECT_SCHEMA_VERSION}.`,
     )
   }
+
+  if (declaredVersion === PROJECT_SCHEMA_VERSION) return decodeCurrentProject(value)
 
   const rawTracks = Array.isArray(value.tracks)
     ? value.tracks

@@ -6,18 +6,24 @@ const { createReadStream } = require('node:fs')
 const fs = require('node:fs/promises')
 const path = require('node:path')
 const { Readable } = require('node:stream')
-const { fileURLToPath } = require('node:url')
 
 const APP_NAME = 'Okay Karaoke Studio'
+const APP_SCHEME = 'studio-app'
+const APP_HOST = 'app'
 const MEDIA_SCHEME = 'studio-media'
 const DEVELOPMENT_URL = process.env.VITE_DEV_SERVER_URL || 'http://127.0.0.1:5173'
 const DIST_INDEX = path.resolve(__dirname, '..', 'dist', 'index.html')
+const DIST_ROOT = path.dirname(DIST_INDEX)
+const PACKAGED_APP_URL = `${APP_SCHEME}://${APP_HOST}/index.html`
+const MAX_PROJECT_FILE_BYTES = 32 * 1024 * 1024
+const MAX_LRC_FILE_BYTES = 8 * 1024 * 1024
 
 const CHANNELS = Object.freeze({
   openProject: 'studio:open-project',
   saveProject: 'studio:save-project',
   importAudio: 'studio:import-audio',
   resolveAudio: 'studio:resolve-audio',
+  releaseAudio: 'studio:release-audio',
   importLrc: 'studio:import-lrc',
   exportText: 'studio:export-text',
   menuAction: 'studio:menu-action',
@@ -62,6 +68,22 @@ const AUDIO_MIME_TYPES = new Map([
   ['.wav', 'audio/wav'],
 ])
 
+const APP_MIME_TYPES = new Map([
+  ['.css', 'text/css; charset=utf-8'],
+  ['.html', 'text/html; charset=utf-8'],
+  ['.ico', 'image/x-icon'],
+  ['.jpeg', 'image/jpeg'],
+  ['.jpg', 'image/jpeg'],
+  ['.js', 'text/javascript; charset=utf-8'],
+  ['.json', 'application/json; charset=utf-8'],
+  ['.map', 'application/json; charset=utf-8'],
+  ['.png', 'image/png'],
+  ['.svg', 'image/svg+xml; charset=utf-8'],
+  ['.webp', 'image/webp'],
+  ['.woff', 'font/woff'],
+  ['.woff2', 'font/woff2'],
+])
+
 const PROJECT_FILTERS = [
   { name: 'Okay Karaoke Studio Project', extensions: ['oks', 'okstudio', 'json'] },
   { name: 'All Files', extensions: ['*'] },
@@ -88,13 +110,26 @@ const EXPORT_FILTERS = Object.freeze({
 })
 
 const mediaFiles = new Map()
+const mediaTokensByOwner = new Map()
 const writableProjectPaths = new Set()
+const projectSaveQueues = new Map()
 
 let mainWindow = null
 
 app.setName(APP_NAME)
 
 protocol.registerSchemesAsPrivileged([
+  {
+    scheme: APP_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true,
+      codeCache: true,
+    },
+  },
   {
     scheme: MEDIA_SCHEME,
     privileges: {
@@ -111,11 +146,112 @@ function textResponse(message, status, extraHeaders = {}) {
   return new Response(message, {
     status,
     headers: {
-      'Access-Control-Allow-Origin': '*',
       'Content-Type': 'text/plain; charset=utf-8',
+      'X-Content-Type-Options': 'nosniff',
       ...extraHeaders,
     },
   })
+}
+
+function rendererOrigin() {
+  return app.isPackaged
+    ? `${APP_SCHEME}://${APP_HOST}`
+    : new URL(DEVELOPMENT_URL).origin
+}
+
+function appFilePathFromUrl(rawUrl) {
+  try {
+    const url = new URL(rawUrl)
+    if (
+      url.protocol !== `${APP_SCHEME}:` ||
+      url.hostname !== APP_HOST ||
+      url.port ||
+      url.username ||
+      url.password
+    ) {
+      return null
+    }
+
+    const decodedPath = decodeURIComponent(url.pathname)
+    if (decodedPath.includes('\0')) return null
+    const relativePath = decodedPath === '/' || decodedPath === ''
+      ? 'index.html'
+      : decodedPath.replace(/^\/+/, '')
+    const filePath = path.resolve(DIST_ROOT, relativePath)
+    const pathWithinDist = path.relative(DIST_ROOT, filePath)
+    if (
+      pathWithinDist === '..' ||
+      pathWithinDist.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(pathWithinDist)
+    ) {
+      return null
+    }
+    return filePath
+  } catch {
+    return null
+  }
+}
+
+function installApplicationProtocol() {
+  let canonicalDistRoot
+  protocol.handle(APP_SCHEME, async (request) => {
+    if (request.method !== 'GET' && request.method !== 'HEAD') {
+      return textResponse('Method not allowed', 405, { Allow: 'GET, HEAD' })
+    }
+
+    const requestedFilePath = appFilePathFromUrl(request.url)
+    if (!requestedFilePath) return textResponse('Not found', 404)
+
+    let filePath
+    let fileStats
+    try {
+      canonicalDistRoot ||= fs.realpath(DIST_ROOT)
+      const [distRoot, canonicalFilePath] = await Promise.all([
+        canonicalDistRoot,
+        fs.realpath(requestedFilePath),
+      ])
+      const pathWithinDist = path.relative(distRoot, canonicalFilePath)
+      if (
+        pathWithinDist === '..' ||
+        pathWithinDist.startsWith(`..${path.sep}`) ||
+        path.isAbsolute(pathWithinDist)
+      ) {
+        return textResponse('Not found', 404)
+      }
+      filePath = canonicalFilePath
+      fileStats = await fs.stat(filePath)
+    } catch {
+      return textResponse('Not found', 404)
+    }
+    if (!fileStats.isFile()) return textResponse('Not found', 404)
+
+    const relativePath = path.relative(DIST_ROOT, filePath)
+    const headers = {
+      'Cache-Control': relativePath.startsWith(`assets${path.sep}`)
+        ? 'public, max-age=31536000, immutable'
+        : 'no-cache',
+      'Content-Length': String(fileStats.size),
+      'Content-Type': APP_MIME_TYPES.get(path.extname(filePath).toLowerCase()) || 'application/octet-stream',
+      'X-Content-Type-Options': 'nosniff',
+    }
+
+    if (request.method === 'HEAD' || fileStats.size === 0) {
+      return new Response(null, { status: 200, headers })
+    }
+
+    return new Response(Readable.toWeb(createReadStream(filePath)), {
+      status: 200,
+      headers,
+    })
+  })
+}
+
+function mediaResponseHeaders() {
+  return {
+    'Access-Control-Allow-Origin': rendererOrigin(),
+    'Access-Control-Expose-Headers': 'Accept-Ranges, Content-Length, Content-Range',
+    'Cache-Control': 'no-store',
+  }
 }
 
 function parseByteRange(value, size) {
@@ -158,33 +294,50 @@ function tokenFromMediaUrl(rawUrl) {
 function installMediaProtocol() {
   protocol.handle(MEDIA_SCHEME, async (request) => {
     if (request.method !== 'GET' && request.method !== 'HEAD') {
-      return textResponse('Method not allowed', 405, { Allow: 'GET, HEAD' })
+      return textResponse('Method not allowed', 405, {
+        ...mediaResponseHeaders(),
+        Allow: 'GET, HEAD',
+      })
     }
 
     const token = tokenFromMediaUrl(request.url)
-    const filePath = token ? mediaFiles.get(token) : null
-    if (!filePath) return textResponse('Media not found', 404)
+    const mediaFile = token ? mediaFiles.get(token) : null
+    const hasActiveOwner = Boolean(
+      mediaFile &&
+      mainWindow &&
+      !mainWindow.isDestroyed() &&
+      !mainWindow.webContents.isDestroyed() &&
+      mainWindow.webContents.id === mediaFile.ownerId,
+    )
+    if (token && mediaFile && !hasActiveOwner) revokeMediaToken(token)
+    const filePath = hasActiveOwner ? mediaFile.filePath : null
+    if (!filePath) return textResponse('Media not found', 404, mediaResponseHeaders())
 
     let fileStats
     try {
       fileStats = await fs.stat(filePath)
     } catch {
-      return textResponse('Media not found', 404)
+      if (token) revokeMediaToken(token)
+      return textResponse('Media not found', 404, mediaResponseHeaders())
     }
 
-    if (!fileStats.isFile()) return textResponse('Media not found', 404)
+    if (!fileStats.isFile()) {
+      if (token) revokeMediaToken(token)
+      return textResponse('Media not found', 404, mediaResponseHeaders())
+    }
 
     const range = parseByteRange(request.headers.get('range'), fileStats.size)
     if (range === false) {
       return textResponse('Requested range not satisfiable', 416, {
+        ...mediaResponseHeaders(),
         'Content-Range': `bytes */${fileStats.size}`,
       })
     }
 
     const extension = path.extname(filePath).toLowerCase()
     const headers = {
+      ...mediaResponseHeaders(),
       'Accept-Ranges': 'bytes',
-      'Access-Control-Allow-Origin': '*',
       'Content-Type': AUDIO_MIME_TYPES.get(extension) || 'application/octet-stream',
     }
 
@@ -245,6 +398,127 @@ function documentsPath(fileName) {
   return path.join(app.getPath('documents'), fileName)
 }
 
+function isErrnoException(error, code) {
+  return error !== null && typeof error === 'object' && error.code === code
+}
+
+function requireStringWithinBytes(value, fieldName, maxBytes) {
+  const text = requireString(value, fieldName)
+  if (Buffer.byteLength(text, 'utf8') > maxBytes) {
+    throw new RangeError(`${fieldName} exceeds the ${Math.floor(maxBytes / (1024 * 1024))} MB limit`)
+  }
+  return text
+}
+
+async function readUtf8FileWithinLimit(filePath, maxBytes, label) {
+  const handle = await fs.open(filePath, 'r')
+  try {
+    const fileStats = await handle.stat()
+    if (!fileStats.isFile()) throw new TypeError(`${label} must be a regular file`)
+    if (fileStats.size > maxBytes) {
+      throw new RangeError(`${label} exceeds the ${Math.floor(maxBytes / (1024 * 1024))} MB limit`)
+    }
+
+    const chunks = []
+    const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, maxBytes + 1))
+    let totalBytes = 0
+    while (totalBytes <= maxBytes) {
+      const readLength = Math.min(buffer.length, maxBytes + 1 - totalBytes)
+      const { bytesRead } = await handle.read(buffer, 0, readLength, null)
+      if (bytesRead === 0) break
+      chunks.push(Buffer.from(buffer.subarray(0, bytesRead)))
+      totalBytes += bytesRead
+    }
+
+    if (totalBytes > maxBytes) {
+      throw new RangeError(`${label} exceeds the ${Math.floor(maxBytes / (1024 * 1024))} MB limit`)
+    }
+    return Buffer.concat(chunks, totalBytes).toString('utf8')
+  } finally {
+    await handle.close()
+  }
+}
+
+async function existingFileMode(filePath) {
+  try {
+    return (await fs.stat(filePath)).mode & 0o777
+  } catch (error) {
+    if (isErrnoException(error, 'ENOENT')) return 0o666
+    throw error
+  }
+}
+
+async function syncDirectoryBestEffort(directoryPath) {
+  let handle
+  try {
+    handle = await fs.open(directoryPath, 'r')
+    await handle.sync()
+  } catch {
+    // Some platforms/filesystems do not support fsync on directory handles.
+  } finally {
+    await handle?.close().catch(() => {})
+  }
+}
+
+async function writeUtf8FileAtomically(filePath, contents) {
+  const directoryPath = path.dirname(filePath)
+  const temporaryPath = path.join(
+    directoryPath,
+    `.okay-karaoke-save-${process.pid}-${randomUUID()}.tmp`,
+  )
+  const mode = await existingFileMode(filePath)
+  let handle
+  let temporaryFileCreated = false
+
+  try {
+    handle = await fs.open(temporaryPath, 'wx', mode)
+    temporaryFileCreated = true
+    await handle.writeFile(contents, 'utf8')
+    await handle.sync()
+    await handle.close()
+    handle = undefined
+    await fs.rename(temporaryPath, filePath)
+    temporaryFileCreated = false
+    await syncDirectoryBestEffort(directoryPath)
+  } catch (error) {
+    await handle?.close().catch(() => {})
+    if (temporaryFileCreated) await fs.unlink(temporaryPath).catch(() => {})
+    throw error
+  }
+}
+
+async function queueProjectWrite(filePath, contents) {
+  const previousWrite = projectSaveQueues.get(filePath) || Promise.resolve()
+  const pendingWrite = previousWrite
+    .catch(() => {})
+    .then(() => writeUtf8FileAtomically(filePath, contents))
+  projectSaveQueues.set(filePath, pendingWrite)
+
+  try {
+    await pendingWrite
+  } finally {
+    if (projectSaveQueues.get(filePath) === pendingWrite) {
+      projectSaveQueues.delete(filePath)
+    }
+  }
+}
+
+function revokeMediaToken(token) {
+  const mediaFile = mediaFiles.get(token)
+  if (!mediaFile) return
+  mediaFiles.delete(token)
+
+  const ownerTokens = mediaTokensByOwner.get(mediaFile.ownerId)
+  ownerTokens?.delete(token)
+  if (ownerTokens?.size === 0) mediaTokensByOwner.delete(mediaFile.ownerId)
+}
+
+function revokeMediaForOwner(ownerId) {
+  const ownerTokens = mediaTokensByOwner.get(ownerId)
+  if (!ownerTokens) return
+  for (const token of [...ownerTokens]) revokeMediaToken(token)
+}
+
 function assertTrustedSender(event) {
   const owner = BrowserWindow.fromWebContents(event.sender)
   const isMainFrame = event.senderFrame && event.senderFrame === event.sender.mainFrame
@@ -260,7 +534,11 @@ function normalizeProjectRequest(value) {
   return {
     path: optionalString(value.path, 'path'),
     suggestedName: optionalString(value.suggestedName, 'suggestedName'),
-    contents: requireString(value.contents, 'contents'),
+    contents: requireStringWithinBytes(
+      value.contents,
+      'contents',
+      MAX_PROJECT_FILE_BYTES,
+    ),
   }
 }
 
@@ -279,9 +557,16 @@ function normalizeExportRequest(value) {
   }
 }
 
-function makeMediaResult(filePath) {
+function makeMediaResult(filePath, ownerContents) {
+  if (!ownerContents || ownerContents.isDestroyed()) {
+    throw new Error('Cannot create a media URL for a destroyed renderer')
+  }
+
+  const ownerId = ownerContents.id
+  revokeMediaForOwner(ownerId)
   const token = randomUUID()
-  mediaFiles.set(token, filePath)
+  mediaFiles.set(token, { filePath, ownerId })
+  mediaTokensByOwner.set(ownerId, new Set([token]))
 
   return {
     path: filePath,
@@ -303,7 +588,11 @@ function registerIpcHandlers() {
     if (result.canceled || result.filePaths.length === 0) return null
 
     const filePath = path.resolve(result.filePaths[0])
-    const contents = await fs.readFile(filePath, 'utf8')
+    const contents = await readUtf8FileWithinLimit(
+      filePath,
+      MAX_PROJECT_FILE_BYTES,
+      'Project file',
+    )
     writableProjectPaths.add(filePath)
     return { path: filePath, contents }
   })
@@ -333,7 +622,7 @@ function registerIpcHandlers() {
       filePath = path.resolve(result.filePath)
     }
 
-    await fs.writeFile(filePath, request.contents, 'utf8')
+    await queueProjectWrite(filePath, request.contents)
     writableProjectPaths.add(filePath)
     return { path: filePath }
   })
@@ -356,7 +645,7 @@ function registerIpcHandlers() {
       throw new TypeError('The selected file is not a supported audio file')
     }
 
-    return makeMediaResult(filePath)
+    return makeMediaResult(filePath, event.sender)
   })
 
   ipcMain.handle(CHANNELS.resolveAudio, async (event, value) => {
@@ -366,10 +655,15 @@ function registerIpcHandlers() {
     if (!AUDIO_EXTENSIONS.has(extension)) return null
     try {
       const fileStats = await fs.stat(filePath)
-      return fileStats.isFile() ? makeMediaResult(filePath) : null
+      return fileStats.isFile() ? makeMediaResult(filePath, event.sender) : null
     } catch {
       return null
     }
+  })
+
+  ipcMain.handle(CHANNELS.releaseAudio, async (event) => {
+    assertTrustedSender(event)
+    revokeMediaForOwner(event.sender.id)
   })
 
   ipcMain.handle(CHANNELS.importLrc, async (event) => {
@@ -384,7 +678,11 @@ function registerIpcHandlers() {
     if (result.canceled || result.filePaths.length === 0) return null
 
     const filePath = path.resolve(result.filePaths[0])
-    const contents = await fs.readFile(filePath, 'utf8')
+    const contents = await readUtf8FileWithinLimit(
+      filePath,
+      MAX_LRC_FILE_BYTES,
+      'LRC file',
+    )
     return { path: filePath, name: path.basename(filePath), contents }
   })
 
@@ -405,7 +703,7 @@ function registerIpcHandlers() {
     if (result.canceled || !result.filePath) return null
 
     const filePath = path.resolve(result.filePath)
-    await fs.writeFile(filePath, request.contents, 'utf8')
+    await writeUtf8FileAtomically(filePath, request.contents)
     return { path: filePath }
   })
 }
@@ -516,7 +814,14 @@ function isAllowedAppNavigation(rawUrl) {
       return url.origin === new URL(DEVELOPMENT_URL).origin
     }
 
-    return url.protocol === 'file:' && path.resolve(fileURLToPath(url)) === DIST_INDEX
+    return (
+      url.protocol === `${APP_SCHEME}:` &&
+      url.hostname === APP_HOST &&
+      !url.port &&
+      !url.username &&
+      !url.password &&
+      (url.pathname === '/' || url.pathname === '/index.html')
+    )
   } catch {
     return false
   }
@@ -533,6 +838,7 @@ async function openExternalUrl(rawUrl) {
 }
 
 function secureWebContents(contents) {
+  const ownerId = contents.id
   contents.setWindowOpenHandler(({ url }) => {
     void openExternalUrl(url)
     return { action: 'deny' }
@@ -545,6 +851,29 @@ function secureWebContents(contents) {
   })
 
   contents.on('will-attach-webview', (event) => event.preventDefault())
+  contents.on('will-prevent-unload', (event) => {
+    const owner = BrowserWindow.fromWebContents(contents)
+    const options = {
+      type: 'warning',
+      buttons: ['Discard Changes', 'Keep Editing'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+      title: 'Unsaved karaoke project',
+      message: 'Discard the unsaved changes?',
+      detail: 'Your latest lyric and timing edits have not been saved.',
+    }
+    const choice = owner
+      ? dialog.showMessageBoxSync(owner, options)
+      : dialog.showMessageBoxSync(options)
+    // Electron prevents the unload by default. Preventing this event allows
+    // the renderer-requested unload to continue after explicit confirmation.
+    if (choice === 0) event.preventDefault()
+  })
+  contents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+    if (isMainFrame && !isInPlace) revokeMediaForOwner(ownerId)
+  })
+  contents.once('destroyed', () => revokeMediaForOwner(ownerId))
 }
 
 async function createMainWindow() {
@@ -582,7 +911,7 @@ async function createMainWindow() {
   })
 
   if (app.isPackaged) {
-    await window.loadFile(DIST_INDEX)
+    await window.loadURL(PACKAGED_APP_URL)
   } else {
     await window.loadURL(DEVELOPMENT_URL)
   }
@@ -614,6 +943,7 @@ if (!hasSingleInstanceLock) {
   app.on('second-instance', focusMainWindow)
 
   app.whenReady().then(async () => {
+    if (app.isPackaged) installApplicationProtocol()
     installMediaProtocol()
     registerIpcHandlers()
     installApplicationMenu()

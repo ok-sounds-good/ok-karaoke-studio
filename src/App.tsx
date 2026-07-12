@@ -115,6 +115,10 @@ function inputHasTypingFocus() {
   return element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement || (element instanceof HTMLElement && element.isContentEditable)
 }
 
+export function lyricTimeAtPlayback(playbackMs: number, offsetMs: number) {
+  return playbackMs - offsetMs
+}
+
 export default function App() {
   const history = useProjectHistory(createDemoProject())
   const { project, commit } = history
@@ -135,12 +139,14 @@ export default function App() {
   const lrcInputRef = useRef<HTMLInputElement>(null)
   const currentTimeRef = useRef(0)
   const syncHeldRef = useRef<{ wordId: string; startMs: number } | null>(null)
+  const projectRestoreSequenceRef = useRef(0)
 
   const activeTrack = project.tracks.find((track) => track.id === activeTrackId) ?? project.tracks[0]
   const syncWords = useMemo(() => (activeTrack ? flattenTrack(activeTrack).map(({ word }) => word) : []), [activeTrack])
   const durationMs = effectiveDuration(project)
   const playback = usePlayback({ durationMs, audioUrl })
   const waveform = useWaveform(audioUrl)
+  const lyricTimeMs = lyricTimeAtPlayback(playback.currentMs, project.offsetMs)
 
   useEffect(() => {
     currentTimeRef.current = playback.currentMs
@@ -155,6 +161,16 @@ export default function App() {
   useEffect(() => {
     if (!activeTrack && project.tracks[0]) setActiveTrackId(project.tracks[0].id)
   }, [activeTrack, project.tracks])
+
+  useEffect(() => {
+    if (!history.dirty) return
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', beforeUnload)
+    return () => window.removeEventListener('beforeunload', beforeUnload)
+  }, [history.dirty])
 
   const reviewIssues = useMemo<ValidationIssue[]>(() => {
     const issues = validateProject(project)
@@ -174,6 +190,10 @@ export default function App() {
   }, [project])
 
   const showToast = useCallback((message: string, tone: ToastState['tone'] = 'neutral') => setToast({ message, tone }), [])
+
+  const confirmDiscardChanges = useCallback((message: string) => (
+    !history.dirty || window.confirm(message)
+  ), [history.dirty])
 
   const replaceTrack = useCallback((trackId: string, nextTrack: VocalTrack) => {
     commit((current) => ({
@@ -196,29 +216,63 @@ export default function App() {
   }, [commit])
 
   const openProjectContents = useCallback(async (contents: string, path: string | null) => {
+    let next: KaraokeProject
     try {
-      const next = parseProject(contents)
-      history.reset(next, true)
-      setProjectPath(path)
-      setActiveTrackId(next.tracks[0]?.id ?? '')
-      setSelectedWordIds(new Set())
-      setSyncMode(false)
-      playback.seek(0)
-      if (next.audioPath && window.studio?.resolveAudio) {
-        const resolved = await window.studio.resolveAudio(next.audioPath)
-        setAudioUrl(resolved?.url ?? null)
-        if (!resolved) showToast('Project opened; relink the missing audio file.', 'warning')
-      } else {
-        setAudioUrl(null)
-      }
-      showToast(`Opened ${next.title}`, 'success')
+      next = parseProject(contents)
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Could not open that project.', 'warning')
+      return
     }
-  }, [history.reset, playback.seek, showToast])
+
+    if (!confirmDiscardChanges('Discard the unsaved changes and open another project?')) return
+
+    const restoreSequence = projectRestoreSequenceRef.current + 1
+    projectRestoreSequenceRef.current = restoreSequence
+    history.reset(next, true)
+    setProjectPath(path)
+    setActiveTrackId(next.tracks[0]?.id ?? '')
+    setSelectedWordIds(new Set())
+    setSyncMode(false)
+    playback.pause()
+    playback.seek(0)
+    setAudioUrl(null)
+
+    if (window.studio?.releaseAudio) {
+      try {
+        await window.studio.releaseAudio()
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : 'Media release failed.'
+        showToast(`Project opened, but the previous audio could not be released: ${detail}`, 'warning')
+      }
+    }
+
+    if (!next.audioPath) {
+      showToast(`Opened ${next.title}`, 'success')
+      return
+    }
+    if (!window.studio?.resolveAudio) {
+      showToast('Project opened; relink its audio file in this browser.', 'warning')
+      return
+    }
+
+    try {
+      const resolved = await window.studio.resolveAudio(next.audioPath)
+      if (restoreSequence !== projectRestoreSequenceRef.current) return
+      setAudioUrl(resolved?.url ?? null)
+      showToast(
+        resolved ? `Opened ${next.title}` : 'Project opened; relink the missing audio file.',
+        resolved ? 'success' : 'warning',
+      )
+    } catch (error) {
+      if (restoreSequence !== projectRestoreSequenceRef.current) return
+      const detail = error instanceof Error ? error.message : 'Audio restoration failed.'
+      showToast(`Project opened, but its audio could not be restored: ${detail}`, 'warning')
+    }
+  }, [confirmDiscardChanges, history.reset, playback.pause, playback.seek, showToast])
 
   const handleNew = useCallback(() => {
-    if (history.dirty && !window.confirm('Discard the unsaved changes and start a new project?')) return
+    if (!confirmDiscardChanges('Discard the unsaved changes and start a new project?')) return
+    projectRestoreSequenceRef.current += 1
     const next = createProject({ title: 'Untitled Song', artist: 'Unknown Artist' })
     history.reset(next, true)
     setProjectPath(null)
@@ -226,9 +280,13 @@ export default function App() {
     setActiveTrackId(next.tracks[0]?.id ?? '')
     setSelectedWordIds(new Set())
     setSyncMode(false)
+    playback.pause()
     playback.seek(0)
+    void window.studio?.releaseAudio?.().catch((error: unknown) => {
+      console.error('Unable to release the previous audio:', error)
+    })
     showToast('New project ready', 'neutral')
-  }, [history.dirty, history.reset, playback.seek, showToast])
+  }, [confirmDiscardChanges, history.reset, playback.pause, playback.seek, showToast])
 
   const handleOpen = useCallback(async () => {
     if (window.studio) {
@@ -263,13 +321,15 @@ export default function App() {
   }, [history.markSaved, project, projectPath, showToast])
 
   const applyAudio = useCallback((path: string, url: string, name?: string) => {
+    projectRestoreSequenceRef.current += 1
+    playback.pause()
     setAudioUrl((current) => {
       if (current?.startsWith('blob:')) URL.revokeObjectURL(current)
       return url
     })
     commit((current) => ({ ...current, audioPath: path, updatedAt: new Date().toISOString() }))
     showToast(`${name ?? path.split('/').pop() ?? 'Audio'} linked`, 'success')
-  }, [commit, showToast])
+  }, [commit, playback.pause, showToast])
 
   const handleImportAudio = useCallback(async () => {
     if (window.studio) {
@@ -499,11 +559,16 @@ export default function App() {
 
         <div className="unified-workspace">
           <div className="workspace-top">
-            <KaraokePreview project={project} currentMs={playback.currentMs} selectedWordIds={selectedWordIds} />
+            <KaraokePreview
+              project={project}
+              playbackMs={playback.currentMs}
+              lyricMs={lyricTimeMs}
+              selectedWordIds={selectedWordIds}
+            />
             <LyricsPanel
               tracks={project.tracks}
               activeTrackId={activeTrackId}
-              currentMs={playback.currentMs}
+              lyricMs={lyricTimeMs}
               selectedWordIds={selectedWordIds}
               syncWordId={syncWordId}
               onSelectTrack={(trackId) => { setActiveTrackId(trackId); setSelectedWordIds(new Set()) }}

@@ -6,7 +6,8 @@ import { getActiveLine, lineProgress } from '../utils'
 
 interface KaraokePreviewProps {
   project: KaraokeProject
-  currentMs: number
+  playbackMs: number
+  lyricMs: number
   selectedWordIds: Set<string>
 }
 
@@ -27,12 +28,12 @@ function lineAfter(track: VocalTrack, active: LyricLine | null, currentMs: numbe
 function PreviewLine({
   line,
   track,
-  currentMs,
+  lyricMs,
   selectedWordIds,
 }: {
   line: LyricLine
   track: VocalTrack
-  currentMs: number
+  lyricMs: number
   selectedWordIds: Set<string>
 }) {
   return (
@@ -40,7 +41,7 @@ function PreviewLine({
       <span className="stage-line__artist">{track.name}</span>
       <p>
         {line.words.map((word) => {
-          const progress = wordProgress(word, currentMs)
+          const progress = wordProgress(word, lyricMs)
           return (
             <span
               key={word.id}
@@ -56,13 +57,13 @@ function PreviewLine({
   )
 }
 
-export function KaraokePreview({ project, currentMs, selectedWordIds }: KaraokePreviewProps) {
+export function KaraokePreview({ project, playbackMs, lyricMs, selectedWordIds }: KaraokePreviewProps) {
   const visibleTracks = project.tracks.filter((track) => !track.muted)
   const active = visibleTracks
-    .map((track) => ({ track, line: getActiveLine(track, currentMs) }))
+    .map((track) => ({ track, line: getActiveLine(track, lyricMs) }))
     .filter((item): item is { track: VocalTrack; line: LyricLine } => Boolean(item.line))
   const next = visibleTracks
-    .map((track) => ({ track, line: lineAfter(track, getActiveLine(track, currentMs), currentMs) }))
+    .map((track) => ({ track, line: lineAfter(track, getActiveLine(track, lyricMs), lyricMs) }))
     .find((item) => item.line)
   const firstTimedWord = Math.min(
     ...project.tracks.flatMap((track) =>
@@ -70,8 +71,8 @@ export function KaraokePreview({ project, currentMs, selectedWordIds }: KaraokeP
     ),
     Number.POSITIVE_INFINITY,
   )
-  const showTitle = active.length === 0 && currentMs < firstTimedWord - 1500
-  const primaryProgress = active[0] ? lineProgress(active[0].line, currentMs) : 0
+  const showTitle = active.length === 0 && lyricMs < firstTimedWord - 1500
+  const primaryProgress = active[0] ? lineProgress(active[0].line, lyricMs) : 0
 
   return (
     <section className="preview-panel panel" aria-label="Karaoke preview">
@@ -95,7 +96,7 @@ export function KaraokePreview({ project, currentMs, selectedWordIds }: KaraokeP
         <div className="karaoke-stage__grain" />
         <div className="karaoke-stage__safe-area" aria-hidden="true" />
         <div className="karaoke-stage__brand">OKAY / STUDIO</div>
-        <div className="karaoke-stage__time">{formatTime(currentMs)}</div>
+        <div className="karaoke-stage__time">{formatTime(playbackMs)}</div>
 
         <div className="karaoke-stage__content">
           {showTitle ? (
@@ -112,7 +113,7 @@ export function KaraokePreview({ project, currentMs, selectedWordIds }: KaraokeP
                   key={`${track.id}-${line.id}`}
                   line={line}
                   track={track}
-                  currentMs={currentMs}
+                  lyricMs={lyricMs}
                   selectedWordIds={selectedWordIds}
                 />
               ))}

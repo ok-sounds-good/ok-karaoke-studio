@@ -19,6 +19,7 @@ import {
   validateProject,
   type KaraokeProject,
 } from '../src/lib/karaoke'
+import { effectiveDuration } from '../src/utils'
 
 describe('karaoke project model', () => {
   it('creates a valid seeded project with integer word timings', () => {
@@ -78,6 +79,25 @@ describe('karaoke project model', () => {
     expect(edited.lines[3].id).toBe(timed.lines[2].id)
   })
 
+  it('keeps an edited line aligned when an earlier line is deleted', () => {
+    const initial = parseLyrics(
+      'I love alpha\nI love bravo\nI love charlie',
+      'lead',
+    )
+    const timed = {
+      ...initial,
+      lines: initial.lines.map((line, index) =>
+        retimeLine(line, 1_000 + index * 3_000, 2_000 + index * 3_000),
+      ),
+    }
+
+    const edited = parseLyrics('I love BRAVO!\nI love charlie', 'lead', timed)
+
+    expect(edited.lines[0].id).toBe(timed.lines[1].id)
+    expect(edited.lines[0].startMs).toBe(4_000)
+    expect(edited.lines[1].id).toBe(timed.lines[2].id)
+  })
+
   it('reports invalid and overlapping timing without rejecting untimed lyrics', () => {
     const first = retimeLine(createLyricLine('First line'), 1_000, 2_000)
     const second = retimeLine(createLyricLine('Second line'), 1_800, 2_800)
@@ -108,6 +128,14 @@ describe('timing helpers', () => {
     )
     expect(formatTime(65_432)).toBe('01:05.432')
     expect(formatTime(3_661_005)).toBe('1:01:01.005')
+  })
+
+  it('derives duration from line timing when words are untimed', () => {
+    const track = importLrc('[03:00]Late lyric', 'lead')
+    const project = createProject({ durationMs: null, tracks: [track] })
+
+    expect(track.lines[0].endMs).toBe(183_000)
+    expect(effectiveDuration(project)).toBe(187_000)
   })
 })
 
@@ -146,6 +174,44 @@ describe('LRC interchange', () => {
       '[00:01.125]<00:01.125>Exact <00:01.875>timing',
     )
     expect(() => exportLrc(project, 'missing')).toThrow(RangeError)
+  })
+
+  it('round-trips timestamp-shaped lyric text without creating extra timing', () => {
+    const text = '[12:34] Meet at <3:00> by C:\\Stage'
+    const line = createLyricLine(text, {
+      id: 'literal-line',
+      startMs: 1_000,
+      endMs: 2_000,
+    })
+    const project = createProject({
+      tracks: [createVocalTrack({ id: 'lead', lines: [line] })],
+    })
+
+    const output = exportLrc(project, 'lead')
+    const imported = importLrc(output, 'round-trip')
+
+    expect(output).toContain('\\[12:34]')
+    expect(output).toContain('\\<3:00>')
+    expect(imported.lines).toHaveLength(1)
+    expect(imported.lines[0].text).toBe(text)
+  })
+
+  it('rejects enhanced word timing that cannot form a valid project', () => {
+    expect(() => importLrc('[00:10]<00:05>Hello', 'lead')).toThrow(
+      'Invalid LRC timing on source line 1',
+    )
+    expect(() => importLrc('[00:01]<00:02>A <00:01.500>B', 'lead')).toThrow(
+      'Invalid LRC timing on source line 1',
+    )
+  })
+
+  it('uses the next distinct line timestamp for duplicate starts', () => {
+    const track = importLrc(
+      '[00:01]First\n[00:01]Second\n[00:03]Third',
+      'lead',
+    )
+
+    expect(track.lines.map((line) => line.endMs)).toEqual([3_000, 3_000, 6_000])
   })
 })
 
@@ -189,11 +255,68 @@ describe('ASS export', () => {
     const shiftedAway = exportAss({ ...project, offsetMs: -4_000 })
     expect(shiftedAway).not.toContain('Dialogue:')
   })
+
+  it('clips karaoke tags to the visible event after a negative offset', () => {
+    const line = createLyricLine('held', {
+      id: 'clipped-line',
+      startMs: 1_000,
+      endMs: 3_000,
+      words: [
+        createLyricWord('held', {
+          id: 'clipped-word',
+          startMs: 1_000,
+          endMs: 3_000,
+        }),
+      ],
+    })
+    const project = createProject({
+      offsetMs: -1_500,
+      tracks: [createVocalTrack({ id: 'lead', lines: [line] })],
+    })
+
+    const event = exportAss(project).split('\n').find((row) => row.startsWith('Dialogue:'))
+    expect(event).toContain('0:00:00.00,0:00:01.50')
+    expect(event).toContain('{\\kf150}held')
+    expect(event).not.toContain('{\\kf200}')
+  })
+
+  it('truncates overlapping ASS syllables at the following word start', () => {
+    const line = createLyricLine('first second', {
+      id: 'overlap-line',
+      startMs: 0,
+      endMs: 2_000,
+      words: [
+        createLyricWord('first', {
+          id: 'overlap-first',
+          startMs: 0,
+          endMs: 1_500,
+        }),
+        createLyricWord('second', {
+          id: 'overlap-second',
+          startMs: 1_000,
+          endMs: 2_000,
+        }),
+      ],
+    })
+    const project = createProject({
+      tracks: [createVocalTrack({ id: 'lead', lines: [line] })],
+    })
+
+    const event = exportAss(project).split('\n').find((row) => row.startsWith('Dialogue:'))
+    expect(event).toContain('{\\kf100}first {\\kf100}second')
+  })
 })
 
 describe('project serialization and migration', () => {
   it('round-trips current project JSON', () => {
     const project = createDemoProject()
+    expect(parseProject(serializeProject(project))).toEqual(project)
+  })
+
+  it('round-trips a current project with no vocal tracks', () => {
+    const project = createProject({ id: 'empty-project', tracks: [] })
+
+    expect(validateProject(project).filter((issue) => issue.severity === 'error')).toEqual([])
     expect(parseProject(serializeProject(project))).toEqual(project)
   })
 
@@ -247,6 +370,10 @@ describe('project serialization and migration', () => {
     )
     expect(() => parseProject('{"schemaVersion":1.5}')).toThrow(
       'Unsupported project schema version',
+    )
+    const malformedCurrent = { ...createDemoProject(), title: 42 }
+    expect(() => parseProject(JSON.stringify(malformedCurrent))).toThrow(
+      'project.title must be a string',
     )
 
     const invalid = createDemoProject() as KaraokeProject
