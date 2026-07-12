@@ -89,11 +89,21 @@ export function createTimelineGestureSession(
   getContext: () => TimelineGestureContext,
 ) {
   let active: TimelinePointerGesture | null = null
+  let activeProject: KaraokeProject | null = null
+
+  const activeWordStillExists = (project: KaraokeProject) => (
+    active !== null && project.tracks.some((track) =>
+      track.lines.some((line) =>
+        line.words.some((word) => word.id === active!.wordId && word.startMs !== null),
+      ),
+    )
+  )
 
   const clear = (pointerId: number, captureTarget: EventTarget) => {
     if (active?.pointerId !== pointerId || active.captureTarget !== captureTarget) return null
     const gesture = active
     active = null
+    activeProject = null
     getContext().onTimingDraftChange(null)
     return gesture
   }
@@ -102,17 +112,31 @@ export function createTimelineGestureSession(
     begin(gesture: TimelinePointerGesture) {
       if (active) return false
       active = gesture
+      activeProject = getContext().project
       return true
     },
     move(pointerId: number, captureTarget: EventTarget, clientX: number) {
       if (active?.pointerId !== pointerId || active.captureTarget !== captureTarget) return false
       const context = getContext()
+      if (context.project !== activeProject || !activeWordStillExists(context.project)) {
+        clear(pointerId, captureTarget)
+        return false
+      }
       const deltaMs = Math.round(((clientX - active.clientX) / context.pixelsPerSecond) * 1000)
       active = { ...active, deltaMs }
       context.onTimingDraftChange(timingDraftForGesture(context.project, active))
       return true
     },
     finish(pointerId: number, captureTarget: EventTarget) {
+      const currentProject = getContext().project
+      if (
+        active?.pointerId === pointerId &&
+        active.captureTarget === captureTarget &&
+        (currentProject !== activeProject || !activeWordStillExists(currentProject))
+      ) {
+        clear(pointerId, captureTarget)
+        return false
+      }
       const gesture = clear(pointerId, captureTarget)
       if (!gesture) return false
 
@@ -142,9 +166,21 @@ export function createTimelineGestureSession(
     owns(pointerId: number, captureTarget: EventTarget) {
       return active?.pointerId === pointerId && active.captureTarget === captureTarget
     },
+    captureLost(pointerId: number, eventTarget: EventTarget | null) {
+      if (active?.pointerId !== pointerId) return false
+      const targetDisconnected = active.captureTarget instanceof Node && !active.captureTarget.isConnected
+      if (eventTarget !== active.captureTarget && !targetDisconnected) return false
+      return clear(pointerId, active.captureTarget) !== null
+    },
+    invalidateProject(project: KaraokeProject) {
+      if (!active) return false
+      if (project === activeProject && activeWordStillExists(project)) return false
+      return clear(active.pointerId, active.captureTarget) !== null
+    },
     abandon() {
       const hadActiveGesture = active !== null
       active = null
+      activeProject = null
       return hadActiveGesture
     },
   }
@@ -232,6 +268,24 @@ export function Timeline({
     if (gestureSessionRef.current?.abandon()) parentDraftCallbackRef.current(null)
   }, [])
 
+  useEffect(() => {
+    gestureSessionRef.current!.invalidateProject(project)
+  }, [project])
+
+  useEffect(() => {
+    const captureEnded = (event: Event) => {
+      const pointerId = (event as PointerEvent).pointerId
+      if (typeof pointerId !== 'number') return
+      gestureSessionRef.current!.captureLost(pointerId, event.target)
+    }
+    document.addEventListener('lostpointercapture', captureEnded, true)
+    document.addEventListener('pointercancel', captureEnded, true)
+    return () => {
+      document.removeEventListener('lostpointercapture', captureEnded, true)
+      document.removeEventListener('pointercancel', captureEnded, true)
+    }
+  }, [])
+
   const seekFromPointer = (event: ReactPointerEvent<HTMLElement>) => {
     const bounds = event.currentTarget.getBoundingClientRect()
     const x = event.clientX - bounds.left
@@ -279,7 +333,7 @@ export function Timeline({
 
   const lostPointerCapture = (event: ReactPointerEvent<HTMLButtonElement>) => {
     if (safelyHasPointerCapture(event.currentTarget, event.pointerId)) return
-    gestureSessionRef.current!.cancel(event.pointerId, event.currentTarget)
+    gestureSessionRef.current!.captureLost(event.pointerId, event.currentTarget)
   }
 
   const untimedWords = project.tracks.flatMap((track) =>
