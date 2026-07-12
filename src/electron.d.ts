@@ -1,0 +1,65 @@
+export {}
+
+declare global {
+  type StudioExportFormat = 'lrc' | 'ass' | 'json'
+
+  type StudioMenuAction =
+    | 'new'
+    | 'open'
+    | 'save'
+    | 'save-as'
+    | 'import-audio'
+    | 'import-lrc'
+    | 'export'
+    | 'play-toggle'
+    | 'undo'
+    | 'redo'
+
+  interface StudioOpenProjectResult {
+    path: string
+    contents: string
+  }
+
+  interface StudioSaveProjectOptions {
+    path?: string
+    suggestedName: string
+    contents: string
+  }
+
+  interface StudioPathResult {
+    path: string
+  }
+
+  interface StudioAudioImportResult {
+    path: string
+    name: string
+    url: string
+  }
+
+  interface StudioLrcImportResult {
+    path: string
+    name: string
+    contents: string
+  }
+
+  interface StudioExportTextOptions {
+    suggestedName: string
+    contents: string
+    format: StudioExportFormat
+  }
+
+  interface StudioApi {
+    openProject(): Promise<StudioOpenProjectResult | null>
+    saveProject(options: StudioSaveProjectOptions): Promise<StudioPathResult | null>
+    importAudio(): Promise<StudioAudioImportResult | null>
+    resolveAudio(path: string): Promise<StudioAudioImportResult | null>
+    importLrc(): Promise<StudioLrcImportResult | null>
+    exportText(options: StudioExportTextOptions): Promise<StudioPathResult | null>
+    onMenuAction(callback: (action: StudioMenuAction) => void): () => void
+  }
+
+  interface Window {
+    /** Undefined in the regular browser/Vite preview. */
+    readonly studio?: StudioApi
+  }
+}

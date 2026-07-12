@@ -1,0 +1,256 @@
+import { describe, expect, it } from 'vitest'
+
+import {
+  clampTiming,
+  createDemoProject,
+  createLyricLine,
+  createLyricWord,
+  createProject,
+  createVocalTrack,
+  exportAss,
+  exportLrc,
+  formatTime,
+  importLrc,
+  migrateProject,
+  parseLyrics,
+  parseProject,
+  retimeLine,
+  serializeProject,
+  validateProject,
+  type KaraokeProject,
+} from '../src/lib/karaoke'
+
+describe('karaoke project model', () => {
+  it('creates a valid seeded project with integer word timings', () => {
+    const project = createDemoProject()
+
+    expect(project.schemaVersion).toBe(2)
+    expect(project.title).toBe('Neon Afterglow')
+    expect(project.tracks[0].lines.length).toBeGreaterThan(3)
+    expect(
+      project.tracks[0].lines.flatMap((line) => line.words).every(
+        (word) => Number.isInteger(word.startMs) && Number.isInteger(word.endMs),
+      ),
+    ).toBe(true)
+    expect(validateProject(project).filter((issue) => issue.severity === 'error')).toEqual([])
+  })
+
+  it('parses plain lyrics as untimed words and carries aligned edits forward', () => {
+    const initial = parseLyrics('Hello bright world\nSing with me', 'lead')
+    expect(initial.lines[0].words.map((word) => word.text)).toEqual([
+      'Hello',
+      'bright',
+      'world',
+    ])
+    expect(initial.lines[0].words.every((word) => word.startMs === null)).toBe(true)
+
+    const timed = {
+      ...initial,
+      lines: [retimeLine(initial.lines[0], 1_000, 2_500), initial.lines[1]],
+    }
+    const edited = parseLyrics('Hello wide bright world\nSing with me', 'lead', timed)
+
+    expect(edited.lines[0].words[0].startMs).toBe(1_000)
+    expect(edited.lines[0].words[1].text).toBe('wide')
+    expect(edited.lines[0].words[1].startMs).toBeNull()
+    expect(edited.lines[0].words[2].text).toBe('bright')
+    expect(edited.lines[0].words[2].startMs).not.toBeNull()
+  })
+
+  it('keeps timing attached to the right lines when text is inserted', () => {
+    const initial = parseLyrics('First line\nSecond line\nThird line', 'lead')
+    const timed = {
+      ...initial,
+      lines: initial.lines.map((line, index) =>
+        retimeLine(line, 1_000 + index * 2_000, 2_000 + index * 2_000),
+      ),
+    }
+
+    const edited = parseLyrics(
+      'First line\nA brand new line\nSecond line\nThird line',
+      'lead',
+      timed,
+    )
+
+    expect(edited.lines[1].startMs).toBeNull()
+    expect(edited.lines[2].id).toBe(timed.lines[1].id)
+    expect(edited.lines[2].startMs).toBe(3_000)
+    expect(edited.lines[3].id).toBe(timed.lines[2].id)
+  })
+
+  it('reports invalid and overlapping timing without rejecting untimed lyrics', () => {
+    const first = retimeLine(createLyricLine('First line'), 1_000, 2_000)
+    const second = retimeLine(createLyricLine('Second line'), 1_800, 2_800)
+    second.words[0].startMs = 1_800.5
+    const project = createProject({
+      durationMs: 2_500,
+      tracks: [createVocalTrack({ id: 'lead', lines: [first, second] })],
+    })
+
+    const issues = validateProject(project)
+    expect(issues.map((issue) => issue.code)).toEqual(
+      expect.arrayContaining(['line-overlap', 'timing-not-integer', 'timing-after-duration']),
+    )
+
+    const plain = createProject({ tracks: [parseLyrics('No timing yet', 'plain')] })
+    expect(validateProject(plain).filter((issue) => issue.severity === 'error')).toEqual([])
+  })
+})
+
+describe('timing helpers', () => {
+  it('clamps, retimes, and formats integer millisecond timings', () => {
+    expect(clampTiming(-500, 12_000, 10_000)).toEqual({
+      startMs: 0,
+      endMs: 10_000,
+    })
+    expect(clampTiming(9_999, 9_999, { maxMs: 10_000, minimumDurationMs: 25 })).toEqual(
+      { startMs: 9_975, endMs: 10_000 },
+    )
+    expect(formatTime(65_432)).toBe('01:05.432')
+    expect(formatTime(3_661_005)).toBe('1:01:01.005')
+  })
+})
+
+describe('LRC interchange', () => {
+  it('imports basic and enhanced timestamps and infers line endings', () => {
+    const track = importLrc(
+      [
+        '[offset:100]',
+        '[00:01.000]<00:01.000>Hello <00:01.500>world',
+        '[00:03.250]Untimed words',
+      ].join('\n'),
+      'lead',
+    )
+
+    expect(track.lines).toHaveLength(2)
+    expect(track.lines[0].startMs).toBe(1_100)
+    expect(track.lines[0].endMs).toBe(3_350)
+    expect(track.lines[0].words.map((word) => word.startMs)).toEqual([1_100, 1_600])
+    expect(track.lines[0].words.map((word) => word.endMs)).toEqual([1_600, 3_350])
+    expect(track.lines[1].words.every((word) => word.startMs === null)).toBe(true)
+
+    const compact = importLrc('[00:01]<00:01>Hello<00:02>world', 'compact')
+    expect(compact.lines[0].text).toBe('Hello world')
+  })
+
+  it('exports exact millisecond line and word timestamps', () => {
+    const track = importLrc(
+      '[00:01.125]<00:01.125>Exact <00:01.875>timing',
+      'lead',
+    )
+    const project = createProject({ title: 'Test', artist: 'Singer', tracks: [track] })
+    const output = exportLrc(project, 'lead')
+
+    expect(output).toContain('[ti:Test]')
+    expect(output).toContain(
+      '[00:01.125]<00:01.125>Exact <00:01.875>timing',
+    )
+    expect(() => exportLrc(project, 'missing')).toThrow(RangeError)
+  })
+})
+
+describe('ASS export', () => {
+  it('writes one-window-editor timings as styled karaoke events', () => {
+    const project = createDemoProject()
+    const output = exportAss(project)
+
+    expect(output).toContain('[V4+ Styles]')
+    expect(output).toContain('[Events]')
+    expect(output).toContain('Style: Lead Vocal')
+    expect(output).toMatch(/Dialogue: 0,0:00:02\.00,0:00:05\.40,Lead Vocal/)
+    expect(output).toContain('{\\kf')
+  })
+
+  it('preserves word lead-ins, pauses, and literal backslashes', () => {
+    const line = createLyricLine('AC\\DC rocks', {
+      id: 'spaced-line',
+      startMs: 1_000,
+      endMs: 3_000,
+      words: [
+        createLyricWord('AC\\DC', {
+          id: 'spaced-word-1',
+          startMs: 1_500,
+          endMs: 1_800,
+        }),
+        createLyricWord('rocks', {
+          id: 'spaced-word-2',
+          startMs: 2_200,
+          endMs: 2_500,
+        }),
+      ],
+    })
+    const project = createProject({
+      tracks: [createVocalTrack({ id: 'lead', lines: [line] })],
+    })
+
+    const output = exportAss(project)
+    expect(output).toContain('{\\k50}{\\kf30}AC\\\\DC {\\k40}{\\kf30}rocks')
+
+    const shiftedAway = exportAss({ ...project, offsetMs: -4_000 })
+    expect(shiftedAway).not.toContain('Dialogue:')
+  })
+})
+
+describe('project serialization and migration', () => {
+  it('round-trips current project JSON', () => {
+    const project = createDemoProject()
+    expect(parseProject(serializeProject(project))).toEqual(project)
+  })
+
+  it('migrates version 1 second timings and legacy field names', () => {
+    const legacy = {
+      version: 1,
+      id: 'legacy-project',
+      name: 'Old Song',
+      performer: 'Old Singer',
+      audioFile: '/music/song.mp3',
+      duration: 12.5,
+      offset: -0.25,
+      vocalTracks: [
+        {
+          id: 'old-lead',
+          label: 'Lead',
+          lyrics: [
+            {
+              id: 'old-line',
+              text: 'Old words',
+              start: 1.25,
+              end: 3.5,
+              words: [
+                { id: 'old-word-1', text: 'Old', start: 1.25, end: 2 },
+                { id: 'old-word-2', text: 'words', start: 2, end: 3.5 },
+              ],
+            },
+          ],
+        },
+      ],
+    }
+
+    const migrated = migrateProject(legacy)
+    expect(migrated).toMatchObject({
+      schemaVersion: 2,
+      title: 'Old Song',
+      artist: 'Old Singer',
+      audioPath: '/music/song.mp3',
+      durationMs: 12_500,
+      offsetMs: -250,
+    })
+    expect(migrated.tracks[0].lines[0].words[1].startMs).toBe(2_000)
+    expect(validateProject(migrated).filter((issue) => issue.severity === 'error')).toEqual([])
+  })
+
+  it('rejects malformed, future, and invalid project JSON', () => {
+    expect(() => parseProject('{oops')).toThrow('Invalid project JSON')
+    expect(() => parseProject('{"schemaVersion":99}')).toThrow('newer than supported')
+    expect(() => parseProject('{"schemaVersion":"2"}')).toThrow(
+      'Unsupported project schema version',
+    )
+    expect(() => parseProject('{"schemaVersion":1.5}')).toThrow(
+      'Unsupported project schema version',
+    )
+
+    const invalid = createDemoProject() as KaraokeProject
+    invalid.tracks[0].lines[0].endMs = invalid.tracks[0].lines[0].startMs
+    expect(() => serializeProject(invalid)).toThrow('Cannot serialize an invalid project')
+  })
+})
