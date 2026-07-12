@@ -18,7 +18,7 @@ import { KaraokePreview } from './components/KaraokePreview'
 import { LyricsPanel } from './components/LyricsPanel'
 import { Timeline } from './components/Timeline'
 import { TransportBar } from './components/TransportBar'
-import { ExportDialog, LyricsEditorDialog, ValidationDialog } from './components/Dialogs'
+import { ExportDialog, LyricsEditorDialog, ValidationDialog, WorkflowGuideDialog } from './components/Dialogs'
 import { usePlayback } from './hooks/usePlayback'
 import { useWaveform } from './hooks/useWaveform'
 import {
@@ -144,6 +144,7 @@ export default function App() {
   const [exportDialogOpen, setExportDialogOpen] = useState(false)
   const [videoExportProgress, setVideoExportProgress] = useState<StudioVideoExportProgress | null>(null)
   const [validationDialogOpen, setValidationDialogOpen] = useState(false)
+  const [workflowGuideOpen, setWorkflowGuideOpen] = useState(false)
   const [toast, setToast] = useState<ToastState | null>(null)
   const projectInputRef = useRef<HTMLInputElement>(null)
   const audioInputRef = useRef<HTMLInputElement>(null)
@@ -614,6 +615,7 @@ export default function App() {
         onSave={() => void handleSave(false)}
         onUndo={history.undo}
         onRedo={history.redo}
+        onShowWorkflow={() => setWorkflowGuideOpen(true)}
         onValidate={() => setValidationDialogOpen(true)}
         onExport={() => setExportDialogOpen(true)}
       />
@@ -745,6 +747,20 @@ export default function App() {
             setLyricsDialogOpen(false)
             showToast('Lyrics updated', 'success')
           }}
+        />
+      )}
+      {workflowGuideOpen && activeTrack && (
+        <WorkflowGuideDialog
+          canStartSync={syncWords.length > 0}
+          onClose={() => setWorkflowGuideOpen(false)}
+          onNew={() => { setWorkflowGuideOpen(false); handleNew() }}
+          onOpen={() => { setWorkflowGuideOpen(false); void handleOpen() }}
+          onAttachAudio={() => { setWorkflowGuideOpen(false); void handleImportAudio() }}
+          onEditLyrics={() => { setWorkflowGuideOpen(false); setLyricsDialogOpen(true) }}
+          onImportLrc={() => { setWorkflowGuideOpen(false); void handleImportLrc() }}
+          onStartSync={() => { setWorkflowGuideOpen(false); toggleSyncMode() }}
+          onSave={() => { setWorkflowGuideOpen(false); void handleSave(false) }}
+          onExport={() => { setWorkflowGuideOpen(false); setExportDialogOpen(true) }}
         />
       )}
       {exportDialogOpen && activeTrack && (
