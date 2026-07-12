@@ -22,31 +22,34 @@ The exact version 0.1 contract is in [`docs/MVP.md`](docs/MVP.md). Additional id
 
 ## Run locally
 
-Requirements: Node.js 24 LTS or newer and npm.
+Requirements: Node.js 24 LTS or newer and Bun 1.3.14 or newer. The exact Bun
+version used for the lockfile is pinned in `package.json`.
 
 ```bash
-npm install
-npm run dev
+bun install --frozen-lockfile
+bun run dev
 ```
 
-`npm run dev` opens the Electron app and starts its Vite renderer. For renderer-only work:
+`bun run dev` opens the Electron app and starts its Vite renderer. Bun manages
+dependencies and launches scripts; Electron, Vite, Vitest, and TypeScript retain
+their existing runtimes and responsibilities. For renderer-only work:
 
 ```bash
-npm run dev:web
+bun run dev:web
 ```
 
 ## Build and test
 
 ```bash
-npm test
-npm run build
-npm run dist:dir
+bun run test
+bun run build
+bun run dist:dir
 ```
 
-- `npm test` runs the project-model, migration, validation, LRC, and ASS tests.
-- `npm run build` performs a strict TypeScript check and production renderer build.
-- `npm run dist:dir` creates an unpacked desktop application in `release/`.
-- `npm run dist` creates distributable macOS artifacts. Public distribution still requires signing and notarization credentials.
+- `bun run test` runs the project-model, migration, validation, LRC, ASS, and renderer tests through Vitest.
+- `bun run build` performs a strict TypeScript check and production renderer build.
+- `bun run dist:dir` creates an unpacked desktop application in `release/`.
+- `bun run dist` creates distributable macOS artifacts. Public distribution still requires signing and notarization credentials.
 
 ## Editing workflow
 
