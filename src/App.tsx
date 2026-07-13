@@ -99,7 +99,7 @@ function useProjectHistory(initialProject: KaraokeProject) {
     })
   }, [])
 
-  const markSaved = useCallback(() => setSavedRevision(entry.revision), [entry.revision])
+  const markSaved = useCallback((revision: number) => setSavedRevision(revision), [])
 
   return {
     project: entry.project,
@@ -220,6 +220,8 @@ export default function App() {
   const currentTimeRef = useRef(0)
   const syncHeldRef = useRef<{ wordId: string; startMs: number } | null>(null)
   const projectRestoreSequenceRef = useRef(0)
+  const projectLifecycleSequenceRef = useRef(0)
+  const saveRequestSequenceRef = useRef(0)
   const videoExportActiveRef = useRef(false)
 
   const persistAudioDuration = useCallback((nextDurationMs: number) => {
@@ -332,6 +334,7 @@ export default function App() {
 
     const restoreSequence = projectRestoreSequenceRef.current + 1
     projectRestoreSequenceRef.current = restoreSequence
+    projectLifecycleSequenceRef.current += 1
     history.reset(next, true)
     setProjectPath(path)
     setActiveTrackId(next.tracks[0]?.id ?? '')
@@ -377,6 +380,7 @@ export default function App() {
   const handleNew = useCallback(() => {
     if (!confirmDiscardChanges('Discard the unsaved changes and start a new project?')) return
     projectRestoreSequenceRef.current += 1
+    projectLifecycleSequenceRef.current += 1
     const next = createProject({ title: 'Untitled Song', artist: 'Unknown Artist' })
     history.reset(next, true)
     setProjectPath(null)
@@ -402,6 +406,15 @@ export default function App() {
   }, [openProjectContents])
 
   const handleSave = useCallback(async (saveAs = false) => {
+    const saveRequestSequence = saveRequestSequenceRef.current + 1
+    saveRequestSequenceRef.current = saveRequestSequence
+    const projectLifecycleSequence = projectLifecycleSequenceRef.current
+    const savedRevision = history.revision
+    const saveIsCurrent = () => (
+      saveRequestSequence === saveRequestSequenceRef.current &&
+      projectLifecycleSequence === projectLifecycleSequenceRef.current
+    )
+
     try {
       const contents = serializeProject(project)
       const suggestedName = `${slugify(project.title)}.oks`
@@ -412,17 +425,20 @@ export default function App() {
           contents,
         })
         if (!result) return
+        if (!saveIsCurrent()) return
         setProjectPath(result.path)
       } else {
         downloadText(suggestedName, contents, 'application/json')
       }
-      history.markSaved()
+      if (!saveIsCurrent()) return
+      history.markSaved(savedRevision)
       showToast('Project saved', 'success')
     } catch (error) {
+      if (!saveIsCurrent()) return
       setValidationDialogOpen(true)
       showToast(error instanceof Error ? error.message : 'Project could not be saved.', 'warning')
     }
-  }, [history.markSaved, project, projectPath, showToast])
+  }, [history.markSaved, history.revision, project, projectPath, showToast])
 
   const applyAudio = useCallback((path: string, url: string, name?: string) => {
     projectRestoreSequenceRef.current += 1

@@ -37,6 +37,16 @@ function createStudioHarness(): StudioHarness {
   return { studio, exportText, importAudio, openProject, saveProject }
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, reject, resolve }
+}
+
 function buttonContaining(label: string): HTMLButtonElement {
   const button = [...document.querySelectorAll<HTMLButtonElement>('button')]
     .find((candidate) => candidate.textContent?.includes(label))
@@ -62,6 +72,20 @@ async function replaceTextarea(text: string) {
     if (!nativeValueSetter) throw new Error('Textarea value setter is unavailable')
     nativeValueSetter.call(textarea, text)
     textarea.dispatchEvent(new InputEvent('input', { bubbles: true, data: text }))
+  })
+}
+
+async function replaceProjectTitle(text: string) {
+  const input = document.querySelector<HTMLInputElement>('[aria-label="Project inspector"] input')
+  if (!input) throw new Error('Project title input was not mounted')
+  await act(async () => {
+    const nativeValueSetter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      'value',
+    )?.set
+    if (!nativeValueSetter) throw new Error('Input value setter is unavailable')
+    nativeValueSetter.call(input, text)
+    input.dispatchEvent(new InputEvent('input', { bubbles: true, data: text }))
   })
 }
 
@@ -156,5 +180,132 @@ describe('mounted first-time workflow', () => {
       contents: expectedContents,
       format: 'oks',
     })
+  })
+
+  it('ignores a previous project save that completes after New project', async () => {
+    const previousProjectSave = deferred<{ path: string }>()
+    harness.saveProject.mockImplementationOnce(() => previousProjectSave.promise)
+
+    await clickButton('Workflow')
+    await clickButton('Save .oks')
+    expect(harness.saveProject).toHaveBeenCalledOnce()
+
+    await clickButton('Workflow')
+    await clickButton('New project')
+    expect(document.querySelector('.topbar__document')?.textContent).toContain('Untitled Song')
+
+    await act(async () => {
+      previousProjectSave.resolve({ path: '/saved/previous-project.oks' })
+      await previousProjectSave.promise
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
+    })
+
+    expect(document.querySelector('[title="Unsaved changes"]')).toBeNull()
+
+    await clickButton('Workflow')
+    await clickButton('Save .oks')
+    expect(harness.saveProject).toHaveBeenLastCalledWith(expect.objectContaining({
+      path: undefined,
+      suggestedName: 'untitled-song.oks',
+    }))
+  })
+
+  it('allows only the newest concurrent save completion to choose the active project path', async () => {
+    const firstSave = deferred<{ path: string }>()
+    const secondSave = deferred<{ path: string }>()
+    harness.saveProject
+      .mockImplementationOnce(() => firstSave.promise)
+      .mockImplementationOnce(() => secondSave.promise)
+
+    await clickButton('Workflow')
+    await clickButton('Save .oks')
+    await clickButton('Workflow')
+    await clickButton('Save .oks')
+    expect(harness.saveProject).toHaveBeenCalledTimes(2)
+
+    await act(async () => {
+      secondSave.resolve({ path: '/saved/newest.oks' })
+      await secondSave.promise
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
+    })
+    await act(async () => {
+      firstSave.resolve({ path: '/saved/stale.oks' })
+      await firstSave.promise
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
+    })
+
+    await clickButton('Workflow')
+    await clickButton('Save .oks')
+    expect(harness.saveProject).toHaveBeenLastCalledWith(expect.objectContaining({
+      path: '/saved/newest.oks',
+    }))
+  })
+
+  it('ignores stale save completions after Open and retains the opened project path', async () => {
+    const previousProjectSave = deferred<{ path: string }>()
+    harness.saveProject.mockImplementationOnce(() => previousProjectSave.promise)
+    harness.openProject.mockResolvedValueOnce({
+      path: '/opened/project-b.oks',
+      contents: serializeProject({ ...createDemoProject(), title: 'Opened Project B' }),
+    })
+
+    await clickButton('Workflow')
+    await clickButton('Save .oks')
+    await clickButton('Workflow')
+    await clickButton('Open .oks')
+    expect(document.querySelector('.topbar__document')?.textContent).toContain('Opened Project B')
+
+    await act(async () => {
+      previousProjectSave.resolve({ path: '/saved/stale-project-a.oks' })
+      await previousProjectSave.promise
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
+    })
+
+    await clickButton('Workflow')
+    await clickButton('Save .oks')
+    expect(harness.saveProject).toHaveBeenLastCalledWith(expect.objectContaining({
+      path: '/opened/project-b.oks',
+    }))
+  })
+
+  it('does not surface a stale save rejection after the user starts a new project', async () => {
+    const previousProjectSave = deferred<{ path: string }>()
+    harness.saveProject.mockImplementationOnce(() => previousProjectSave.promise)
+
+    await clickButton('Workflow')
+    await clickButton('Save .oks')
+    await clickButton('Workflow')
+    await clickButton('New project')
+
+    await act(async () => {
+      previousProjectSave.reject(new Error('stale cloud write failed'))
+      await previousProjectSave.promise.catch(() => undefined)
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
+    })
+
+    expect(document.body.textContent).not.toContain('stale cloud write failed')
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.querySelector('[title="Unsaved changes"]')).toBeNull()
+  })
+
+  it('keeps edits made during a save dirty when the older revision completes', async () => {
+    const pendingSave = deferred<{ path: string }>()
+    harness.saveProject.mockImplementationOnce(() => pendingSave.promise)
+
+    await clickButton('Workflow')
+    await clickButton('Save .oks')
+    await replaceProjectTitle('Edited while save was pending')
+    expect(document.querySelector('[title="Unsaved changes"]')).not.toBeNull()
+
+    await act(async () => {
+      pendingSave.resolve({ path: '/saved/older-revision.oks' })
+      await pendingSave.promise
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
+    })
+
+    expect(document.querySelector('.topbar__document')?.textContent).toContain(
+      'Edited while save was pending',
+    )
+    expect(document.querySelector('[title="Unsaved changes"]')).not.toBeNull()
   })
 })

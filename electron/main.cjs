@@ -16,8 +16,14 @@ const {
   EXPORT_FILTERS,
   ensureExportExtension,
   normalizeExportFormat,
-  normalizeExportPath,
 } = require('./text-export.cjs')
+const {
+  PROJECT_OPEN_FILTERS,
+  PROJECT_SAVE_FILTERS,
+  canonicalSavePath,
+  isCanonicalSavePath,
+  showCanonicalSaveDialog,
+} = require('./save-paths.cjs')
 
 const APP_NAME = 'Okay Karaoke Studio'
 const APP_SCHEME = 'studio-app'
@@ -98,11 +104,6 @@ const APP_MIME_TYPES = new Map([
   ['.woff', 'font/woff'],
   ['.woff2', 'font/woff2'],
 ])
-
-const PROJECT_FILTERS = [
-  { name: 'Okay Karaoke Studio Project', extensions: ['oks', 'okstudio', 'json'] },
-  { name: 'All Files', extensions: ['*'] },
-]
 
 const AUDIO_FILTERS = [
   {
@@ -395,11 +396,6 @@ function safeFileName(value, fallback) {
   return name && name !== '.' && name !== '..' ? name : fallback
 }
 
-function ensureProjectExtension(fileName) {
-  const extension = path.extname(fileName).toLowerCase()
-  return ['.oks', '.okstudio', '.json'].includes(extension) ? fileName : `${fileName}.oks`
-}
-
 function documentsPath(fileName) {
   return path.join(app.getPath('documents'), fileName)
 }
@@ -596,7 +592,7 @@ function registerIpcHandlers() {
       title: 'Open Karaoke Project',
       buttonLabel: 'Open Project',
       properties: ['openFile'],
-      filters: PROJECT_FILTERS,
+      filters: PROJECT_OPEN_FILTERS,
     })
 
     if (result.canceled || result.filePaths.length === 0) return null
@@ -616,25 +612,31 @@ function registerIpcHandlers() {
     const owner = assertTrustedSender(event)
     const request = normalizeProjectRequest(value)
     const requestedPath = request.path ? path.resolve(request.path) : null
+    const requestedPathIsWritable = requestedPath
+      ? writableProjectPaths.has(requestedPath)
+      : false
 
-    let filePath = requestedPath && writableProjectPaths.has(requestedPath)
+    let filePath = requestedPath &&
+      isCanonicalSavePath(requestedPath, 'oks') &&
+      requestedPathIsWritable
       ? requestedPath
       : null
 
     if (!filePath) {
-      const defaultName = ensureProjectExtension(safeFileName(
-        request.suggestedName || requestedPath,
-        'Untitled Karaoke Project.oks',
-      ))
-      const result = await dialog.showSaveDialog(owner, {
+      const defaultName = ensureExportExtension(
+        safeFileName(request.suggestedName, 'Untitled Karaoke Project.oks'),
+        'oks',
+      )
+      const defaultPath = requestedPath && requestedPathIsWritable
+        ? canonicalSavePath(requestedPath, 'oks')
+        : documentsPath(defaultName)
+      filePath = await showCanonicalSaveDialog(dialog.showSaveDialog.bind(dialog), owner, {
         title: 'Save Karaoke Project',
         buttonLabel: 'Save Project',
-        defaultPath: documentsPath(defaultName),
-        filters: PROJECT_FILTERS.slice(0, 1),
-      })
-
-      if (result.canceled || !result.filePath) return null
-      filePath = path.resolve(result.filePath)
+        defaultPath,
+        filters: PROJECT_SAVE_FILTERS,
+      }, 'oks')
+      if (!filePath) return null
     }
 
     await queueProjectWrite(filePath, request.contents)
@@ -718,16 +720,14 @@ function registerIpcHandlers() {
       safeFileName(request.suggestedName, `lyrics.${request.format}`),
       request.format,
     )
-    const result = await dialog.showSaveDialog(owner, {
+    const filePath = await showCanonicalSaveDialog(dialog.showSaveDialog.bind(dialog), owner, {
       title: `Export ${request.format.toUpperCase()}`,
       buttonLabel: 'Export',
       defaultPath: documentsPath(defaultName),
       filters: EXPORT_FILTERS[request.format],
-    })
+    }, request.format)
 
-    if (result.canceled || !result.filePath) return null
-
-    const filePath = path.resolve(normalizeExportPath(result.filePath, request.format))
+    if (!filePath) return null
     await writeUtf8FileAtomically(filePath, request.contents)
     return { path: filePath }
   })
@@ -745,15 +745,19 @@ function registerIpcHandlers() {
         safeFileName(request.suggestedName, 'karaoke-video.mp4'),
         'mp4',
       )
-      const result = await dialog.showSaveDialog(owner, {
-        title: 'Export Karaoke Video',
-        buttonLabel: 'Render Video',
-        defaultPath: documentsPath(defaultName),
-        filters: VIDEO_FILTERS,
-      })
-      if (result.canceled || !result.filePath) return null
+      const selectedOutputPath = await showCanonicalSaveDialog(
+        dialog.showSaveDialog.bind(dialog),
+        owner,
+        {
+          title: 'Export Karaoke Video',
+          buttonLabel: 'Render Video',
+          defaultPath: documentsPath(defaultName),
+          filters: VIDEO_FILTERS,
+        },
+        'mp4',
+      )
+      if (!selectedOutputPath) return null
       if (operation.controller.signal.aborted) throw canceledVideoExportError()
-      const selectedOutputPath = normalizeExportPath(result.filePath, 'mp4')
 
       const sendProgress = (progress) => {
         if (!event.sender.isDestroyed()) {
