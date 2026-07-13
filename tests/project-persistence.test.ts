@@ -64,6 +64,7 @@ function completeProjectFixture(): KaraokeProject {
     offsetMs: -317,
     createdAt: '2026-02-03T04:05:06.789Z',
     updatedAt: '2026-07-12T17:18:19.123Z',
+    lyricDisplay: { lineCount: 5, advanceMode: 'scroll' },
     tracks: [
       createVocalTrack({
         id: 'track-lead',
@@ -100,6 +101,8 @@ describe('Electron project file persistence', () => {
     expect(reopened).not.toBe(original)
     expect(reopened.tracks[0]).not.toBe(original.tracks[0])
     expect(reopened.tracks[0].lines[0].words[0]).not.toBe(original.tracks[0].lines[0].words[0])
+    expect(reopened.lyricDisplay).toEqual({ lineCount: 5, advanceMode: 'scroll' })
+    expect(reopened.lyricDisplay).not.toBe(original.lyricDisplay)
     expect(await readdir(directory)).toEqual(['round-trip.oks'])
   })
 

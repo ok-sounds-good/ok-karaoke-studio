@@ -1,14 +1,17 @@
-import type { CSSProperties } from 'react'
-import { MonitorPlay, ShieldCheck } from 'lucide-react'
-import type { KaraokeProject, LyricLine, LyricWord, VocalTrack } from '../lib/model'
-import { formatTime } from '../lib/model'
-import { getActiveLine, lineProgress } from '../utils'
+import { useMemo, type CSSProperties } from 'react'
+import { Edit3, MonitorPlay, ShieldCheck } from 'lucide-react'
+import type { KaraokeProject, LyricDisplaySettings, LyricLine, LyricWord, VocalTrack } from '../lib/model'
+import { formatTime, planLyricDisplayLines } from '../lib/model'
+import { lineProgress } from '../utils'
+import { Button } from './ui'
 
 interface KaraokePreviewProps {
   project: KaraokeProject
   playbackMs: number
   lyricMs: number
   selectedWordIds: Set<string>
+  onUpdateLyricDisplay?: (patch: Partial<LyricDisplaySettings>) => void
+  onEditLyrics?: () => void
 }
 
 function wordProgress(word: LyricWord, currentMs: number) {
@@ -17,12 +20,6 @@ function wordProgress(word: LyricWord, currentMs: number) {
   if (currentMs <= word.startMs) return 0
   if (currentMs >= endMs) return 1
   return (currentMs - word.startMs) / Math.max(1, endMs - word.startMs)
-}
-
-function lineAfter(track: VocalTrack, active: LyricLine | null, currentMs: number) {
-  const index = active ? track.lines.findIndex((line) => line.id === active.id) : -1
-  if (index >= 0) return track.lines[index + 1] ?? null
-  return track.lines.find((line) => line.startMs !== null && line.startMs > currentMs) ?? track.lines[0] ?? null
 }
 
 function PreviewLine({
@@ -57,26 +54,47 @@ function PreviewLine({
   )
 }
 
-export function KaraokePreview({ project, playbackMs, lyricMs, selectedWordIds }: KaraokePreviewProps) {
-  const unmutedTracks = project.tracks.filter((track) => !track.muted)
-  const hasSolo = unmutedTracks.some((track) => track.solo)
-  const visibleTracks = hasSolo
-    ? unmutedTracks.filter((track) => track.solo)
-    : unmutedTracks
-  const active = visibleTracks
-    .map((track) => ({ track, line: getActiveLine(track, lyricMs) }))
-    .filter((item): item is { track: VocalTrack; line: LyricLine } => Boolean(item.line))
-  const next = visibleTracks
-    .map((track) => ({ track, line: lineAfter(track, getActiveLine(track, lyricMs), lyricMs) }))
-    .find((item) => item.line)
-  const firstTimedWord = Math.min(
+export function KaraokePreview({
+  project,
+  playbackMs,
+  lyricMs,
+  selectedWordIds,
+  onUpdateLyricDisplay,
+  onEditLyrics,
+}: KaraokePreviewProps) {
+  const unmutedTracks = useMemo(
+    () => project.tracks.filter((track) => !track.muted),
+    [project.tracks],
+  )
+  const visibleTracks = useMemo(() => {
+    const hasSolo = unmutedTracks.some((track) => track.solo)
+    return hasSolo ? unmutedTracks.filter((track) => track.solo) : unmutedTracks
+  }, [unmutedTracks])
+  const trackWindows = visibleTracks.map((track) => ({
+    track,
+    lines: planLyricDisplayLines(track, lyricMs, project.lyricDisplay),
+  }))
+  const displayLines: Array<{ track: VocalTrack; line: LyricLine }> = []
+  for (
+    let lineIndex = 0;
+    lineIndex < project.lyricDisplay.lineCount && displayLines.length < project.lyricDisplay.lineCount;
+    lineIndex += 1
+  ) {
+    trackWindows.forEach(({ track, lines }) => {
+      const line = lines[lineIndex]
+      if (line && displayLines.length < project.lyricDisplay.lineCount) {
+        displayLines.push({ track, line })
+      }
+    })
+  }
+  const firstTimedWord = useMemo(() => Math.min(
     ...visibleTracks.flatMap((track) =>
       track.lines.flatMap((line) => line.words.flatMap((word) => (word.startMs === null ? [] : [word.startMs]))),
     ),
     Number.POSITIVE_INFINITY,
-  )
-  const showTitle = active.length === 0 && lyricMs < firstTimedWord - 1500
-  const primaryProgress = active[0] ? lineProgress(active[0].line, lyricMs) : 0
+  ), [visibleTracks])
+  const showTitle = lyricMs < firstTimedWord - 1500
+  const primaryProgress = displayLines[0] ? lineProgress(displayLines[0].line, lyricMs) : 0
 
   return (
     <section className="preview-panel panel" aria-label="Karaoke preview">
@@ -88,13 +106,45 @@ export function KaraokePreview({ project, playbackMs, lyricMs, selectedWordIds }
             <h2>Live preview</h2>
           </div>
         </div>
-        <div className="preview-badges">
-          <span className="status-pill status-pill--live"><i /> Live</span>
-          <span className="status-pill"><ShieldCheck size={12} /> Title safe</span>
+        <div className="preview-toolbar">
+          <label className="preview-setting">
+            <span>Lines</span>
+            <select
+              aria-label="Visible lyric lines"
+              title="Choose how many lyric lines appear in the preview and exported video"
+              value={project.lyricDisplay.lineCount}
+              onChange={(event) => onUpdateLyricDisplay?.({ lineCount: Number(event.target.value) })}
+            >
+              {[1, 2, 3, 4, 5].map((count) => <option key={count} value={count}>{count}</option>)}
+            </select>
+          </label>
+          <label className="preview-setting">
+            <span>Advance</span>
+            <select
+              aria-label="Lyric line advance mode"
+              title="Clear replaces a page; Scroll advances one line at a time within a section"
+              value={project.lyricDisplay.advanceMode}
+              onChange={(event) => onUpdateLyricDisplay?.({
+                advanceMode: event.target.value as LyricDisplaySettings['advanceMode'],
+              })}
+            >
+              <option value="clear">Clear</option>
+              <option value="scroll">Scroll</option>
+            </select>
+          </label>
+          {onEditLyrics && (
+            <Button size="sm" variant="ghost" title="Open the lyric text editor" onClick={onEditLyrics}>
+              <Edit3 size={13} /> Edit text
+            </Button>
+          )}
+          <div className="preview-badges">
+            <span className="status-pill status-pill--live"><i /> Live</span>
+            <span className="status-pill"><ShieldCheck size={12} /> Title safe</span>
+          </div>
         </div>
       </header>
 
-      <div className="karaoke-stage">
+      <div className={`karaoke-stage karaoke-stage--lines-${project.lyricDisplay.lineCount} ${displayLines.length > 5 ? 'karaoke-stage--dense' : ''}`}>
         <div className="karaoke-stage__glow karaoke-stage__glow--one" />
         <div className="karaoke-stage__glow karaoke-stage__glow--two" />
         <div className="karaoke-stage__grain" />
@@ -110,9 +160,9 @@ export function KaraokePreview({ project, playbackMs, lyricMs, selectedWordIds }
               <p>{project.artist || 'Unknown artist'}</p>
               <i />
             </div>
-          ) : active.length ? (
-            <div className={`active-lines ${active.length > 1 ? 'active-lines--duet' : ''}`}>
-              {active.map(({ line, track }) => (
+          ) : displayLines.length ? (
+            <div className={`active-lines ${visibleTracks.length > 1 ? 'active-lines--duet' : ''}`}>
+              {displayLines.map(({ line, track }) => (
                 <PreviewLine
                   key={`${track.id}-${line.id}`}
                   line={line}
@@ -129,9 +179,6 @@ export function KaraokePreview({ project, playbackMs, lyricMs, selectedWordIds }
             </div>
           )}
 
-          {next?.line && !showTitle && (
-            <p className="next-line">{next.line.text.replaceAll('/', '·')}</p>
-          )}
         </div>
 
         <div className="karaoke-stage__footer">

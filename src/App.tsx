@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { KaraokeProject, LyricWord, ValidationIssue, VocalTrack } from './lib/model'
+import type { KaraokeProject, LyricDisplaySettings, LyricWord, ValidationIssue, VocalTrack } from './lib/model'
 import {
   createProject,
   createVocalTrack,
@@ -14,7 +14,7 @@ import {
 import { TopBar } from './components/TopBar'
 import { InspectorPanel } from './components/InspectorPanel'
 import { KaraokePreview } from './components/KaraokePreview'
-import { LyricsPanel } from './components/LyricsPanel'
+import { SyncCueStrip } from './components/SyncCueStrip'
 import { Timeline } from './components/Timeline'
 import { TransportBar } from './components/TransportBar'
 import { ExportDialog, LyricsEditorDialog, ValidationDialog, WorkflowGuideDialog } from './components/Dialogs'
@@ -28,6 +28,7 @@ import {
   applyTimingDraft,
   clearTrackTimingFrom,
   patchWord,
+  patchWords,
   recalculateLine,
   shiftWords,
   slugify,
@@ -249,7 +250,7 @@ export function syncWordIndexFromLyricTime(words: LyricWord[], lyricTimeMs: numb
 
 export default function App() {
   const history = useProjectHistory(createProject)
-  const { project, commit, replaceCurrent } = history
+  const { project, commit: commitHistory, replaceCurrent } = history
   const [projectPath, setProjectPath] = useState<string | null>(null)
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
   const [activeTrackId, setActiveTrackId] = useState(project.tracks[0]?.id ?? '')
@@ -257,7 +258,6 @@ export default function App() {
   const [zoom, setZoom] = useState(1)
   const [syncMode, setSyncMode] = useState(false)
   const [syncCursor, setSyncCursor] = useState(0)
-  const [heldWordId, setHeldWordId] = useState<string | null>(null)
   const [lyricsDialogOpen, setLyricsDialogOpen] = useState(false)
   const [exportDialogOpen, setExportDialogOpen] = useState(false)
   const [videoExportProgress, setVideoExportProgress] = useState<StudioVideoExportProgress | null>(null)
@@ -268,12 +268,29 @@ export default function App() {
   const projectInputRef = useRef<HTMLInputElement>(null)
   const audioInputRef = useRef<HTMLInputElement>(null)
   const lrcInputRef = useRef<HTMLInputElement>(null)
-  const currentTimeRef = useRef(0)
-  const syncHeldRef = useRef<{ wordId: string; startMs: number } | null>(null)
+  const syncHeldRef = useRef<{
+    wordId: string
+    startMs: number
+    isLineFinal: boolean
+  } | null>(null)
+  const syncSessionHasCommitRef = useRef(false)
   const projectRestoreSequenceRef = useRef(0)
   const projectLifecycleSequenceRef = useRef(0)
   const saveRequestSequenceRef = useRef(0)
   const videoExportActiveRef = useRef(false)
+  const lastReviewIssuesRef = useRef<ValidationIssue[]>([])
+
+  // Any ordinary edit ends an armed synchronization transaction before it
+  // creates its own history entry. Sync timing uses commitHistory directly so
+  // its first real mutation can remain the session's single undo baseline.
+  const commit = useCallback((
+    updater: KaraokeProject | ((project: KaraokeProject) => KaraokeProject),
+  ) => {
+    syncHeldRef.current = null
+    syncSessionHasCommitRef.current = false
+    setSyncMode(false)
+    commitHistory(updater)
+  }, [commitHistory])
 
   const persistAudioDuration = useCallback((nextDurationMs: number) => {
     replaceCurrent((current) => current.durationMs === nextDurationMs
@@ -282,13 +299,19 @@ export default function App() {
   }, [replaceCurrent])
 
   const activeTrack = project.tracks.find((track) => track.id === activeTrackId) ?? project.tracks[0]
-  const syncWords = useMemo(() => (activeTrack ? flattenTrack(activeTrack).map(({ word }) => word) : []), [activeTrack])
+  const syncItems = useMemo(() => (activeTrack ? flattenTrack(activeTrack) : []), [activeTrack])
+  const syncWords = useMemo(() => syncItems.map(({ word }) => word), [syncItems])
   const projectHasLyrics = useMemo(
     () => project.tracks.some((track) => track.lines.some((line) => line.words.length > 0)),
     [project.tracks],
   )
-  const durationMs = effectiveDuration(project)
-  const playback = usePlayback({ durationMs, audioUrl, onDuration: persistAudioDuration })
+  const durationMs = useMemo(() => effectiveDuration(project), [project])
+  const playback = usePlayback({
+    durationMs,
+    audioUrl,
+    onDuration: persistAudioDuration,
+    refreshIntervalMs: syncMode ? 50 : 16,
+  })
   const waveform = useWaveform(audioUrl)
   const lyricTimeMs = lyricTimeAtPlayback(playback.currentMs, project.offsetMs)
   const previewProject = useMemo(
@@ -299,10 +322,6 @@ export default function App() {
   const updateTimingDraft = useCallback((timings: ProjectTimingDraft | null) => {
     setTimingDraft(timings ? { revision: history.revision, timings } : null)
   }, [history.revision])
-
-  useEffect(() => {
-    currentTimeRef.current = playback.currentMs
-  }, [playback.currentMs])
 
   useEffect(() => {
     if (!toast) return
@@ -333,9 +352,11 @@ export default function App() {
     return () => window.removeEventListener('beforeunload', beforeUnload)
   }, [history.dirty])
 
+  const reviewProject = syncMode ? null : project
   const reviewIssues = useMemo<ValidationIssue[]>(() => {
-    const issues = validateProject(project)
-    project.tracks.forEach((track, trackIndex) => {
+    if (!reviewProject) return lastReviewIssuesRef.current
+    const issues = validateProject(reviewProject)
+    reviewProject.tracks.forEach((track, trackIndex) => {
       const untimed = flattenTrack(track).filter(({ word }) => word.startMs === null).length
       if (untimed) {
         issues.push({
@@ -347,8 +368,9 @@ export default function App() {
         })
       }
     })
+    lastReviewIssuesRef.current = issues
     return issues
-  }, [project])
+  }, [reviewProject])
 
   const showToast = useCallback((message: string, tone: ToastState['tone'] = 'neutral') => setToast({ message, tone }), [])
 
@@ -366,6 +388,14 @@ export default function App() {
 
   const updateProject = useCallback((patch: Partial<Pick<KaraokeProject, 'title' | 'artist' | 'offsetMs'>>) => {
     commit((current) => ({ ...current, ...patch, updatedAt: new Date().toISOString() }))
+  }, [commit])
+
+  const updateLyricDisplay = useCallback((patch: Partial<LyricDisplaySettings>) => {
+    commit((current) => ({
+      ...current,
+      lyricDisplay: { ...current.lyricDisplay, ...patch },
+      updatedAt: new Date().toISOString(),
+    }))
   }, [commit])
 
   const updateTrack = useCallback((trackId: string, patch: Partial<Pick<VocalTrack, 'name' | 'color' | 'muted' | 'solo'>>) => {
@@ -396,7 +426,7 @@ export default function App() {
     setSelectedWordIds(new Set())
     setSyncMode(false)
     syncHeldRef.current = null
-    setHeldWordId(null)
+    syncSessionHasCommitRef.current = false
     playback.pause()
     playback.seek(0)
     setAudioUrl(null)
@@ -446,7 +476,7 @@ export default function App() {
     setSelectedWordIds(new Set())
     setSyncMode(false)
     syncHeldRef.current = null
-    setHeldWordId(null)
+    syncSessionHasCommitRef.current = false
     playback.pause()
     playback.seek(0)
     void window.studio?.releaseAudio?.().catch((error: unknown) => {
@@ -502,13 +532,14 @@ export default function App() {
   const applyAudio = useCallback((path: string, url: string, name?: string) => {
     projectRestoreSequenceRef.current += 1
     playback.pause()
+    playback.seek(0)
     setAudioUrl((current) => {
       if (current?.startsWith('blob:')) URL.revokeObjectURL(current)
       return url
     })
     commit((current) => ({ ...current, audioPath: path, updatedAt: new Date().toISOString() }))
     showToast(`${name ?? path.split('/').pop() ?? 'Audio'} linked`, 'success')
-  }, [commit, playback.pause, showToast])
+  }, [commit, playback.pause, playback.seek, showToast])
 
   const handleImportAudio = useCallback(async () => {
     if (window.studio) {
@@ -526,7 +557,7 @@ export default function App() {
       replaceTrack(activeTrack.id, { ...imported, name: activeTrack.name, color: activeTrack.color })
       setSelectedWordIds(new Set())
       syncHeldRef.current = null
-      setHeldWordId(null)
+      syncSessionHasCommitRef.current = false
       setSyncMode(false)
       showToast(`Imported LRC into ${activeTrack.name}`, 'success')
     } catch (error) {
@@ -622,8 +653,36 @@ export default function App() {
 
   const cancelHeldSync = useCallback(() => {
     syncHeldRef.current = null
-    setHeldWordId(null)
   }, [])
+
+  const applySyncMutation = useCallback((
+    updater: (current: KaraokeProject) => KaraokeProject,
+  ) => {
+    if (syncSessionHasCommitRef.current) {
+      replaceCurrent(updater)
+      return
+    }
+    commitHistory((current) => {
+      const next = updater(current)
+      if (next === current) return current
+      syncSessionHasCommitRef.current = true
+      return next
+    })
+  }, [commitHistory, replaceCurrent])
+
+  const handleUndo = useCallback(() => {
+    cancelHeldSync()
+    syncSessionHasCommitRef.current = false
+    setSyncMode(false)
+    history.undo()
+  }, [cancelHeldSync, history.undo])
+
+  const handleRedo = useCallback(() => {
+    cancelHeldSync()
+    syncSessionHasCommitRef.current = false
+    setSyncMode(false)
+    history.redo()
+  }, [cancelHeldSync, history.redo])
 
   const selectAllActiveTrackWords = useCallback(() => {
     setSelectedWordIds(new Set(activeTrack ? flattenTrack(activeTrack).map(({ word }) => word.id) : []))
@@ -635,6 +694,7 @@ export default function App() {
       const changingTrack = item.track.id !== activeTrackId
       if (changingTrack) {
         cancelHeldSync()
+        syncSessionHasCommitRef.current = false
         setSyncMode(false)
         setActiveTrackId(item.track.id)
       }
@@ -651,6 +711,7 @@ export default function App() {
     }
     playback.pause()
     cancelHeldSync()
+    syncSessionHasCommitRef.current = false
     setSyncMode(false)
     setSelectedWordIds(new Set())
     replaceTrack(activeTrack.id, nextTrack)
@@ -663,15 +724,16 @@ export default function App() {
 
   const handleClearTimingAfterCursor = useCallback(() => {
     clearActiveTrackTimingFrom(
-      lyricTimeAtPlayback(currentTimeRef.current, project.offsetMs),
+      lyricTimeAtPlayback(playback.getCurrentMs(), project.offsetMs),
       'Cleared active-track timing from the playhead',
       'No active-track timing starts at or after the playhead',
     )
-  }, [clearActiveTrackTimingFrom, project.offsetMs])
+  }, [clearActiveTrackTimingFrom, playback.getCurrentMs, project.offsetMs])
 
   const handleStop = useCallback(() => {
     cancelHeldSync()
     setSyncMode(false)
+    syncSessionHasCommitRef.current = false
     playback.pause()
     playback.seek(0)
   }, [cancelHeldSync, playback.pause, playback.seek])
@@ -680,23 +742,25 @@ export default function App() {
     if (syncMode) {
       cancelHeldSync()
       setSyncMode(false)
+      syncSessionHasCommitRef.current = false
       return
     }
     if (!syncWords.length) {
       showToast('Add lyrics before starting sync', 'warning')
       return
     }
-    const lyricTimeMs = lyricTimeAtPlayback(currentTimeRef.current, project.offsetMs)
+    const lyricTimeMs = lyricTimeAtPlayback(playback.getCurrentMs(), project.offsetMs)
     const fromPlayhead = syncWordIndexFromLyricTime(syncWords, lyricTimeMs)
     if (fromPlayhead < 0) {
       showToast('No words remain at or after the playhead', 'neutral')
       return
     }
+    syncSessionHasCommitRef.current = false
     setSyncCursor(fromPlayhead)
     setSyncMode(true)
     playback.play()
-    showToast('Tap sync armed — hold Space for each word', 'neutral')
-  }, [cancelHeldSync, playback.play, project.offsetMs, showToast, syncMode, syncWords])
+    showToast('Tap sync armed — press each word onset; hold the final word of a line', 'neutral')
+  }, [cancelHeldSync, playback.getCurrentMs, playback.play, project.offsetMs, showToast, syncMode, syncWords])
 
   useEffect(() => {
     const keyDown = (event: KeyboardEvent) => {
@@ -706,6 +770,7 @@ export default function App() {
         event.preventDefault()
         setSyncMode(false)
         cancelHeldSync()
+        syncSessionHasCommitRef.current = false
         return
       }
       if (
@@ -720,21 +785,21 @@ export default function App() {
       }
       if ((event.code === 'Backspace' || event.code === 'Delete') && selectedWordIds.size) {
         event.preventDefault()
-        commit((current) => {
-          let next = current
-          selectedWordIds.forEach((id) => { next = patchWord(next, id, { startMs: null, endMs: null }) })
-          return next
-        })
+        const patches = new Map([...selectedWordIds].map((id) => [
+          id,
+          { startMs: null, endMs: null },
+        ]))
+        commit((current) => patchWords(current, patches))
         return
       }
       if (event.code === 'ArrowLeft') {
         event.preventDefault()
-        playback.seek(currentTimeRef.current - (event.shiftKey ? 1000 : 250))
+        playback.seek(playback.getCurrentMs() - (event.shiftKey ? 1000 : 250))
         return
       }
       if (event.code === 'ArrowRight') {
         event.preventDefault()
-        playback.seek(currentTimeRef.current + (event.shiftKey ? 1000 : 250))
+        playback.seek(playback.getCurrentMs() + (event.shiftKey ? 1000 : 250))
         return
       }
       if (event.code !== 'Space') return
@@ -749,17 +814,42 @@ export default function App() {
       }
       if (!syncMode) return
       if (event.repeat || syncHeldRef.current) return
-      const word = syncWords[syncCursor]
-      if (!word) {
+      const item = syncItems[syncCursor]
+      if (!item) {
         setSyncMode(false)
+        syncSessionHasCommitRef.current = false
         showToast('All words are timed', 'success')
         return
       }
-      syncHeldRef.current = {
-        wordId: word.id,
-        startMs: Math.max(0, lyricTimeAtPlayback(currentTimeRef.current, project.offsetMs)),
+
+      const sampledLyricMs = lyricTimeAtPlayback(playback.getCurrentMs(), project.offsetMs)
+      if (sampledLyricMs < 0) {
+        showToast('The lyric clock has not reached 0:00 yet', 'neutral')
+        return
       }
-      setHeldWordId(word.id)
+      const previous = syncItems[syncCursor - 1]
+      const sameLine = previous?.line.id === item.line.id
+      let startMs = Math.round(sampledLyricMs)
+      if (previous && sameLine && previous.word.startMs !== null) {
+        startMs = Math.max(startMs, previous.word.startMs + 1)
+      } else if (previous?.word.endMs !== null && previous?.word.endMs !== undefined) {
+        startMs = Math.max(startMs, previous.word.endMs)
+      }
+
+      const patches = new Map<
+        string,
+        Partial<Pick<LyricWord, 'startMs' | 'endMs'>>
+      >()
+      if (previous && sameLine && previous.word.startMs !== null) {
+        patches.set(previous.word.id, { endMs: startMs })
+      }
+      patches.set(item.word.id, { startMs, endMs: startMs + 100 })
+      applySyncMutation((current) => patchWords(current, patches))
+      syncHeldRef.current = {
+        wordId: item.word.id,
+        startMs,
+        isLineFinal: item.wordIndex === item.line.words.length - 1,
+      }
       playback.play()
     }
 
@@ -774,14 +864,20 @@ export default function App() {
       const held = syncHeldRef.current
       if (!held) return
       event.preventDefault()
-      const rawCurrentMs = Math.max(0, lyricTimeAtPlayback(currentTimeRef.current, project.offsetMs))
-      const endMs = Math.max(held.startMs + 100, rawCurrentMs)
-      commit((current) => patchWord(current, held.wordId, { startMs: Math.round(held.startMs), endMs: Math.round(endMs) }))
+      if (held.isLineFinal) {
+        const sampledLyricMs = lyricTimeAtPlayback(playback.getCurrentMs(), project.offsetMs)
+        const endMs = Math.max(held.startMs + 100, Math.round(sampledLyricMs))
+        applySyncMutation((current) => patchWord(current, held.wordId, {
+          startMs: held.startMs,
+          endMs,
+        }))
+      }
       cancelHeldSync()
       setSyncCursor((index) => {
         const next = index + 1
-        if (next >= syncWords.length) {
+        if (next >= syncItems.length) {
           setSyncMode(false)
+          syncSessionHasCommitRef.current = false
           showToast('Track timing complete', 'success')
         }
         return next
@@ -798,7 +894,7 @@ export default function App() {
       window.removeEventListener('keyup', keyUp)
       window.removeEventListener('blur', windowBlur)
     }
-  }, [cancelHeldSync, commit, playback.play, playback.seek, playback.toggle, project.offsetMs, selectAllActiveTrackWords, selectedWordIds, showToast, syncCursor, syncMode, syncWords])
+  }, [applySyncMutation, cancelHeldSync, commit, playback.getCurrentMs, playback.play, playback.seek, playback.toggle, project.offsetMs, selectAllActiveTrackWords, selectedWordIds, showToast, syncCursor, syncItems, syncMode])
 
   useEffect(() => {
     if (!window.studio) return
@@ -824,10 +920,35 @@ export default function App() {
           selectAllActiveTrackWords()
         }
       }
-      else if (action === 'undo') history.undo()
-      else if (action === 'redo') history.redo()
+      else if (action === 'undo') handleUndo()
+      else if (action === 'redo') handleRedo()
     })
-  }, [handleImportAudio, handleImportLrc, handleNew, handleOpen, handleSave, history.redo, history.undo, playback.toggle, selectAllActiveTrackWords, showToast])
+  }, [handleImportAudio, handleImportLrc, handleNew, handleOpen, handleRedo, handleSave, handleUndo, playback.toggle, selectAllActiveTrackWords, showToast])
+
+  const handleSelectTrack = useCallback((trackId: string) => {
+    cancelHeldSync()
+    syncSessionHasCommitRef.current = false
+    setSyncMode(false)
+    setActiveTrackId(trackId)
+    setSelectedWordIds(new Set())
+  }, [cancelHeldSync])
+
+  const handleAddTrack = useCallback(() => {
+    cancelHeldSync()
+    syncSessionHasCommitRef.current = false
+    setSyncMode(false)
+    const track = createVocalTrack({
+      id: crypto.randomUUID(),
+      name: 'Duet Vocal',
+      color: '#ff8f6b',
+    })
+    commit((current) => ({
+      ...current,
+      tracks: [...current.tracks, track],
+      updatedAt: new Date().toISOString(),
+    }))
+    setActiveTrackId(track.id)
+  }, [cancelHeldSync, commit])
 
   const workflowGuideActions = createWorkflowGuideActions({
     canStartSync: syncWords.length > 0,
@@ -842,7 +963,7 @@ export default function App() {
     exportProject: () => setExportDialogOpen(true),
   })
 
-  const syncWordId = heldWordId ?? (syncMode ? syncWords[syncCursor]?.id ?? null : null)
+  const syncWordId = syncMode ? syncWords[syncCursor]?.id ?? null : null
 
   return (
     <div className="app-shell">
@@ -856,8 +977,8 @@ export default function App() {
         onNew={handleNew}
         onOpen={() => void handleOpen()}
         onSave={() => void handleSave(false)}
-        onUndo={history.undo}
-        onRedo={history.redo}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
         onShowWorkflow={() => setWorkflowGuideOpen(true)}
         onValidate={() => setValidationDialogOpen(true)}
         onExport={() => setExportDialogOpen(true)}
@@ -867,48 +988,32 @@ export default function App() {
         <InspectorPanel
           project={project}
           activeTrackId={activeTrackId}
-          onSelectTrack={(trackId) => {
-            cancelHeldSync()
-            setSyncMode(false)
-            setActiveTrackId(trackId)
-            setSelectedWordIds(new Set())
-          }}
+          onSelectTrack={handleSelectTrack}
           onUpdateProject={updateProject}
           onUpdateTrack={updateTrack}
-          onAddTrack={() => {
-            cancelHeldSync()
-            setSyncMode(false)
-            const track = createVocalTrack({ id: crypto.randomUUID(), name: 'Duet Vocal', color: '#ff8f6b' })
-            commit((current) => ({ ...current, tracks: [...current.tracks, track], updatedAt: new Date().toISOString() }))
-            setActiveTrackId(track.id)
-          }}
-          onImportAudio={() => void handleImportAudio()}
-          onImportLrc={() => void handleImportLrc()}
+          onAddTrack={handleAddTrack}
+          onImportAudio={handleImportAudio}
+          onImportLrc={handleImportLrc}
         />
 
-        <div className="unified-workspace">
+        <div className={`unified-workspace ${syncMode ? 'is-syncing' : ''}`}>
           <div className="workspace-top">
-            <KaraokePreview
-              project={previewProject}
-              playbackMs={playback.currentMs}
-              lyricMs={lyricTimeMs}
-              selectedWordIds={selectedWordIds}
-            />
-            <LyricsPanel
-              tracks={project.tracks}
-              activeTrackId={activeTrackId}
-              lyricMs={lyricTimeMs}
-              selectedWordIds={selectedWordIds}
-              syncWordId={syncWordId}
-              onSelectTrack={(trackId) => {
-                cancelHeldSync()
-                setSyncMode(false)
-                setActiveTrackId(trackId)
-                setSelectedWordIds(new Set())
-              }}
-              onSelectWord={handleSelectWord}
-              onEditLyrics={() => setLyricsDialogOpen(true)}
-            />
+            {syncMode && activeTrack ? (
+              <SyncCueStrip
+                track={activeTrack}
+                syncCursor={syncCursor}
+                onEditLyrics={() => setLyricsDialogOpen(true)}
+              />
+            ) : (
+              <KaraokePreview
+                project={previewProject}
+                playbackMs={playback.currentMs}
+                lyricMs={lyricTimeMs}
+                selectedWordIds={selectedWordIds}
+                onUpdateLyricDisplay={updateLyricDisplay}
+                onEditLyrics={() => setLyricsDialogOpen(true)}
+              />
+            )}
           </div>
 
           <Timeline
@@ -932,6 +1037,7 @@ export default function App() {
             onToggleSync={toggleSyncMode}
             onClearTiming={handleClearTiming}
             onClearTimingAfterCursor={handleClearTimingAfterCursor}
+            onEditLyrics={() => setLyricsDialogOpen(true)}
           />
         </div>
       </main>
@@ -995,6 +1101,7 @@ export default function App() {
           onSave={(text) => {
             replaceTrack(activeTrack.id, parseLyrics(text, activeTrack.id, activeTrack))
             cancelHeldSync()
+            syncSessionHasCommitRef.current = false
             setSyncMode(false)
             setSelectedWordIds(new Set())
             setLyricsDialogOpen(false)

@@ -16,6 +16,7 @@ import {
   migrateProject,
   parseLyrics,
   parseProject,
+  planLyricDisplayLines,
   retimeLine,
   serializeProject,
   validateProject,
@@ -27,7 +28,8 @@ describe('karaoke project model', () => {
   it('creates a valid seeded project with integer word timings', () => {
     const project = createDemoProject()
 
-    expect(project.schemaVersion).toBe(2)
+    expect(project.schemaVersion).toBe(3)
+    expect(project.lyricDisplay).toEqual({ lineCount: 3, advanceMode: 'clear' })
     expect(project.title).toBe('Neon Afterglow')
     expect(project.tracks[0].color).toBe('#22d3ee')
     expect(createVocalTrack({ id: 'default-color' }).color).toBe('#22d3ee')
@@ -60,6 +62,30 @@ describe('karaoke project model', () => {
     expect(edited.lines[0].words[1].startMs).toBeNull()
     expect(edited.lines[0].words[2].text).toBe('bright')
     expect(edited.lines[0].words[2].startMs).not.toBeNull()
+  })
+
+  it('preserves one internal blank row as a section separator', () => {
+    const track = parseLyrics(
+      '\n  First phrase  \n\n\n Second phrase \n\n',
+      'lead',
+    )
+
+    expect(track.lines.map((line) => line.text)).toEqual([
+      'First phrase',
+      '',
+      'Second phrase',
+    ])
+    expect(track.lines[1].words).toEqual([])
+    expect(track.lines.flatMap((line) => line.words)).toHaveLength(4)
+
+    const reparsed = parseLyrics(
+      'First phrase\n\nSecond phrase',
+      'lead',
+      track,
+    )
+    expect(reparsed.lines.map((line) => line.id)).toEqual(
+      track.lines.map((line) => line.id),
+    )
   })
 
   it('keeps timing attached to the right lines when text is inserted', () => {
@@ -165,6 +191,21 @@ describe('karaoke project model', () => {
     )
   })
 
+  it('validates persisted lyric display settings', () => {
+    const invalidCount = createProject({
+      lyricDisplay: { lineCount: 6, advanceMode: 'clear' },
+    })
+    expect(validateProject(invalidCount).map((issue) => issue.code)).toContain(
+      'lyric-display-line-count',
+    )
+
+    const invalidMode = createProject() as KaraokeProject
+    invalidMode.lyricDisplay.advanceMode = 'page' as 'clear'
+    expect(validateProject(invalidMode).map((issue) => issue.code)).toContain(
+      'lyric-display-advance-mode',
+    )
+  })
+
   it('validates timing against duration after applying the global offset', () => {
     const shiftedLate = createProject({
       durationMs: 30_000,
@@ -189,6 +230,87 @@ describe('karaoke project model', () => {
     expect(validateProject(shiftedEarlier).map((issue) => issue.code)).not.toContain(
       'timing-after-duration',
     )
+  })
+})
+
+describe('lyric display planning', () => {
+  function timedLine(id: string, startMs: number, endMs: number) {
+    return retimeLine(createLyricLine(id, { id }), startMs, endMs)
+  }
+
+  const lineTexts = (lines: ReturnType<typeof planLyricDisplayLines>) =>
+    lines.map((line) => line.text)
+
+  it('keeps clear-mode pages inside blank-line sections', () => {
+    const track = createVocalTrack({
+      id: 'lead',
+      lines: [
+        timedLine('A', 0, 1_000),
+        timedLine('B', 1_000, 2_000),
+        timedLine('C', 2_000, 3_000),
+        createLyricLine('', { id: 'separator' }),
+        timedLine('D', 5_000, 6_000),
+        timedLine('E', 6_000, 7_000),
+        timedLine('F', 7_000, 8_000),
+        timedLine('G', 8_000, 9_000),
+        timedLine('H', 9_000, 10_000),
+      ],
+    })
+    const settings = { lineCount: 5, advanceMode: 'clear' } as const
+
+    expect(lineTexts(planLyricDisplayLines(track, -1, settings))).toEqual(['A', 'B', 'C'])
+    expect(lineTexts(planLyricDisplayLines(track, 2_500, settings))).toEqual(['A', 'B', 'C'])
+    expect(lineTexts(planLyricDisplayLines(track, 3_000, settings))).toEqual([
+      'D',
+      'E',
+      'F',
+      'G',
+      'H',
+    ])
+    expect(planLyricDisplayLines(track, 10_000, settings)).toEqual([])
+  })
+
+  it('pages in clear mode and advances one line at a time in scroll mode', () => {
+    const track = createVocalTrack({
+      id: 'lead',
+      lines: [
+        timedLine('One', 0, 1_000),
+        timedLine('Two', 1_000, 2_000),
+        timedLine('Three', 2_000, 3_000),
+        timedLine('Four', 3_000, 4_000),
+      ],
+    })
+
+    expect(lineTexts(planLyricDisplayLines(
+      track,
+      1_500,
+      { lineCount: 2, advanceMode: 'clear' },
+    ))).toEqual(['One', 'Two'])
+    expect(lineTexts(planLyricDisplayLines(
+      track,
+      2_000,
+      { lineCount: 2, advanceMode: 'clear' },
+    ))).toEqual(['Three', 'Four'])
+    expect(lineTexts(planLyricDisplayLines(
+      track,
+      1_000,
+      { lineCount: 3, advanceMode: 'scroll' },
+    ))).toEqual(['Two', 'Three', 'Four'])
+    expect(lineTexts(planLyricDisplayLines(
+      track,
+      2_000,
+      { lineCount: 3, advanceMode: 'scroll' },
+    ))).toEqual(['Two', 'Three', 'Four'])
+  })
+
+  it('uses an editor focus line for untimed lyrics', () => {
+    const track = parseLyrics('Alpha\nBeta\nGamma', 'lead')
+    expect(lineTexts(planLyricDisplayLines(
+      track,
+      0,
+      { lineCount: 2, advanceMode: 'scroll' },
+      track.lines[1].id,
+    ))).toEqual(['Beta', 'Gamma'])
   })
 })
 
@@ -450,7 +572,10 @@ describe('ASS export', () => {
 
 describe('project serialization and migration', () => {
   it('round-trips current project JSON', () => {
-    const project = createDemoProject()
+    const project = createProject({
+      lyricDisplay: { lineCount: 5, advanceMode: 'scroll' },
+      tracks: [parseLyrics('First section\n\nSecond section', 'lead')],
+    })
     expect(parseProject(serializeProject(project))).toEqual(project)
   })
 
@@ -492,15 +617,28 @@ describe('project serialization and migration', () => {
 
     const migrated = migrateProject(legacy)
     expect(migrated).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       title: 'Old Song',
       artist: 'Old Singer',
       audioPath: '/music/song.mp3',
       durationMs: 12_500,
       offsetMs: -250,
+      lyricDisplay: { lineCount: 3, advanceMode: 'clear' },
     })
     expect(migrated.tracks[0].lines[0].words[1].startMs).toBe(2_000)
     expect(validateProject(migrated).filter((issue) => issue.severity === 'error')).toEqual([])
+  })
+
+  it('migrates strict version 2 projects to default lyric display settings', () => {
+    const current = createDemoProject()
+    const { lyricDisplay: _lyricDisplay, ...versionTwoFields } = current
+    const versionTwo = { ...versionTwoFields, schemaVersion: 2 }
+
+    const migrated = migrateProject(versionTwo)
+
+    expect(migrated.schemaVersion).toBe(3)
+    expect(migrated.lyricDisplay).toEqual({ lineCount: 3, advanceMode: 'clear' })
+    expect(migrated.tracks).toEqual(current.tracks)
   })
 
   it('rejects compact legacy lyrics before allocating over the word cap', () => {
@@ -523,6 +661,20 @@ describe('project serialization and migration', () => {
     const malformedCurrent = { ...createDemoProject(), title: 42 }
     expect(() => parseProject(JSON.stringify(malformedCurrent))).toThrow(
       'project.title must be a string',
+    )
+    const missingDisplay = createDemoProject() as KaraokeProject & {
+      lyricDisplay?: KaraokeProject['lyricDisplay']
+    }
+    delete missingDisplay.lyricDisplay
+    expect(() => parseProject(JSON.stringify(missingDisplay))).toThrow(
+      'project.lyricDisplay must be an object',
+    )
+    const invalidDisplay = {
+      ...createDemoProject(),
+      lyricDisplay: { lineCount: 0, advanceMode: 'clear' },
+    }
+    expect(() => parseProject(JSON.stringify(invalidDisplay))).toThrow(
+      'Lyric display line count must be an integer from 1 to 5',
     )
 
     const invalid = createDemoProject() as KaraokeProject

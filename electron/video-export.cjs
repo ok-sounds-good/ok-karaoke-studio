@@ -17,6 +17,9 @@ const MAX_VIDEO_FRAMES = Math.ceil(MAX_VIDEO_DURATION_MS / FRAME_INTERVAL_MS)
 const MAX_TRACKS = 2
 const MAX_LINES = 20_000
 const MAX_WORDS = 150_000
+const MIN_LYRIC_DISPLAY_LINES = 1
+const MAX_LYRIC_DISPLAY_LINES = 5
+const DEFAULT_LYRIC_DISPLAY = Object.freeze({ lineCount: 3, advanceMode: 'clear' })
 
 function isRecord(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -47,6 +50,23 @@ function validateTimingPair(startMs, endMs, label) {
   if (startMs !== null && endMs <= startMs) {
     throw new RangeError(`${label} must end after it starts`)
   }
+}
+
+function normalizeLyricDisplay(value) {
+  if (value === undefined) return { ...DEFAULT_LYRIC_DISPLAY }
+  if (!isRecord(value)) throw new TypeError('lyricDisplay must be an object')
+  if (!Number.isSafeInteger(value.lineCount)) {
+    throw new TypeError('lyricDisplay.lineCount must be an integer')
+  }
+  if (value.lineCount < MIN_LYRIC_DISPLAY_LINES || value.lineCount > MAX_LYRIC_DISPLAY_LINES) {
+    throw new RangeError(
+      `lyricDisplay.lineCount must be between ${MIN_LYRIC_DISPLAY_LINES} and ${MAX_LYRIC_DISPLAY_LINES}`,
+    )
+  }
+  if (value.advanceMode !== 'clear' && value.advanceMode !== 'scroll') {
+    throw new TypeError('lyricDisplay.advanceMode must be clear or scroll')
+  }
+  return { lineCount: value.lineCount, advanceMode: value.advanceMode }
 }
 
 function normalizeProjectForVideo(value) {
@@ -138,6 +158,7 @@ function normalizeProjectForVideo(value) {
     audioPath: limitedText(value.audioPath, '', 8_192),
     durationMs,
     offsetMs,
+    lyricDisplay: normalizeLyricDisplay(value.lyricDisplay),
     tracks,
   }
 }
@@ -198,16 +219,41 @@ function effectiveVideoDuration(projectValue, requestedDurationMs) {
   return effectiveVideoDurationForProject(normalizeProjectForVideo(projectValue), requestedDurationMs)
 }
 
+function createTrackDisplayIndex(track, offsetMs) {
+  const positions = []
+  let section = []
+  const appendSection = () => {
+    section.forEach((line, lineIndex) => {
+      positions.push({ line, lineIndex, section })
+    })
+    section = []
+  }
+
+  track.lines.forEach((line) => {
+    if (!line.text.trim() && line.words.length === 0) appendSection()
+    else section.push(line)
+  })
+  appendSection()
+
+  const timedPositions = positions.flatMap((position) => {
+    const rawRange = rawLineRange(position.line)
+    return rawRange ? [{ position, rawRange }] : []
+  })
+  const adjustedLines = timedPositions.flatMap(({ position, rawRange }) => {
+    const range = adjustedLineRange(position.line, offsetMs)
+    return range ? [{ line: position.line, range, rawRange }] : []
+  })
+  return { track, timedPositions, adjustedLines }
+}
+
 function createVideoIndex(project) {
-  const tracks = visibleTracks(project).map((track) => ({
-    track,
-    lines: track.lines
-      .map((line) => ({ line, range: adjustedLineRange(line, project.offsetMs) }))
-      .filter((entry) => entry.range)
-      .sort((left, right) => left.range.startMs - right.range.startMs),
-  }))
+  const tracks = visibleTracks(project).map((track) =>
+    createTrackDisplayIndex(track, project.offsetMs),
+  )
   const upcomingLines = tracks
-    .flatMap(({ track, lines }) => lines.map((entry) => ({ ...entry, track })))
+    .flatMap(({ track, adjustedLines }) =>
+      adjustedLines.map((entry) => ({ ...entry, track })),
+    )
     .sort((left, right) => left.range.startMs - right.range.startMs)
   return {
     project,
@@ -273,60 +319,74 @@ function createFrameCursor(index) {
   }
 }
 
+function plannedTrackLines(trackIndex, lyricMs, settings, cursorPosition) {
+  let position = cursorPosition
+  if (position === undefined) {
+    position = trackIndex.timedPositions.findIndex(
+      (entry) => lyricMs < entry.rawRange.endMs,
+    )
+  }
+  const target = position >= 0 ? trackIndex.timedPositions[position]?.position : undefined
+  if (!target) return []
+  const startIndex = settings.advanceMode === 'scroll'
+    ? Math.min(target.lineIndex, Math.max(0, target.section.length - settings.lineCount))
+    : Math.floor(target.lineIndex / settings.lineCount) * settings.lineCount
+  return target.section.slice(startIndex, startIndex + settings.lineCount)
+}
+
 function frameStateAtIndex(index, playbackMs, cursor) {
   const { project } = index
   const lyricMs = playbackMs - project.offsetMs
   const showTitle = Number.isFinite(index.firstStart) && playbackMs < Math.max(0, index.firstStart - 1_500)
   const lines = []
-  const activeLines = new Set()
 
-  index.tracks.forEach(({ track, lines: trackLines }, trackIndex) => {
-    let activeEntry
+  const trackWindows = index.tracks.map((trackIndex, trackPosition) => {
+    let timedPosition
     if (cursor) {
-      let position = cursor.trackPositions[trackIndex]
-      while (position < trackLines.length && playbackMs > trackLines[position].range.endMs + 500) {
-        position += 1
-      }
-      cursor.trackPositions[trackIndex] = position
-      const candidate = trackLines[position]
-      if (
-        candidate &&
-        ((playbackMs >= candidate.range.startMs - 120 && playbackMs <= candidate.range.endMs + 500) ||
-          (candidate.range.startMs > playbackMs && candidate.range.startMs - playbackMs < 1_800))
+      timedPosition = cursor.trackPositions[trackPosition]
+      while (
+        timedPosition < trackIndex.timedPositions.length &&
+        lyricMs >= trackIndex.timedPositions[timedPosition].rawRange.endMs
       ) {
-        activeEntry = candidate
+        timedPosition += 1
       }
-    } else {
-      activeEntry = trackLines.find(
-        (entry) => playbackMs >= entry.range.startMs - 120 && playbackMs <= entry.range.endMs + 500,
-      )
-      activeEntry ||= trackLines.find(
-        (entry) => entry.range.startMs > playbackMs && entry.range.startMs - playbackMs < 1_800,
-      )
+      cursor.trackPositions[trackPosition] = timedPosition
     }
-    if (!activeEntry) return
-    activeLines.add(activeEntry.line)
-    lines.push({
-      track: track.name,
-      color: track.color,
-      text: activeEntry.line.text.replaceAll('/', '·'),
-      progress: lineProgress(activeEntry.line, lyricMs),
-    })
+    return {
+      track: trackIndex.track,
+      lines: plannedTrackLines(trackIndex, lyricMs, project.lyricDisplay, timedPosition),
+    }
   })
+  for (
+    let lineIndex = 0;
+    lineIndex < project.lyricDisplay.lineCount && lines.length < project.lyricDisplay.lineCount;
+    lineIndex += 1
+  ) {
+    trackWindows.forEach(({ track, lines: trackLines }) => {
+      const line = trackLines[lineIndex]
+      if (line && lines.length < project.lyricDisplay.lineCount) {
+        lines.push({
+          track: track.name,
+          color: track.color,
+          text: line.text.replaceAll('/', '·'),
+          progress: lineProgress(line, lyricMs),
+        })
+      }
+    })
+  }
 
   let upcoming
   if (cursor) {
     while (
       cursor.upcomingPosition < index.upcomingLines.length &&
-      (index.upcomingLines[cursor.upcomingPosition].range.startMs <= playbackMs ||
-        activeLines.has(index.upcomingLines[cursor.upcomingPosition].line))
+      index.upcomingLines[cursor.upcomingPosition].range.startMs <= playbackMs
     ) {
       cursor.upcomingPosition += 1
     }
     upcoming = index.upcomingLines[cursor.upcomingPosition]
   } else {
     upcoming = index.upcomingLines.find(
-      (entry) => entry.range.startMs > playbackMs && !activeLines.has(entry.line),
+      (entry) => entry.range.startMs > playbackMs,
     )
   }
 
@@ -336,8 +396,7 @@ function frameStateAtIndex(index, playbackMs, cursor) {
     playbackMs,
     showTitle,
     instrumental: !showTitle && lines.length === 0,
-    lines: lines.slice(0, 2),
-    nextLine: !showTitle && upcoming ? upcoming.line.text.replaceAll('/', '·') : '',
+    lines,
     nextInMs: upcoming ? Math.max(0, upcoming.range.startMs - playbackMs) : null,
   }
 }
@@ -355,15 +414,15 @@ body{position:relative;background:radial-gradient(circle at 18% 20%,rgba(215,250
 .grain{position:absolute;inset:0;opacity:.12;background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.018) 1px,transparent 1px);background-size:5px 5px}.safe{position:absolute;inset:64px 96px;border:2px solid rgba(255,255,255,.08);border-radius:30px}
 .brand{position:absolute;left:86px;top:58px;font-size:25px;font-weight:800;letter-spacing:.22em;color:#d7fa4a}.clock{position:absolute;right:86px;top:56px;font:600 27px ui-monospace,SFMono-Regular,Menlo,monospace;color:rgba(255,255,255,.58)}
 .content{position:absolute;inset:140px 130px 120px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}.title-card span{font-size:25px;letter-spacing:.2em;text-transform:uppercase;color:#d7fa4a}.title-card h1{margin:34px 0 14px;font-size:104px;line-height:1.04;max-width:1500px}.title-card p{margin:0;font-size:42px;color:rgba(255,255,255,.68)}
-.lines{width:100%;display:flex;flex-direction:column;gap:54px}.line-label{margin-bottom:14px;font-size:23px;font-weight:750;letter-spacing:.14em;text-transform:uppercase}.lyric{position:relative;width:100%;height:1.22em;font-size:82px;line-height:1.15;font-weight:850;letter-spacing:.01em;white-space:nowrap}.lyric span{position:absolute;inset:0;text-align:center}.lyric .base{color:rgba(255,255,255,.46);text-shadow:0 5px 8px rgba(0,0,0,.8),0 0 4px #000}.lyric .fill{color:var(--accent);clip-path:inset(0 calc(100% - var(--progress)) 0 0);text-shadow:0 5px 8px rgba(0,0,0,.8),0 0 16px color-mix(in srgb,var(--accent) 42%,transparent)}
-.instrumental{font-size:64px;font-weight:760;letter-spacing:.08em}.instrumental small{display:block;margin-top:25px;font-size:27px;font-weight:500;color:rgba(255,255,255,.55)}.next{position:absolute;bottom:28px;max-width:1450px;font-size:31px;color:rgba(255,255,255,.46);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lines{width:100%;display:flex;flex-direction:column;gap:18px}.line-label{margin-bottom:4px;font-size:18px;font-weight:750;letter-spacing:.14em;text-transform:uppercase}.lyric{position:relative;width:100%;height:1.18em;font-size:82px;line-height:1.12;font-weight:850;letter-spacing:.01em;white-space:nowrap}.lyric span{position:absolute;inset:0;text-align:center}.lyric .base{color:rgba(255,255,255,.46);text-shadow:0 5px 8px rgba(0,0,0,.8),0 0 4px #000}.lyric .fill{color:var(--accent);clip-path:inset(0 calc(100% - var(--progress)) 0 0);text-shadow:0 5px 8px rgba(0,0,0,.8),0 0 16px color-mix(in srgb,var(--accent) 42%,transparent)}
+.instrumental{font-size:64px;font-weight:760;letter-spacing:.08em}.instrumental small{display:block;margin-top:25px;font-size:27px;font-weight:500;color:rgba(255,255,255,.55)}
 .footer{position:absolute;left:86px;right:86px;bottom:53px;display:flex;justify-content:space-between;font-size:24px;color:rgba(255,255,255,.48)}
 </style></head><body><div class="grain"></div><div class="safe"></div><div class="brand">OKAY / STUDIO</div><div id="clock" class="clock"></div><main id="content" class="content"></main><footer class="footer"><span id="footer-song"></span><span>Okay Karaoke Studio</span></footer><script>
 const text=(tag,className,value)=>{const node=document.createElement(tag);if(className)node.className=className;node.textContent=value;return node}
-const fitSize=(value)=>Math.max(44,Math.min(88,Math.floor(1520/Math.max(12,value.length)*1.28)))
+const fitSize=(value,count)=>Math.max(28,Math.min(88,Math.floor(1520/Math.max(12,value.length)*1.28),Math.floor(610/Math.max(1,count))))
 window.renderKaraokeFrame=(state,sequence)=>{document.body.dataset.frame=String(sequence);document.querySelector('#clock').textContent=new Date(Math.max(0,state.playbackMs)).toISOString().slice(11,19);document.querySelector('#footer-song').textContent=state.artist+' · '+state.title;const content=document.querySelector('#content');content.replaceChildren();
-if(state.showTitle){const card=text('div','title-card','');card.append(text('span','',"Tonight's performance"),text('h1','',state.title),text('p','',state.artist));content.append(card)}else if(state.lines.length){const group=text('div','lines','');for(const item of state.lines){const line=text('div','line','');const label=text('div','line-label',item.track);label.style.color=item.color;const lyric=text('div','lyric','');lyric.style.setProperty('--accent',item.color);lyric.style.setProperty('--progress',(item.progress*100).toFixed(3)+'%');lyric.style.fontSize=fitSize(item.text)+'px';lyric.append(text('span','base',item.text),text('span','fill',item.text));line.append(label,lyric);group.append(line)}content.append(group)}else{const detail=state.nextInMs!==null&&state.nextInMs<=10000?'Lyrics resume in '+Math.max(1,Math.ceil(state.nextInMs/1000))+' seconds':'';const block=text('div','instrumental','Instrumental');if(detail)block.append(text('small','',detail));content.append(block)}
-if(state.nextLine){const next=text('div','next','Next · '+state.nextLine);content.append(next)}return true}
+if(state.showTitle){const card=text('div','title-card','');card.append(text('span','',"Tonight's performance"),text('h1','',state.title),text('p','',state.artist));content.append(card)}else if(state.lines.length){const group=text('div','lines','');group.style.gap=Math.max(8,38-state.lines.length*3)+'px';for(const item of state.lines){const line=text('div','line','');const label=text('div','line-label',item.track);label.style.color=item.color;const lyric=text('div','lyric','');lyric.style.setProperty('--accent',item.color);lyric.style.setProperty('--progress',(item.progress*100).toFixed(3)+'%');lyric.style.fontSize=fitSize(item.text,state.lines.length)+'px';lyric.append(text('span','base',item.text),text('span','fill',item.text));line.append(label,lyric);group.append(line)}content.append(group)}else{const detail=state.nextInMs!==null&&state.nextInMs<=10000?'Lyrics resume in '+Math.max(1,Math.ceil(state.nextInMs/1000))+' seconds':'';const block=text('div','instrumental','Instrumental');if(detail)block.append(text('small','',detail));content.append(block)}
+return true}
 </script></body></html>`
 }
 
@@ -632,4 +691,5 @@ module.exports = {
   frameStateAt,
   normalizeProjectForVideo,
   parseProjectForVideo,
+  renderDocument,
 }

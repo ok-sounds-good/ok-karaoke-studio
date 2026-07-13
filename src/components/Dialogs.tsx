@@ -87,7 +87,7 @@ export function WorkflowGuideDialog({
         </li>
         <li>
           <span><Zap size={18} /></span>
-          <div><strong>Time each word</strong><p>Move the playhead, arm Tap sync, then hold and release Space with the singer.</p></div>
+          <div><strong>Time each word</strong><p>Move the playhead, arm Tap sync, then press Space at each word onset. Hold the final word of a line to extend it.</p></div>
           <Button size="sm" variant="secondary" disabled={!canStartSync} onClick={onStartSync}>
             <Zap size={13} /> {canStartSync ? 'Arm tap sync' : 'Add lyrics first'}
           </Button>
@@ -99,7 +99,7 @@ export function WorkflowGuideDialog({
         </li>
         <li>
           <span><Play size={18} /></span>
-          <div><strong>Preview continuously</strong><p>Play, seek, and adjust timing while the stage preview remains visible above the TimeBoard.</p></div>
+          <div><strong>Verify in Live Preview</strong><p>Sync focus keeps timing lightweight; exit sync to review the configured Clear or Scroll stage view.</p></div>
           <Button size="sm" variant="secondary" onClick={onClose}><Play size={13} /> Show preview</Button>
         </li>
         <li>

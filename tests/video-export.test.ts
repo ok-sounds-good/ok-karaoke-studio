@@ -9,10 +9,11 @@ const videoExport = require('../electron/video-export.cjs') as {
   frameStateAt(project: unknown, playbackMs: number): {
     showTitle: boolean
     instrumental: boolean
-    lines: Array<{ text: string; progress: number }>
+    lines: Array<{ track: string; text: string; progress: number }>
     nextInMs: number | null
   }
   parseProjectForVideo(json: string): unknown
+  renderDocument(): string
 }
 
 function videoProject() {
@@ -22,6 +23,7 @@ function videoProject() {
     audioPath: '/music/test.mp3',
     durationMs: 5_000,
     offsetMs: 1_000,
+    lyricDisplay: { lineCount: 3, advanceMode: 'clear' },
     tracks: [
       {
         name: 'Lead',
@@ -41,6 +43,24 @@ function videoProject() {
         ],
       },
     ],
+  }
+}
+
+function timedVideoLine(text: string, startMs: number, endMs: number) {
+  return {
+    text,
+    startMs,
+    endMs,
+    words: [{ text, startMs, endMs }],
+  }
+}
+
+function blankVideoLine() {
+  return {
+    text: '',
+    startMs: null,
+    endMs: null,
+    words: [],
   }
 }
 
@@ -69,6 +89,111 @@ describe('karaoke video frame planning', () => {
     expect(finished.lines).toEqual([])
   })
 
+  it('renders clear-mode lyric groups without crossing blank separators', () => {
+    const base = videoProject()
+    const project = {
+      ...base,
+      offsetMs: 0,
+      durationMs: 11_000,
+      lyricDisplay: { lineCount: 5, advanceMode: 'clear' },
+      tracks: [{
+        ...base.tracks[0],
+        lines: [
+          timedVideoLine('A', 0, 1_000),
+          timedVideoLine('B', 1_000, 2_000),
+          timedVideoLine('C', 2_000, 3_000),
+          blankVideoLine(),
+          timedVideoLine('D', 5_000, 6_000),
+          timedVideoLine('E', 6_000, 7_000),
+          timedVideoLine('F', 7_000, 8_000),
+          timedVideoLine('G', 8_000, 9_000),
+          timedVideoLine('H', 9_000, 10_000),
+        ],
+      }],
+    }
+
+    expect(videoExport.frameStateAt(project, 0).lines.map((line) => line.text)).toEqual([
+      'A',
+      'B',
+      'C',
+    ])
+    expect(videoExport.frameStateAt(project, 3_000).lines.map((line) => line.text)).toEqual([
+      'D',
+      'E',
+      'F',
+      'G',
+      'H',
+    ])
+    expect(videoExport.frameStateAt(project, 10_000).lines).toEqual([])
+    expect(videoExport.frameStateAt(project, 3_000)).not.toHaveProperty('nextLine')
+  })
+
+  it('pages in clear mode and advances one line in scroll mode', () => {
+    const base = videoProject()
+    const lines = [
+      timedVideoLine('One', 0, 1_000),
+      timedVideoLine('Two', 1_000, 2_000),
+      timedVideoLine('Three', 2_000, 3_000),
+      timedVideoLine('Four', 3_000, 4_000),
+    ]
+    const project = {
+      ...base,
+      offsetMs: 0,
+      tracks: [{ ...base.tracks[0], lines }],
+    }
+
+    expect(videoExport.frameStateAt({
+      ...project,
+      lyricDisplay: { lineCount: 2, advanceMode: 'clear' },
+    }, 1_500).lines.map((line) => line.text)).toEqual(['One', 'Two'])
+    expect(videoExport.frameStateAt({
+      ...project,
+      lyricDisplay: { lineCount: 2, advanceMode: 'clear' },
+    }, 2_000).lines.map((line) => line.text)).toEqual(['Three', 'Four'])
+    expect(videoExport.frameStateAt({
+      ...project,
+      lyricDisplay: { lineCount: 3, advanceMode: 'scroll' },
+    }, 1_000).lines.map((line) => line.text)).toEqual(['Two', 'Three', 'Four'])
+    expect(videoExport.frameStateAt({
+      ...project,
+      lyricDisplay: { lineCount: 3, advanceMode: 'scroll' },
+    }, 2_000).lines.map((line) => line.text)).toEqual(['Two', 'Three', 'Four'])
+  })
+
+  it('treats line count as a stage-wide limit while retaining both visible voices', () => {
+    const base = videoProject()
+    const lines = [
+      timedVideoLine('Lead one', 0, 1_000),
+      timedVideoLine('Lead two', 1_000, 2_000),
+      timedVideoLine('Lead three', 2_000, 3_000),
+    ]
+    const project = {
+      ...base,
+      offsetMs: 0,
+      lyricDisplay: { lineCount: 3, advanceMode: 'clear' },
+      tracks: [
+        { ...base.tracks[0], name: 'Lead', lines },
+        {
+          ...base.tracks[0],
+          name: 'Harmony',
+          color: '#58d6de',
+          lines: lines.map((line) => ({
+            ...line,
+            text: line.text.replace('Lead', 'Harmony'),
+            words: line.words.map((word) => ({
+              ...word,
+              text: word.text.replace('Lead', 'Harmony'),
+            })),
+          })),
+        },
+      ],
+    }
+
+    const state = videoExport.frameStateAt(project, 0)
+    expect(state.lines).toHaveLength(3)
+    expect(new Set(state.lines.map((line) => line.track))).toEqual(new Set(['Lead', 'Harmony']))
+  })
+
   it('rejects malformed and unbounded project payloads', () => {
     expect(() => videoExport.parseProjectForVideo('{oops')).toThrow('project JSON is invalid')
     expect(() => videoExport.parseProjectForVideo(JSON.stringify({ tracks: [] }))).toThrow(
@@ -86,6 +211,17 @@ describe('karaoke video frame planning', () => {
     expect(() => videoExport.parseProjectForVideo(JSON.stringify(incompleteTiming))).toThrow(
       'must have both a start and end time',
     )
+
+    expect(() => videoExport.parseProjectForVideo(JSON.stringify({
+      ...videoProject(),
+      lyricDisplay: { lineCount: 6, advanceMode: 'clear' },
+    }))).toThrow('lineCount must be between 1 and 5')
+  })
+
+  it('does not render a mini upcoming-line element', () => {
+    const document = videoExport.renderDocument()
+    expect(document).not.toContain('state.nextLine')
+    expect(document).not.toContain('Next ·')
   })
 
   it('uses only visible tracks when extending duration', () => {

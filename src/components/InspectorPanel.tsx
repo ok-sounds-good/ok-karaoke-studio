@@ -1,3 +1,4 @@
+import { memo, useMemo } from 'react'
 import { FileAudio2, Import, Mic2, Music2, Plus, SlidersHorizontal, UsersRound } from 'lucide-react'
 import type { KaraokeProject, VocalTrack } from '../lib/model'
 import { formatTime } from '../lib/model'
@@ -15,7 +16,7 @@ interface InspectorPanelProps {
   onImportLrc: () => void
 }
 
-export function InspectorPanel({
+export const InspectorPanel = memo(function InspectorPanel({
   project,
   activeTrackId,
   onSelectTrack,
@@ -25,7 +26,14 @@ export function InspectorPanel({
   onImportAudio,
   onImportLrc,
 }: InspectorPanelProps) {
-  const allWords = flattenProject(project)
+  const allWords = useMemo(() => flattenProject(project), [project.tracks])
+  const trackStats = useMemo(() => new Map(project.tracks.map((track) => {
+    const words = flattenTrack(track)
+    return [track.id, {
+      total: words.length,
+      complete: words.filter(({ word }) => word.startMs !== null).length,
+    }]
+  })), [project.tracks])
   const untimed = allWords.filter(({ word }) => word.startMs === null).length
   return (
     <aside className="inspector panel" aria-label="Project inspector">
@@ -97,8 +105,7 @@ export function InspectorPanel({
           </div>
           <div className="vocal-track-list">
             {project.tracks.map((track, index) => {
-              const total = flattenTrack(track).length
-              const complete = flattenTrack(track).filter(({ word }) => word.startMs !== null).length
+              const { total, complete } = trackStats.get(track.id) ?? { total: 0, complete: 0 }
               return (
                 <article
                   key={track.id}
@@ -182,4 +189,4 @@ export function InspectorPanel({
       </div>
     </aside>
   )
-}
+})

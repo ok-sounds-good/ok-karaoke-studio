@@ -2,7 +2,7 @@
 
 ## Product promise
 
-Okay Karaoke Studio is a desktop editor for turning a backing track and plain lyrics into precisely timed karaoke lyrics. It keeps the stage preview, lyric editor, timing board, project settings, and playback controls in **one unified window**.
+Okay Karaoke Studio is a desktop editor for turning a backing track and plain lyrics into precisely timed karaoke lyrics. Project settings, lyric editing, the TimeBoard, stage verification, and playback stay in **one unified window**, with a focused low-latency surface replacing the stage while synchronization is armed.
 
 This document is the active product-acceptance contract for version 0.1. The
 supporting criteria below may change as real editing work exposes blockers;
@@ -28,23 +28,33 @@ capabilities that are deliberately deferred belong in
 
 1. Launch into a clean-slate project, or open an existing `.oks` project.
 2. Attach an audio backing track.
-3. Paste lyrics or import an LRC file.
-4. Press and hold Space with the singer to time each word.
+3. Open **Edit text** to paste lyrics, preserving internal blank rows as section
+   separators, or import an LRC file.
+4. Press Space at each word onset. Each same-line onset closes the preceding
+   word; hold Space on the final word of a line to extend its duration.
 5. Correct individual words by dragging and resizing them in the TimeBoard.
-6. Preview the result continuously without opening another window.
+6. Exit synchronization and verify the result in the restored Live Preview,
+   choosing its line count and Clear or Scroll advance behavior as needed.
 7. Save the editable project and export LRC, ASS, or a finished MP4 karaoke video.
 
 ## Single-window layout invariant
 
-The main window must always provide simultaneous access to:
+The main window must provide access to:
 
 - Project metadata and vocal-track controls.
-- A live karaoke stage preview.
-- The active track's lyric lines and word state.
+- An **Edit text** action that opens the transactional lyric editor; the main
+  workspace does not persistently render a Word Map or lyric list.
 - A scrollable waveform TimeBoard.
 - Playback, seeking, speed, volume, zoom, and tap-sync controls.
+- A live karaoke stage preview for timing verification when synchronization is
+  not armed.
 
-Focused overlays are permitted for short, transactional tasks such as pasting raw lyrics or choosing an export format. The preview, editor, and transport must never become separate application windows.
+While synchronization is armed, the stage preview is intentionally suspended
+and replaced in the same workspace by a lightweight, cursor-ordered Sync Focus
+showing the current and next lyric lines. Exiting synchronization restores the
+preview. Focused overlays are permitted for short, transactional tasks such as
+pasting raw lyrics or choosing an export format. The preview, editor, and
+transport must never become separate application windows.
 
 ## In scope
 
@@ -65,7 +75,10 @@ Focused overlays are permitted for short, transactional tasks such as pasting ra
 ### Lyrics and vocal tracks
 
 - One lead track and one optional duet track with independent names and colors.
-- Paste or edit lyrics as lines of plain text.
+- **Edit text** opens a transactional plain-text lyric editor rather than a
+  persistent Word Map or lyric panel in the main workspace.
+- Preserve internal blank lyric rows as section separators through edits and
+  `.oks` save/open round trips.
 - Treat `/` as a visible syllable boundary (`·`) while preserving the source token.
 - Warn when a line is likely to exceed the title-safe preview width.
 - Import line-timed or enhanced LRC into the active track.
@@ -73,16 +86,23 @@ Focused overlays are permitted for short, transactional tasks such as pasting ra
 
 ### Synchronization and TimeBoard
 
-- Tap-sync mode in which Space key-down sets a word start and key-up sets its end.
+- Tap-sync mode in which bare Space key-down starts the current word. The next
+  same-line key-down backfills the preceding word's end to that new onset;
+  key-up duration extends the final word of a line.
+- Sample synchronization timestamps from the authoritative playback clock.
+  Convert them to lyric time with the project offset, and ignore taps that occur
+  before lyric time `0:00` when a positive offset delays the lyrics.
 - Start or resume synchronization from the current playhead.
-- A visible next-word cursor and timed/untimed progress.
+- A low-latency Sync Focus with cursor-ordered current and next lyric lines, a
+  visible target word, and timed/untimed progress. The heavier stage preview is
+  not mounted while synchronization is armed.
 - TimeBoard-native controls for **Start Sync**, **Clear Timing**, and **Clear
   Timing After Cursor**. Clear operations affect timing in the active track,
   preserve lyric text, and participate in undo/redo.
 - Click the ruler or waveform to seek.
 - Drag timed words or a multi-word selection to move them.
 - Drag word edges to change start or end times.
-- Select words from the lyric list or TimeBoard.
+- Select words from the TimeBoard, including its untimed-word tray.
 - Outside a text-editing field, Command/Ctrl+A selects every word in the active
   track instead of selecting page text.
 - Dragging across empty TimeBoard space draws a visible marquee and selects the
@@ -95,13 +115,28 @@ Focused overlays are permitted for short, transactional tasks such as pasting ra
   accessible name and hover description.
 - Keyboard delete clears selected words' timing, Escape exits sync, and timing
   selection and clear operations participate in undo/redo.
+- All timing captured in one armed synchronization session is one undoable
+  history step. TimeBoard selection and correction operations remain available
+  as their own undoable edits.
 - Zoom and horizontal scrolling suitable for detailed timing correction.
 
 ### Preview and transport
 
 - Progressive word highlighting driven by the same authoritative playback clock as the editor.
 - Display both active voices during duet passages.
-- Title card, instrumental state, upcoming line, safe-area guide, and current time.
+- A project-persisted visible-line count from 1 through 5 governs both Live
+  Preview and MP4 output. The stage renders only those full lines, with no
+  miniature upcoming-line treatment.
+- Project-persisted **Clear** and **Scroll** advance modes govern both Live
+  Preview and MP4 output. Clear replaces a page of lines within a section;
+  Scroll advances one line and maintains the configured count where enough
+  lines remain in that section.
+- Internal blank lyric rows split sections. Neither advance mode blends lines
+  across a separator: after one section passes, the next section loads as its
+  own group.
+- Title card, instrumental state, safe-area guide, and current time.
+- Live Preview is primarily a timing-verification surface. It is suspended
+  during armed synchronization and restored on exit.
 - Play/pause, Stop, short skip backward/forward, playback speed, volume, playhead
   time, and duration. Stop pauses playback and returns the playhead to project
   time `0:00`.
@@ -113,10 +148,16 @@ Focused overlays are permitted for short, transactional tasks such as pasting ra
 
 ### Save and export
 
-- Save all lyric text, word timings, track styling, media linkage, and metadata in `.oks`.
+- Save lyric text, blank-row section separators, word timings, lyric-display
+  settings, track styling, media linkage, and metadata in schema-v3 `.oks`.
+- Open schema-v1 and schema-v2 projects by migrating them to schema v3 with the
+  lyric-display defaults of 3 lines and Clear advance mode. Schema-v3 settings
+  and blank separators must round trip without loss.
 - Export the active vocal track as LRC.
 - Export the project as ASS with karaoke timing tags.
-- Render a 1080p MP4 up to 30 minutes from the built-in stage design, up to two vocal tracks, and linked backing track through a locally installed FFmpeg executable.
+- Render a 1080p MP4 up to 30 minutes from the built-in stage design, persisted
+  lyric line count and advance mode, up to two vocal tracks, and linked backing
+  track through a locally installed FFmpeg executable.
 - Show frame-rendering and encoding progress, and fail without leaving a partial destination file when video requirements are unavailable.
 - Validate and report untimed, invalid, or overlapping timing before export.
 - Browser fallbacks for open/download when the React surface is run outside Electron.
@@ -129,8 +170,12 @@ Focused overlays are permitted for short, transactional tasks such as pasting ra
   adequate contrast.
 - Icon-only and compact controls expose concise hover help that names the action
   and, when applicable, its keyboard shortcut.
-- Unit tests for project parsing, lyric parsing, timing validation, and LRC/ASS round trips.
-- Unit tests for video frame planning plus the gated `bun run test:video` H.264/AAC export smoke check.
+- Unit tests for schema-v1/v2 migration, schema-v3 project round trips, blank-row
+  section preservation, synchronization semantics/history, timing validation,
+  and LRC/ASS round trips.
+- Unit tests must keep Live Preview and video frame planning aligned for line
+  count, Clear/Scroll behavior, and section boundaries, plus the gated
+  `bun run test:video` H.264/AAC export smoke check.
 - Clean TypeScript build, production Vite build, and launchable unpacked desktop package.
 
 ## Explicitly out of scope for 0.1
@@ -148,19 +193,33 @@ Focused overlays are permitted for short, transactional tasks such as pasting ra
 - [ ] The user makes and accepts a karaoke video for a new song using the Studio.
 - [ ] Launch and **New Project** start with a clean slate; the development demo is
   never introduced implicitly.
-- [ ] The primary journey can be completed without leaving the main window.
-- [ ] A saved project reopens with identical metadata, tracks, lyrics, and timings.
+- [ ] The primary journey can be completed without leaving the main window; the
+  Sync Focus replaces Live Preview only while synchronization is armed.
+- [ ] The main workspace has no persistent Word Map or lyric list; **Edit text**
+  opens and transactionally applies or cancels lyric edits.
+- [ ] A schema-v3 project reopens with identical metadata, tracks, lyrics, blank
+  section separators, timings, and lyric-display settings; schema-v1/v2 projects
+  migrate with the 3-line/Clear defaults.
 - [ ] TimeBoard-native start, clear-all, and clear-after-cursor actions operate on
   the active track without deleting lyrics.
 - [ ] Bare Space times words only while synchronization is armed; Shift+Space
   controls playback.
+- [ ] Space onsets backfill preceding same-line word ends, holding the final word
+  extends that line's final duration, and taps before lyric time `0:00` are
+  ignored.
+- [ ] One synchronization session is one undoable history step; TimeBoard
+  selection and correction behaviors remain available afterward.
 - [ ] Command/Ctrl+A and marquee selection select the intended active-track words
   without selecting page text.
 - [ ] Full word labels and duration blocks remain readable and non-overlapping in
   deterministic TimeBoard lanes.
 - [ ] Timeline navigation, transport Stop, and hover help are discoverable and
   behave as labeled.
-- [ ] Timeline movement and resize operations immediately affect the live preview.
+- [ ] Live Preview and MP4 show the persisted 1-to-5 line count with matching
+  Clear/Scroll behavior, no miniature upcoming line, and no blending across
+  blank-row section boundaries.
+- [ ] Timeline movement and resize operations immediately affect the Live Preview
+  when it is mounted outside armed synchronization.
 - [ ] LRC and ASS exports contain monotonic, non-negative timing.
 - [ ] Undo and redo cover lyric replacement, timing edits, and timing clears.
 - [ ] Required tests, builds, packages, and platform CI are green for the final

@@ -132,13 +132,25 @@ export function patchWord(
   wordId: string,
   patch: Partial<Pick<LyricWord, 'text' | 'startMs' | 'endMs'>>,
 ): KaraokeProject {
+  return patchWords(project, new Map([[wordId, patch]]))
+}
+
+export function patchWords(
+  project: KaraokeProject,
+  patches: ReadonlyMap<
+    string,
+    Partial<Pick<LyricWord, 'text' | 'startMs' | 'endMs'>>
+  >,
+): KaraokeProject {
+  if (patches.size === 0) return project
   let projectChanged = false
   const tracks = project.tracks.map((track) => {
     let trackChanged = false
     const lines = track.lines.map((line) => {
       let lineChanged = false
       const words = line.words.map((word) => {
-        if (word.id !== wordId) return word
+        const patch = patches.get(word.id)
+        if (!patch) return word
         const changed = Object.entries(patch).some(
           ([key, value]) => word[key as keyof Pick<LyricWord, 'text' | 'startMs' | 'endMs'>] !== value,
         )

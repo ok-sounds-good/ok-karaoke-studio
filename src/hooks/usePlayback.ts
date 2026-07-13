@@ -4,12 +4,20 @@ interface PlaybackOptions {
   durationMs: number
   audioUrl?: string | null
   onDuration?: (durationMs: number) => void
+  refreshIntervalMs?: number
 }
 
-export function usePlayback({ durationMs, audioUrl, onDuration }: PlaybackOptions) {
+export function usePlayback({
+  durationMs,
+  audioUrl,
+  onDuration,
+  refreshIntervalMs = 16,
+}: PlaybackOptions) {
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const frameRef = useRef<number | null>(null)
   const lastFrameRef = useRef<number | null>(null)
+  const currentMsRef = useRef(0)
+  const lastPublishedMsRef = useRef(0)
   const [currentMs, setCurrentMs] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
   const [rate, setRateState] = useState(1)
@@ -17,6 +25,16 @@ export function usePlayback({ durationMs, audioUrl, onDuration }: PlaybackOption
   const [audioDurationMs, setAudioDurationMs] = useState<number | null>(null)
 
   useEffect(() => {
+    // A media source owns its own clock. Reset the rendered and synchronous
+    // clocks together before exposing a replacement Audio element so a sync
+    // action cannot briefly sample 0 from the new element while the UI still
+    // points at the previous source's playhead.
+    currentMsRef.current = 0
+    lastPublishedMsRef.current = 0
+    lastFrameRef.current = null
+    setCurrentMs(0)
+    setIsPlaying(false)
+
     if (!audioUrl) {
       audioRef.current?.pause()
       audioRef.current = null
@@ -70,23 +88,30 @@ export function usePlayback({ durationMs, audioUrl, onDuration }: PlaybackOption
 
     const audio = audioRef.current
     if (audio) {
-      audio.currentTime = currentMs / 1000
+      audio.currentTime = currentMsRef.current / 1000
       void audio.play().catch(() => setIsPlaying(false))
     }
 
     const tick = (timestamp: number) => {
       const activeAudio = audioRef.current
+      let nextMs: number
       if (activeAudio && Number.isFinite(activeAudio.currentTime)) {
-        setCurrentMs(Math.max(0, Math.round(activeAudio.currentTime * 1000)))
+        nextMs = Math.max(0, Math.round(activeAudio.currentTime * 1000))
       } else {
         const previous = lastFrameRef.current ?? timestamp
         const elapsed = (timestamp - previous) * rate
-        setCurrentMs((value) => {
-          const next = Math.min(durationMs, value + elapsed)
-          if (next >= durationMs) setIsPlaying(false)
-          return next
-        })
+        nextMs = Math.min(durationMs, currentMsRef.current + elapsed)
+        if (nextMs >= durationMs) setIsPlaying(false)
         lastFrameRef.current = timestamp
+      }
+      currentMsRef.current = nextMs
+      if (
+        Math.abs(nextMs - lastPublishedMsRef.current) >= refreshIntervalMs ||
+        nextMs === 0 ||
+        nextMs >= durationMs
+      ) {
+        lastPublishedMsRef.current = nextMs
+        setCurrentMs(nextMs)
       }
       frameRef.current = requestAnimationFrame(tick)
     }
@@ -96,16 +121,26 @@ export function usePlayback({ durationMs, audioUrl, onDuration }: PlaybackOption
       if (frameRef.current !== null) cancelAnimationFrame(frameRef.current)
       frameRef.current = null
     }
-  }, [isPlaying, rate, durationMs])
+  }, [isPlaying, rate, durationMs, refreshIntervalMs])
 
   const seek = useCallback(
     (value: number) => {
       const next = Math.max(0, Math.min(audioDurationMs ?? durationMs, value))
+      currentMsRef.current = next
+      lastPublishedMsRef.current = next
       setCurrentMs(next)
       if (audioRef.current) audioRef.current.currentTime = next / 1000
     },
     [audioDurationMs, durationMs],
   )
+
+  const getCurrentMs = useCallback(() => {
+    const audio = audioRef.current
+    const liveMs = audio && Number.isFinite(audio.currentTime)
+      ? Math.round(audio.currentTime * 1000)
+      : currentMsRef.current
+    return Math.max(0, Math.min(audioDurationMs ?? durationMs, liveMs))
+  }, [audioDurationMs, durationMs])
 
   const play = useCallback(() => setIsPlaying(true), [])
   const pause = useCallback(() => setIsPlaying(false), [])
@@ -124,6 +159,7 @@ export function usePlayback({ durationMs, audioUrl, onDuration }: PlaybackOption
     pause,
     toggle,
     seek,
+    getCurrentMs,
     setRate,
     setVolume,
   }

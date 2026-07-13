@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
-import { AudioWaveform, ChevronLeft, ChevronRight, Minus, Plus, RotateCcw, SkipBack, TimerReset, Zap, ZoomIn } from 'lucide-react'
+import { AudioWaveform, ChevronLeft, ChevronRight, Edit3, Minus, Plus, RotateCcw, SkipBack, TimerReset, Zap, ZoomIn } from 'lucide-react'
 import type { KaraokeProject, LyricLine, LyricWord, VocalTrack } from '../lib/model'
 import { formatTime } from '../lib/model'
 import { flattenTrack, motionAwareScrollBehavior, type ProjectTimingDraft } from '../utils'
@@ -26,6 +26,7 @@ interface TimelineProps {
   onToggleSync: () => void
   onClearTiming: () => void
   onClearTimingAfterCursor: () => void
+  onEditLyrics?: () => void
 }
 
 const TIMELINE_LABEL_GAP_PX = 4
@@ -457,6 +458,7 @@ export function Timeline({
   onToggleSync,
   onClearTiming,
   onClearTimingAfterCursor,
+  onEditLyrics,
 }: TimelineProps) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const [timingDraft, setTimingDraft] = useState<ProjectTimingDraft | null>(null)
@@ -479,6 +481,7 @@ export function Timeline({
     ...trackLayouts.map((layout) => layout.maxRight + 24),
   )
   const playheadLeft = (currentMs / 1000) * pixelsPerSecond
+  const followBucket = Math.floor(currentMs / 500)
   const tickStepSeconds = zoom < 0.8 ? 5 : zoom < 1.7 ? 2 : 1
   const labelStepSeconds = zoom < 0.8 ? 10 : zoom < 1.7 ? 5 : 2
   const activeTrack = project.tracks.find((track) => track.id === activeTrackId)
@@ -524,15 +527,15 @@ export function Timeline({
   useEffect(() => {
     const viewport = viewportRef.current
     if (!viewport) return
-    const left = playheadLeft
+    const left = (followBucket * 500 / 1000) * pixelsPerSecond
     const margin = 130
     if (left < viewport.scrollLeft + margin || left > viewport.scrollLeft + viewport.clientWidth - margin) {
       viewport.scrollTo({
         left: Math.max(0, left - viewport.clientWidth * 0.32),
-        behavior: motionAwareScrollBehavior(),
+        behavior: 'auto',
       })
     }
-  }, [Math.floor(currentMs / 500), playheadLeft])
+  }, [followBucket, pixelsPerSecond])
 
   useEffect(() => () => {
     if (gestureSessionRef.current?.abandon()) parentDraftCallbackRef.current(null)
@@ -722,6 +725,16 @@ export function Timeline({
             >
               <TimerReset size={13} /> Clear from cursor
             </Button>
+            {onEditLyrics && (
+              <Button
+                size="sm"
+                variant="ghost"
+                title="Open the lyric text editor"
+                onClick={onEditLyrics}
+              >
+                <Edit3 size={13} /> Edit text
+              </Button>
+            )}
           </div>
           <span className="timeline-hint">Drag words · drag empty space to select · click ruler to seek</span>
           <div className="timeline-navigation" aria-label="Timeline navigation">
@@ -922,7 +935,7 @@ export function Timeline({
           {untimedWords.length ? untimedWords.slice(0, 28).map(({ word, track }) => (
             <button
               key={word.id}
-              className={syncWordId === word.id ? 'is-sync-target' : ''}
+              className={`${syncWordId === word.id ? 'is-sync-target' : ''} ${selectedWordIds.has(word.id) ? 'is-selected' : ''}`}
               style={{ '--track-color': track.color } as CSSProperties}
               title={`Select untimed word: ${timelineWordLabel(word)}`}
               onClick={(event) => onSelectWord(word.id, event.shiftKey || event.metaKey || event.ctrlKey)}

@@ -318,7 +318,7 @@ describe('first-time workflow', () => {
     expect(markup).toContain('Add the lyrics')
     expect(markup).toContain('Time each word')
     expect(markup).toContain('Correct the TimeBoard')
-    expect(markup).toContain('Preview continuously')
+    expect(markup).toContain('Verify in Live Preview')
     expect(markup).toContain('Save and export')
     expect(markup).toContain('system file pickers only appear when you choose a file or destination')
   })

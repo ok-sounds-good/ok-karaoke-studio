@@ -1,6 +1,6 @@
 # Okay Karaoke Studio
 
-Okay Karaoke Studio is a single-window desktop application for editing and synchronizing karaoke lyrics. It combines a live stage preview, line-and-word editor, waveform TimeBoard, project inspector, and playback transport in one workspace.
+Okay Karaoke Studio is a single-window desktop application for editing and synchronizing karaoke lyrics. It combines a verification-focused stage preview, transactional lyric editor, waveform TimeBoard, project inspector, and playback transport in one workspace.
 
 ![Status](https://img.shields.io/badge/status-MVP%20acceptance%20open-d7fa4a?labelColor=171e1b)
 ![Electron](https://img.shields.io/badge/Electron-desktop-58d6de?labelColor=171e1b)
@@ -8,15 +8,21 @@ Okay Karaoke Studio is a single-window desktop application for editing and synch
 
 ## MVP highlights
 
-- Unified viewer, editor, timeline, inspector, and playback controls—no detached production windows.
+- Unified viewer, editor, timeline, inspector, and playback controls—no detached
+  production windows. Armed synchronization replaces the stage with a
+  lightweight current/next-line Sync Focus, then restores it for verification.
 - Clean-slate startup with one empty lead-vocal track and no implicit example content.
 - One lead vocal plus an optional independently timed duet track.
-- Spacebar press/release word synchronization with an obvious next-word cursor;
-  Shift+Space controls playback.
-- Live karaoke preview with word-progress highlighting and simultaneous duet lines.
+- Low-latency Spacebar onset synchronization: each same-line onset closes the
+  previous word, while holding the final word of a line extends it. Shift+Space
+  controls playback.
+- Live karaoke preview and MP4 output share a persisted 1-to-5 line count and
+  Clear/Scroll advance mode, with blank lyric rows separating sections.
 - Draggable, resizable word blocks, readable label lanes, range selection, and
   timing controls on a zoomable waveform TimeBoard.
-- Raw lyric editing with syllable separators and screen-fit guidance.
+- An **Edit text** action opens raw lyric editing with syllable separators,
+  preserved blank-row section breaks, and screen-fit guidance; no Word Map is
+  persistently rendered in the main workspace.
 - LRC import, enhanced LRC and ASS export, 1080p MP4 karaoke rendering, and versioned `.oks` projects.
 - Native open/save/import/export dialogs with secure linked-media streaming.
 - Command history, timing review, hover help, playback Stop, and browser fallback.
@@ -69,7 +75,9 @@ bun run dist:dir
 bun run test:video
 ```
 
-- `bun run test` runs the project-model, migration, validation, LRC, ASS, and renderer tests through Vitest.
+- `bun run test` runs project-model and schema-migration coverage, synchronization
+  semantics/history, preview/video display planning, validation, LRC, ASS, and
+  renderer tests through Vitest.
 - `bun run build` performs a strict TypeScript check and production renderer build.
 - `bun run dist:dir` creates an unpacked desktop application in `release/`.
 - `bun run dist` creates distributable macOS artifacts. Public distribution still requires signing and notarization credentials.
@@ -80,25 +88,38 @@ bun run test:video
 1. Launch into the clean-slate project, choose **New Project** for another clean
    slate, or open an existing `.oks` project.
 2. Choose **Attach an audio file** and select the backing track.
-3. Choose **Edit text** to paste one lyric line per row, or import an LRC into the active track.
-4. Move the playhead to the desired start and choose **Start Sync** in the
-   TimeBoard.
-5. Hold Space while each word is sung; release it at the word end. Press Escape to leave sync mode.
-6. Select words in the lyric map or TimeBoard. Command/Ctrl+A selects the active
-   track outside text fields; dragging across empty TimeBoard space creates a
-   marquee selection. Drag blocks to move timing and drag either edge to resize.
-7. Add a duet track when needed and synchronize it independently.
-8. Use the TimeBoard's **Clear Timing** or **Clear Timing After Cursor** controls
+3. Choose **Edit text** to paste one lyric line per row, retaining blank rows
+   between lyrical sections, or import an LRC into the active track. Applying
+   the dialog replaces the active track's text; cancelling leaves it unchanged.
+4. In Live Preview, choose 1 through 5 visible lyric lines and either **Clear**
+   or **Scroll** advance behavior. These project settings also govern MP4 output.
+5. Move the playhead to the desired start and choose **Start Sync** in the
+   TimeBoard. Live Preview is suspended and a lightweight Sync Focus shows the
+   current and next lyric lines in cursor order.
+6. Press Space at each word onset. A new onset on the same line backfills the
+   preceding word's end; hold the final word of a line until its sung end. The
+   authoritative playback clock supplies timestamps, and taps before lyric time
+   `0:00` are ignored. Press Escape to finish the synchronization session and
+   restore Live Preview.
+7. Verify timing in Live Preview, then select words in the TimeBoard.
+   Command/Ctrl+A selects the active track outside text fields; dragging across
+   empty TimeBoard space creates a marquee selection. Drag blocks to move timing
+   and drag either edge to resize. A synchronization session is one undoable
+   history step; individual TimeBoard corrections remain undoable edits.
+8. Add a duet track when needed and synchronize it independently.
+9. Use the TimeBoard's **Clear Timing** or **Clear Timing After Cursor** controls
    when resynchronizing. Use transport **Stop** to pause and return to `0:00`.
-9. Review the timing status, save the `.oks` project, and export LRC, ASS, or a 1080p MP4 karaoke video. Video export requires attached audio.
+10. Review the timing status, save the schema-v3 `.oks` project, and export LRC,
+    ASS, or a 1080p MP4 karaoke video. Video export requires attached audio.
+    Schema-v1 and schema-v2 projects open with the 3-line/Clear display defaults.
 
 ## Keyboard controls
 
 | Key | Action |
 |---|---|
-| Space | Press/release the current word while Tap Sync is armed; never controls playback |
+| Space | Key-down starts the current word; the next same-line onset closes the preceding word, and key-up extends the final word of a line. Ignored before lyric time `0:00`; never controls playback |
 | Shift + Space | Play/pause |
-| Escape | Exit Tap Sync |
+| Escape | Exit Tap Sync and restore Live Preview |
 | Left / Right | Nudge playhead by 250 ms |
 | Shift + Left / Right | Nudge playhead by 1 second |
 | Delete / Backspace | Clear timing from selected words |
@@ -123,7 +144,18 @@ docs/ROADMAP.md         Prioritized future capabilities and product boundaries
 docs/SDLC.md            Pull-request, verification, ruleset, and release policy
 ```
 
-The canonical model stores integer-millisecond word timings inside lines and vocal tracks. The renderer does not receive Node.js access. Electron exposes a small typed bridge for project dialogs, audio import, project-authorized audio restoration, text/video export, and menu commands. Linked audio is streamed through an owner-scoped, tokenized read-only custom protocol with byte-range support. MP4 export renders the stage in an isolated offscreen Electron surface and streams backpressured PNG frames directly into a shell-free FFmpeg process for H.264/AAC encoding. Cancellation terminates the encoder and removes its partial output before close or quit continues.
+The canonical schema-v3 model stores integer-millisecond word timings, blank-row
+section separators, and shared Live Preview/MP4 lyric-display settings inside
+the project. Schema-v1 and schema-v2 projects migrate to 3 visible lines and
+Clear advance mode. The renderer does not receive Node.js access. Electron
+exposes a small typed bridge for project dialogs, audio import,
+project-authorized audio restoration, text/video export, and menu commands.
+Linked audio is streamed through an owner-scoped, tokenized read-only custom
+protocol with byte-range support. MP4 export renders the same line-selection
+plan as Live Preview in an isolated offscreen Electron surface and streams
+backpressured PNG frames directly into a shell-free FFmpeg process for H.264/AAC
+encoding. Cancellation terminates the encoder and removes its partial output
+before close or quit continues.
 
 ## License
 

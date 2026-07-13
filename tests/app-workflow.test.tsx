@@ -107,6 +107,36 @@ async function replaceProjectTitle(text: string) {
   })
 }
 
+async function pressKey(code: string, init: KeyboardEventInit = {}) {
+  await act(async () => window.dispatchEvent(new KeyboardEvent('keydown', {
+    bubbles: true,
+    cancelable: true,
+    code,
+    key: code === 'Space' ? ' ' : code,
+    ...init,
+  })))
+}
+
+async function releaseKey(code: string, init: KeyboardEventInit = {}) {
+  await act(async () => window.dispatchEvent(new KeyboardEvent('keyup', {
+    bubbles: true,
+    cancelable: true,
+    code,
+    key: code === 'Space' ? ' ' : code,
+    ...init,
+  })))
+}
+
+async function tapSyncWord() {
+  await pressKey('Space')
+  await releaseKey('Space')
+}
+
+function timelineTimingLabels() {
+  return [...document.querySelectorAll<HTMLElement>('.timeline-word')]
+    .map((word) => word.getAttribute('aria-label'))
+}
+
 describe('mounted first-time workflow', () => {
   let container: HTMLDivElement
   let root: Root | null
@@ -219,6 +249,27 @@ describe('mounted first-time workflow', () => {
     })
   })
 
+  it('persists the shared preview and video lyric-display options', async () => {
+    const lineCount = document.querySelector<HTMLSelectElement>('[aria-label="Visible lyric lines"]')!
+    const advanceMode = document.querySelector<HTMLSelectElement>('[aria-label="Lyric line advance mode"]')!
+    await act(async () => {
+      lineCount.value = '5'
+      lineCount.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    await act(async () => {
+      advanceMode.value = 'scroll'
+      advanceMode.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    expect(lineCount.value).toBe('5')
+    expect(advanceMode.value).toBe('scroll')
+    await act(async () => harness.sendMenuAction('save'))
+    expect(parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents).lyricDisplay).toEqual({
+      lineCount: 5,
+      advanceMode: 'scroll',
+    })
+  })
+
   it('reserves bare Space, uses Shift+Space for playback, and wires Stop to reset transport', async () => {
     const bareSpace = new KeyboardEvent('keydown', {
       bubbles: true,
@@ -293,10 +344,10 @@ describe('mounted first-time workflow', () => {
     await replaceTextarea('Select every active word')
     await clickButton('Apply lyrics')
 
-    const words = [...document.querySelectorAll<HTMLButtonElement>('.lyric-word')]
+    const words = [...document.querySelectorAll<HTMLButtonElement>('.untimed-tray button')]
     expect(words).toHaveLength(4)
     await act(async () => words[0].click())
-    expect(document.querySelectorAll('.lyric-word.is-selected')).toHaveLength(1)
+    expect(document.querySelectorAll('.untimed-tray button.is-selected')).toHaveLength(1)
 
     const selectAll = new KeyboardEvent('keydown', {
       bubbles: true,
@@ -308,20 +359,20 @@ describe('mounted first-time workflow', () => {
     await act(async () => window.dispatchEvent(selectAll))
 
     expect(selectAll.defaultPrevented).toBe(true)
-    expect(document.querySelectorAll('.lyric-word.is-selected')).toHaveLength(4)
+    expect(document.querySelectorAll('.untimed-tray button.is-selected')).toHaveLength(4)
   })
 
   it('routes desktop Select All to track words while preserving lyric-editor text selection', async () => {
     await clickButton('Edit text')
     await replaceTextarea('Menu selects words')
     await clickButton('Apply lyrics')
-    const words = [...document.querySelectorAll<HTMLButtonElement>('.lyric-word')]
+    const words = [...document.querySelectorAll<HTMLButtonElement>('.untimed-tray button')]
     expect(words).toHaveLength(3)
     await act(async () => words[0].click())
-    expect(document.querySelectorAll('.lyric-word.is-selected')).toHaveLength(1)
+    expect(document.querySelectorAll('.untimed-tray button.is-selected')).toHaveLength(1)
 
     await act(async () => harness.sendMenuAction('select-all'))
-    expect(document.querySelectorAll('.lyric-word.is-selected')).toHaveLength(3)
+    expect(document.querySelectorAll('.untimed-tray button.is-selected')).toHaveLength(3)
 
     await act(async () => words[0].click())
     await clickButton('Edit text')
@@ -331,7 +382,7 @@ describe('mounted first-time workflow', () => {
     await act(async () => harness.sendMenuAction('select-all'))
     expect(textarea.selectionStart).toBe(0)
     expect(textarea.selectionEnd).toBe(textarea.value.length)
-    expect(document.querySelectorAll('.lyric-word.is-selected')).toHaveLength(1)
+    expect(document.querySelectorAll('.untimed-tray button.is-selected')).toHaveLength(1)
   })
 
   it('leaves modified Space chords alone while armed and times only exact bare Space', async () => {
@@ -389,6 +440,227 @@ describe('mounted first-time workflow', () => {
 
     expect(bareDown.defaultPrevented).toBe(true)
     expect(bareUp.defaultPrevented).toBe(true)
+    expect(document.querySelectorAll('.timeline-word')).toHaveLength(1)
+  })
+
+  it('uses a lightweight sync cue and backfills adjacent word timing from live onsets', async () => {
+    await clickButton('Edit text')
+    await replaceTextarea('First second third\nFourth fifth')
+    await clickButton('Apply lyrics')
+
+    expect(document.querySelector('.preview-panel')).not.toBeNull()
+    expect(document.querySelector('.lyrics-panel')).toBeNull()
+    await clickButton('Start sync')
+
+    expect(document.querySelector('.preview-panel')).toBeNull()
+    expect(document.querySelector('.sync-cue')).not.toBeNull()
+    expect(document.querySelector('.sync-cue__line.is-current')?.textContent).toContain('First')
+    expect(document.querySelector('.sync-cue__line.is-next')?.textContent).toContain('Fourth')
+
+    const press = async (code: string, init: KeyboardEventInit = {}) => {
+      await act(async () => window.dispatchEvent(new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        code,
+        key: code === 'Space' ? ' ' : code === 'ArrowRight' ? 'ArrowRight' : code,
+        ...init,
+      })))
+    }
+    const releaseSpace = async () => {
+      await act(async () => window.dispatchEvent(new KeyboardEvent('keyup', {
+        bubbles: true,
+        cancelable: true,
+        code: 'Space',
+        key: ' ',
+      })))
+    }
+
+    await press('Space')
+    await releaseSpace()
+    await press('ArrowRight')
+    await press('Space')
+    await releaseSpace()
+    await press('ArrowRight')
+    await press('Space')
+    await press('ArrowRight', { shiftKey: true })
+    await releaseSpace()
+
+    const labels = [...document.querySelectorAll<HTMLElement>('.timeline-word')]
+      .map((word) => word.getAttribute('aria-label'))
+    expect(labels).toEqual(expect.arrayContaining([
+      'First timing block, 0:00.000–0:00.250',
+      'second timing block, 0:00.250–0:00.500',
+      'third timing block, 0:00.500–0:01.500',
+    ]))
+    expect(document.querySelector('.sync-cue__line.is-current')?.textContent).toContain('Fourth')
+
+    await press('Escape')
+    expect(document.querySelector('.preview-panel')).not.toBeNull()
+    expect(document.querySelector('.sync-cue')).toBeNull()
+
+    await act(async () => harness.sendMenuAction('save'))
+    const saved = parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents)
+    const timed = saved.tracks[0].lines[0].words
+    expect(timed.map(({ startMs, endMs }) => [startMs, endMs])).toEqual([
+      [0, 250],
+      [250, 500],
+      [500, 1_500],
+    ])
+
+    await act(async () => harness.sendMenuAction('undo'))
+    expect(document.querySelectorAll('.timeline-word')).toHaveLength(0)
+  })
+
+  it('ends an armed sync before Undo and keeps Redo and later bare Space outside that session', async () => {
+    await clickButton('Edit text')
+    await replaceTextarea('Amber signal remains')
+    await clickButton('Apply lyrics')
+    await clickButton('Start sync')
+
+    await tapSyncWord()
+    await pressKey('ArrowRight')
+    await tapSyncWord()
+    expect(document.querySelectorAll('.timeline-word')).toHaveLength(2)
+    expect(document.querySelector('.transport')?.classList.contains('is-syncing')).toBe(true)
+
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')!.click()
+    })
+    expect(document.querySelector('.transport')?.classList.contains('is-syncing')).toBe(false)
+    expect(document.querySelector('.sync-cue')).toBeNull()
+    expect(document.querySelectorAll('.timeline-word')).toHaveLength(0)
+
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[aria-label="Redo"]')!.click()
+    })
+    expect(document.querySelector('.transport')?.classList.contains('is-syncing')).toBe(false)
+    expect(document.querySelectorAll('.timeline-word')).toHaveLength(2)
+    const restoredTimings = timelineTimingLabels()
+
+    await tapSyncWord()
+    expect(timelineTimingLabels()).toEqual(restoredTimings)
+
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')!.click()
+    })
+    expect(document.querySelectorAll('.timeline-word')).toHaveLength(0)
+  })
+
+  it('ends a sync session before an unrelated Inspector edit and preserves both undo boundaries', async () => {
+    await clickButton('Edit text')
+    await replaceTextarea('Copper lantern glows')
+    await clickButton('Apply lyrics')
+    await clickButton('Start sync')
+
+    await tapSyncWord()
+    expect(document.querySelectorAll('.timeline-word')).toHaveLength(1)
+    expect(document.querySelector('.transport')?.classList.contains('is-syncing')).toBe(true)
+
+    await replaceProjectTitle('Retitled after one tap')
+    expect(document.querySelector('.topbar__document')?.textContent).toContain('Retitled after one tap')
+    expect(document.querySelector('.transport')?.classList.contains('is-syncing')).toBe(false)
+
+    await tapSyncWord()
+    expect(document.querySelectorAll('.timeline-word')).toHaveLength(1)
+
+    await act(async () => harness.sendMenuAction('undo'))
+    expect(document.querySelector('.topbar__document')?.textContent).toContain('Untitled Song')
+    expect(document.querySelectorAll('.timeline-word')).toHaveLength(1)
+
+    await act(async () => harness.sendMenuAction('undo'))
+    expect(document.querySelectorAll('.timeline-word')).toHaveLength(0)
+  })
+
+  it('keeps a changed re-sync undoable when its first timing mutation is identical', async () => {
+    await clickButton('Edit text')
+    await replaceTextarea('First\nSecond')
+    await clickButton('Apply lyrics')
+    await clickButton('Start sync')
+
+    await tapSyncWord()
+    await pressKey('ArrowRight')
+    await tapSyncWord()
+    expect(timelineTimingLabels()).toEqual(expect.arrayContaining([
+      'First timing block, 0:00.000–0:00.100',
+      'Second timing block, 0:00.250–0:00.350',
+    ]))
+
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[aria-label="Stop"]')!.click()
+    })
+    await clickButton('Start sync')
+    await tapSyncWord()
+    await pressKey('ArrowRight')
+    await pressKey('ArrowRight')
+    await tapSyncWord()
+    expect(timelineTimingLabels()).toEqual(expect.arrayContaining([
+      'First timing block, 0:00.000–0:00.100',
+      'Second timing block, 0:00.500–0:00.600',
+    ]))
+
+    await act(async () => harness.sendMenuAction('undo'))
+    expect(timelineTimingLabels()).toEqual(expect.arrayContaining([
+      'First timing block, 0:00.000–0:00.100',
+      'Second timing block, 0:00.250–0:00.350',
+    ]))
+  })
+
+  it('does not collapse sync taps into lyric time zero during a positive-offset pre-roll', async () => {
+    await clickButton('Edit text')
+    await replaceTextarea('Wait then sing')
+    await clickButton('Apply lyrics')
+    const offsetInput = document.querySelector<HTMLInputElement>('.field--inline input')!
+    await act(async () => {
+      const nativeValueSetter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        'value',
+      )?.set
+      nativeValueSetter?.call(offsetInput, '1000')
+      offsetInput.dispatchEvent(new InputEvent('input', { bubbles: true, data: '1000' }))
+    })
+    await clickButton('Start sync')
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        code: 'Space',
+        key: ' ',
+      }))
+      window.dispatchEvent(new KeyboardEvent('keyup', {
+        bubbles: true,
+        cancelable: true,
+        code: 'Space',
+        key: ' ',
+      }))
+    })
+
+    expect(document.querySelectorAll('.timeline-word')).toHaveLength(0)
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(
+      'lyric clock has not reached 0:00',
+    )
+
+    await act(async () => window.dispatchEvent(new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      code: 'ArrowRight',
+      key: 'ArrowRight',
+      shiftKey: true,
+    })))
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        code: 'Space',
+        key: ' ',
+      }))
+      window.dispatchEvent(new KeyboardEvent('keyup', {
+        bubbles: true,
+        cancelable: true,
+        code: 'Space',
+        key: ' ',
+      }))
+    })
     expect(document.querySelectorAll('.timeline-word')).toHaveLength(1)
   })
 

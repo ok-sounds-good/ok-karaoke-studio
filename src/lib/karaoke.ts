@@ -1,8 +1,10 @@
-export const PROJECT_SCHEMA_VERSION = 2 as const
+export const PROJECT_SCHEMA_VERSION = 3 as const
 export const MAX_PROJECT_DURATION_MS = 4 * 60 * 60 * 1_000
 export const MAX_PROJECT_TRACKS = 8
 export const MAX_PROJECT_LINES = 20_000
 export const MAX_PROJECT_WORDS = 150_000
+export const MIN_LYRIC_DISPLAY_LINES = 1
+export const MAX_LYRIC_DISPLAY_LINES = 5
 
 export type ProjectSchemaVersion = typeof PROJECT_SCHEMA_VERSION
 
@@ -30,6 +32,18 @@ export interface VocalTrack {
   lines: LyricLine[]
 }
 
+export type LyricAdvanceMode = 'clear' | 'scroll'
+
+export interface LyricDisplaySettings {
+  lineCount: number
+  advanceMode: LyricAdvanceMode
+}
+
+export const DEFAULT_LYRIC_DISPLAY_SETTINGS: LyricDisplaySettings = {
+  lineCount: 3,
+  advanceMode: 'clear',
+}
+
 export interface KaraokeProject {
   schemaVersion: ProjectSchemaVersion
   id: string
@@ -40,6 +54,7 @@ export interface KaraokeProject {
   offsetMs: number
   createdAt: string
   updatedAt: string
+  lyricDisplay: LyricDisplaySettings
   tracks: VocalTrack[]
 }
 
@@ -75,6 +90,7 @@ export interface CreateProjectOptions {
   offsetMs?: number
   createdAt?: string
   updatedAt?: string
+  lyricDisplay?: LyricDisplaySettings
   tracks?: VocalTrack[]
 }
 
@@ -220,6 +236,9 @@ export function createProject(options: CreateProjectOptions = {}): KaraokeProjec
     offsetMs: options.offsetMs ?? 0,
     createdAt: options.createdAt ?? now,
     updatedAt: options.updatedAt ?? now,
+    lyricDisplay: {
+      ...(options.lyricDisplay ?? DEFAULT_LYRIC_DISPLAY_SETTINGS),
+    },
     tracks:
       options.tracks?.map(cloneTrack) ??
       [createVocalTrack({ id: createId('track'), name: 'Lead Vocal' })],
@@ -504,11 +523,19 @@ export function parseLyrics(
   trackId: string,
   existing?: VocalTrack,
 ): VocalTrack {
-  const lyricLines = text
+  const normalizedRows = text
     .replace(/^\uFEFF/u, '')
     .split(/\r\n?|\n/u)
     .map(normalizeText)
-    .filter(Boolean)
+  const lyricLines: string[] = []
+  normalizedRows.forEach((row) => {
+    if (row) {
+      lyricLines.push(row)
+    } else if (lyricLines.length > 0 && lyricLines.at(-1) !== '') {
+      lyricLines.push('')
+    }
+  })
+  if (lyricLines.at(-1) === '') lyricLines.pop()
   if (lyricLines.length > MAX_PROJECT_LINES || (existing?.lines.length ?? 0) > MAX_PROJECT_LINES) {
     throw new RangeError(`Lyrics are limited to ${MAX_PROJECT_LINES} lines per project.`)
   }
@@ -542,6 +569,91 @@ export function parseLyrics(
     solo: existing?.solo ?? false,
     lines,
   })
+}
+
+interface LyricDisplayPosition {
+  line: LyricLine
+  lineIndex: number
+  section: LyricLine[]
+}
+
+function isLyricSectionSeparator(line: LyricLine): boolean {
+  return line.text.trim() === '' && line.words.length === 0
+}
+
+function lyricLineRange(line: LyricLine): TimingRange | null {
+  const timedWords = line.words.filter(
+    (word): word is LyricWord & TimingRange =>
+      word.startMs !== null && word.endMs !== null,
+  )
+  const startMs = line.startMs ?? timedWords[0]?.startMs ?? null
+  const endMs = line.endMs ?? timedWords.at(-1)?.endMs ?? null
+  if (startMs === null || endMs === null || endMs <= startMs) return null
+  return { startMs, endMs }
+}
+
+function lyricDisplayPositions(track: VocalTrack): LyricDisplayPosition[] {
+  const positions: LyricDisplayPosition[] = []
+  let section: LyricLine[] = []
+
+  const appendSection = () => {
+    section.forEach((line, lineIndex) => {
+      positions.push({ line, lineIndex, section })
+    })
+    section = []
+  }
+
+  track.lines.forEach((line) => {
+    if (isLyricSectionSeparator(line)) appendSection()
+    else section.push(line)
+  })
+  appendSection()
+  return positions
+}
+
+/**
+ * Selects the lyric lines that a renderer should display for one vocal track.
+ * Empty lyric rows split sections and are never returned. Before the first
+ * timing, the first timed section is ready; between sections, the next section
+ * replaces the completed one; after the final timing, the window is empty.
+ * A focus line lets the editor preview an untimed line during synchronization.
+ */
+export function planLyricDisplayLines(
+  track: VocalTrack,
+  lyricMs: number,
+  settings: LyricDisplaySettings,
+  focusLineId?: string | null,
+): LyricLine[] {
+  const positions = lyricDisplayPositions(track)
+  if (positions.length === 0) return []
+
+  const focused = focusLineId
+    ? positions.find((position) => position.line.id === focusLineId)
+    : undefined
+  const time = Number.isFinite(lyricMs) ? lyricMs : 0
+  const timedPositions = positions.flatMap((position) => {
+    const range = lyricLineRange(position.line)
+    return range ? [{ position, range }] : []
+  })
+  const target = focused ?? timedPositions.find(({ range }) => time < range.endMs)?.position
+  if (!target) {
+    if (timedPositions.length > 0) return []
+    return positions[0].section.slice(0, normalizedLyricDisplayLineCount(settings.lineCount))
+  }
+
+  const lineCount = normalizedLyricDisplayLineCount(settings.lineCount)
+  const startIndex = settings.advanceMode === 'scroll'
+    ? Math.min(target.lineIndex, Math.max(0, target.section.length - lineCount))
+    : Math.floor(target.lineIndex / lineCount) * lineCount
+  return target.section.slice(startIndex, startIndex + lineCount)
+}
+
+function normalizedLyricDisplayLineCount(value: number): number {
+  return Number.isSafeInteger(value) &&
+    value >= MIN_LYRIC_DISPLAY_LINES &&
+    value <= MAX_LYRIC_DISPLAY_LINES
+    ? value
+    : DEFAULT_LYRIC_DISPLAY_SETTINGS.lineCount
 }
 
 function issue(
@@ -647,6 +759,33 @@ export function validateProject(project: KaraokeProject): ValidationIssue[] {
       'schema-version',
       `Expected project schema version ${PROJECT_SCHEMA_VERSION}.`,
       'schemaVersion',
+    )
+  }
+  if (
+    !isRecord(project.lyricDisplay) ||
+    !Number.isSafeInteger(project.lyricDisplay.lineCount) ||
+    project.lyricDisplay.lineCount < MIN_LYRIC_DISPLAY_LINES ||
+    project.lyricDisplay.lineCount > MAX_LYRIC_DISPLAY_LINES
+  ) {
+    issue(
+      issues,
+      'error',
+      'lyric-display-line-count',
+      `Lyric display line count must be an integer from ${MIN_LYRIC_DISPLAY_LINES} to ${MAX_LYRIC_DISPLAY_LINES}.`,
+      'lyricDisplay.lineCount',
+    )
+  }
+  if (
+    !isRecord(project.lyricDisplay) ||
+    (project.lyricDisplay.advanceMode !== 'clear' &&
+      project.lyricDisplay.advanceMode !== 'scroll')
+  ) {
+    issue(
+      issues,
+      'error',
+      'lyric-display-advance-mode',
+      'Lyric display advance mode must be clear or scroll.',
+      'lyricDisplay.advanceMode',
     )
   }
   if (
@@ -1512,6 +1651,18 @@ function requireCurrentBoolean(
   return value
 }
 
+function requireCurrentInteger(
+  record: Record<string, unknown>,
+  key: string,
+  path: string,
+): number {
+  const value = record[key]
+  if (!Number.isSafeInteger(value)) {
+    throw new TypeError(`${path}.${key} must be a safe integer.`)
+  }
+  return value as number
+}
+
 function requireCurrentNullableNumber(
   record: Record<string, unknown>,
   key: string,
@@ -1571,7 +1722,26 @@ function decodeCurrentTrack(value: unknown, path: string): VocalTrack {
   }
 }
 
-function decodeCurrentProject(value: Record<string, unknown>): KaraokeProject {
+function decodeCurrentLyricDisplay(value: unknown): LyricDisplaySettings {
+  const record = requireCurrentRecord(value, 'project.lyricDisplay')
+  const advanceMode = requireCurrentString(
+    record,
+    'advanceMode',
+    'project.lyricDisplay',
+  )
+  if (advanceMode !== 'clear' && advanceMode !== 'scroll') {
+    throw new TypeError('project.lyricDisplay.advanceMode must be clear or scroll.')
+  }
+  return {
+    lineCount: requireCurrentInteger(record, 'lineCount', 'project.lyricDisplay'),
+    advanceMode,
+  }
+}
+
+function decodePersistedProject(
+  value: Record<string, unknown>,
+  lyricDisplay: LyricDisplaySettings,
+): KaraokeProject {
   const rawTracks = requireCurrentArray(value, 'tracks', 'project')
   assertRawProjectCardinality(rawTracks)
   const audioPath = value.audioPath
@@ -1592,14 +1762,22 @@ function decodeCurrentProject(value: Record<string, unknown>): KaraokeProject {
     })(),
     createdAt: requireCurrentString(value, 'createdAt', 'project'),
     updatedAt: requireCurrentString(value, 'updatedAt', 'project'),
+    lyricDisplay: { ...lyricDisplay },
     tracks: rawTracks.map((track, index) =>
       decodeCurrentTrack(track, `project.tracks[${index}]`),
     ),
   }
 }
 
+function decodeCurrentProject(value: Record<string, unknown>): KaraokeProject {
+  return decodePersistedProject(
+    value,
+    decodeCurrentLyricDisplay(value.lyricDisplay),
+  )
+}
+
 /**
- * Migrates version 1 project objects and strictly clones current projects.
+ * Migrates version 1 and 2 project objects and strictly clones current projects.
  * Legacy un-suffixed timing fields (`start`, `end`, `duration`, `offset`) are
  * interpreted as seconds.
  */
@@ -1611,7 +1789,7 @@ export function migrateProject(value: unknown): KaraokeProject {
   const supportedVersion =
     typeof declaredVersion === 'number' &&
     Number.isInteger(declaredVersion) &&
-    (declaredVersion === 1 || declaredVersion === PROJECT_SCHEMA_VERSION)
+    (declaredVersion === 1 || declaredVersion === 2 || declaredVersion === PROJECT_SCHEMA_VERSION)
   if (!supportedVersion) {
     if (typeof declaredVersion === 'number' && declaredVersion > PROJECT_SCHEMA_VERSION) {
       throw new Error(
@@ -1619,11 +1797,14 @@ export function migrateProject(value: unknown): KaraokeProject {
       )
     }
     throw new Error(
-      `Unsupported project schema version ${String(declaredVersion)}. Supported versions are 1 and ${PROJECT_SCHEMA_VERSION}.`,
+      `Unsupported project schema version ${String(declaredVersion)}. Supported versions are 1, 2, and ${PROJECT_SCHEMA_VERSION}.`,
     )
   }
 
   if (declaredVersion === PROJECT_SCHEMA_VERSION) return decodeCurrentProject(value)
+  if (declaredVersion === 2) {
+    return decodePersistedProject(value, DEFAULT_LYRIC_DISPLAY_SETTINGS)
+  }
 
   const rawTracks = Array.isArray(value.tracks)
     ? value.tracks
