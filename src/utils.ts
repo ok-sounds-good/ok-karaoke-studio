@@ -77,11 +77,6 @@ export function getActiveLine(track: VocalTrack, timeMs: number): LyricLine | nu
   return upcoming && (upcoming.startMs ?? 0) - timeMs < 1800 ? upcoming : null
 }
 
-export function lineProgress(line: LyricLine, timeMs: number): number {
-  if (line.startMs === null || line.endMs === null || line.endMs <= line.startMs) return 0
-  return Math.max(0, Math.min(1, (timeMs - line.startMs) / (line.endMs - line.startMs)))
-}
-
 export function recalculateLine(line: LyricLine): LyricLine {
   let startMs: number | null = null
   let endMs: number | null = null

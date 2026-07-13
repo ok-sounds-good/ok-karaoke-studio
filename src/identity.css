@@ -238,7 +238,6 @@ select:focus-visible {
 
 .audio-source__icon,
 .workflow-guide > li > span,
-.export-option__icon,
 .validation-empty > span {
   background: var(--purple-soft);
   color: var(--accent-soft);
@@ -320,8 +319,63 @@ select:focus-visible {
 }
 
 .karaoke-stage {
-  /* The stage previews exported content, so keep its production palette isolated. */
-  --accent: #d7fa4a;
+  --accent: #9b78cf;
+  border-color: #6f5a86;
+  background:
+    linear-gradient(145deg, rgba(74, 48, 96, .42), rgba(24, 17, 32, .28)),
+    #21182d;
+  box-shadow:
+    inset 0 0 70px rgba(12, 8, 17, .48),
+    0 4px 14px rgba(76, 55, 101, .12);
+}
+
+.karaoke-stage__glow--one {
+  background: radial-gradient(circle, rgba(155, 120, 207, .38), transparent 65%);
+}
+
+.karaoke-stage__glow--two {
+  background: radial-gradient(circle, rgba(255, 138, 43, .22), transparent 65%);
+}
+
+.karaoke-stage__safe-area {
+  border-color: rgba(235, 228, 242, .16);
+}
+
+.karaoke-stage__brand,
+.karaoke-stage__time {
+  color: rgba(248, 246, 251, .72);
+}
+
+.title-card > span {
+  color: #ffad69;
+}
+
+.title-card h3 {
+  color: #fbf9fd;
+}
+
+.title-card p {
+  color: rgba(235, 228, 242, .72);
+}
+
+.title-card i {
+  background: var(--orange);
+}
+
+.stage-word {
+  color: rgba(235, 228, 242, .38);
+  background: linear-gradient(
+    90deg,
+    var(--track-color) var(--word-progress),
+    rgba(235, 228, 242, .38) var(--word-progress)
+  );
+  background-clip: text;
+  -webkit-background-clip: text;
+  filter: drop-shadow(0 2px 7px rgba(12, 8, 17, .44));
+}
+
+.karaoke-stage__footer {
+  color: rgba(248, 246, 251, .68);
 }
 
 .status-pill--live {
@@ -668,10 +722,38 @@ select:focus-visible {
   color: var(--muted);
 }
 
-.speed-control select {
+.preview-setting {
+  color: var(--muted);
+}
+
+.preview-setting select,
+.speed-control select,
+.video-export-settings select {
   border-color: var(--control-line);
   background: #fff;
-  color: var(--text-soft);
+  color: var(--text);
+  color-scheme: light;
+  box-shadow: inset 0 1px 2px rgba(76, 55, 101, .04);
+}
+
+.preview-setting select:hover,
+.speed-control select:hover,
+.video-export-settings select:hover {
+  border-color: #80649a;
+}
+
+.preview-setting select:focus,
+.speed-control select:focus,
+.video-export-settings select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(155, 120, 207, .11);
+}
+
+.preview-setting select option,
+.speed-control select option,
+.video-export-settings select option {
+  background: #fff;
+  color: var(--text);
 }
 
 .modal-backdrop {
@@ -693,6 +775,35 @@ select:focus-visible {
 .validation-item {
   border-color: #e0d6e9;
   background: #fdfcfe;
+}
+
+.video-export-settings {
+  border-color: #ded2e8;
+  background: linear-gradient(180deg, #fbf9fd, #f7f3fa);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .85);
+}
+
+.video-export-settings legend {
+  color: var(--muted-strong);
+}
+
+.video-export-settings label {
+  color: var(--muted);
+}
+
+.video-export-settings:disabled {
+  opacity: 1;
+}
+
+.video-export-settings:disabled select {
+  border-color: #ddd4e4;
+  background: #f2eef5;
+  color: #8b8192;
+}
+
+.export-option__icon {
+  background: var(--purple-soft);
+  color: var(--accent-soft);
 }
 
 .workflow-guide__intro {
@@ -730,11 +841,28 @@ select:focus-visible {
 .export-options > button:hover {
   border-color: #b99fd5;
   background: #f5effa;
+  box-shadow: 0 4px 12px rgba(76, 55, 101, .08);
+  transform: translateY(-1px);
 }
 
+.export-options > button:disabled,
 .export-options > button:disabled:hover {
   border-color: #e0d6e9;
-  background: #fdfcfe;
+  background: #f8f5fa;
+  box-shadow: none;
+  opacity: 1;
+  transform: none;
+}
+
+.export-options > button:disabled .export-option__icon {
+  background: #f0ebf3;
+  color: #968a9e;
+}
+
+.export-options > button:disabled strong,
+.export-options > button:disabled small,
+.export-options > button:disabled > svg {
+  color: #8f8496;
 }
 
 .export-options > button > svg {

@@ -2,7 +2,6 @@ import { useMemo, type CSSProperties } from 'react'
 import { Edit3, MonitorPlay, ShieldCheck } from 'lucide-react'
 import type { KaraokeProject, LyricDisplaySettings, LyricLine, LyricWord, VocalTrack } from '../lib/model'
 import { formatTime, planLyricDisplayLines } from '../lib/model'
-import { lineProgress } from '../utils'
 import { Button } from './ui'
 
 interface KaraokePreviewProps {
@@ -93,7 +92,6 @@ export function KaraokePreview({
     Number.POSITIVE_INFINITY,
   ), [visibleTracks])
   const showTitle = lyricMs < firstTimedWord - 1500
-  const primaryProgress = displayLines[0] ? lineProgress(displayLines[0].line, lyricMs) : 0
 
   return (
     <section className="preview-panel panel" aria-label="Karaoke preview">
@@ -177,7 +175,6 @@ export function KaraokePreview({
 
         <div className="karaoke-stage__footer">
           <span>{project.artist || 'Performer'} · {project.title || 'Untitled'}</span>
-          <span className="stage-progress"><i style={{ width: `${primaryProgress * 100}%` }} /></span>
         </div>
       </div>
     </section>

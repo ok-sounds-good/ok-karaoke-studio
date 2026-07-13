@@ -95,6 +95,20 @@ describe('offset-aware renderer state', () => {
     expect(markup).toContain('--word-progress:0%')
   })
 
+  it('keeps per-word progress without rendering a whole-line progress meter', () => {
+    const markup = renderToStaticMarkup(
+      <KaraokePreview
+        project={offsetProject()}
+        playbackMs={2_000}
+        lyricMs={1_500}
+        selectedWordIds={new Set()}
+      />,
+    )
+
+    expect(markup).toContain('--word-progress:50%')
+    expect(markup).not.toContain('stage-progress')
+  })
+
   it('uses lyric time for current-word editor highlighting', () => {
     const project = offsetProject()
     const props = {

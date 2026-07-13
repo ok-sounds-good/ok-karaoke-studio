@@ -1059,7 +1059,6 @@ export default function App() {
             onToggleSync={toggleSyncMode}
             onClearTiming={handleClearTiming}
             onClearTimingAfterCursor={handleClearTimingAfterCursor}
-            onEditLyrics={() => setLyricsDialogOpen(true)}
           />
         </div>
       </main>

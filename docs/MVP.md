@@ -49,8 +49,10 @@ capabilities that are deliberately deferred belong in
 The main window must provide access to:
 
 - Project metadata and lead-track controls.
-- An **Edit text** action that opens the transactional lyric editor; the main
-  workspace does not persistently render a Word Map or lyric list.
+- An **Edit text** action in Live Preview that opens the transactional lyric
+  editor; TimeBoard does not duplicate it, and the main workspace does not
+  persistently render a Word Map or lyric list. While synchronization replaces
+  Live Preview, Sync Focus owns the single equivalent action.
 - A scrollable waveform TimeBoard.
 - Playback, seeking, speed, volume, zoom, and tap-sync controls.
 - A live karaoke stage preview for timing verification when synchronization is
@@ -137,6 +139,8 @@ transport must never become separate application windows.
 ### Preview and transport
 
 - Progressive word highlighting driven by the same authoritative playback clock as the editor.
+- Per-word highlighting is the lyric progress signal; the stage does not add a
+  separate whole-line progress meter.
 - Render full lyric lines without repeating the singer or track name above each
   line. The authored lead track still supplies the lyrics and color.
 - A project-persisted visible-line count from 1 through 5 governs both Live
@@ -199,6 +203,9 @@ transport must never become separate application windows.
 - Responsive down to a 1280 × 720 application window; optimized for larger desktop displays.
 - Complete keyboard focus states, accessible labels for icon-only actions, and
   adequate contrast.
+- Inputs and dropdowns share the same control treatment, and the built-in Live
+  Preview and MP4 stage use the app's purple, orange, and neutral identity while
+  preserving the authored track color for lyric highlighting.
 - Icon-only and compact controls expose concise hover help that names the action
   and, when applicable, its keyboard shortcut.
 - Unit tests for schema-v1/v2 migration, schema-v3 project round trips, blank-row
@@ -229,8 +236,9 @@ transport must never become separate application windows.
   never introduced implicitly.
 - [ ] The primary journey can be completed without leaving the main window; the
   Sync Focus replaces Live Preview only while synchronization is armed.
-- [ ] The main workspace has no persistent Word Map or lyric list; **Edit text**
-  opens and transactionally applies or cancels lyric edits.
+- [ ] The main workspace has no persistent Word Map or lyric list; its single
+  **Edit text** action lives in Live Preview (or its Sync Focus replacement),
+  not TimeBoard, and transactionally applies or cancels lyric edits.
 - [ ] A schema-v3 project reopens with identical metadata, tracks, lyrics, blank
   section separators, timings, and lyric-display settings; schema-v1/v2 projects
   migrate with the 3-line/Clear defaults.

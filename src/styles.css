@@ -1126,22 +1126,6 @@ button:disabled {
   text-transform: uppercase;
 }
 
-.stage-progress {
-  position: relative;
-  flex: 1;
-  height: 2px;
-  overflow: hidden;
-  border-radius: 2px;
-  background: rgba(255, 255, 255, .08);
-}
-
-.stage-progress i {
-  position: absolute;
-  inset: 0 auto 0 0;
-  border-radius: inherit;
-  background: var(--accent);
-}
-
 .lyrics-panel__header .button {
   padding-right: 7px;
 }

@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
-import { AudioWaveform, ChevronLeft, ChevronRight, Edit3, Minus, Plus, RotateCcw, SkipBack, TimerReset, Zap, ZoomIn } from 'lucide-react'
+import { AudioWaveform, ChevronLeft, ChevronRight, Minus, Plus, RotateCcw, SkipBack, TimerReset, Zap, ZoomIn } from 'lucide-react'
 import type { KaraokeProject, LyricLine, LyricWord, VocalTrack } from '../lib/model'
 import { formatTime } from '../lib/model'
 import {
@@ -32,7 +32,6 @@ interface TimelineProps {
   onToggleSync: () => void
   onClearTiming: () => void
   onClearTimingAfterCursor: () => void
-  onEditLyrics?: () => void
 }
 
 const TIMELINE_LABEL_GAP_PX = 4
@@ -483,7 +482,6 @@ export function Timeline({
   onToggleSync,
   onClearTiming,
   onClearTimingAfterCursor,
-  onEditLyrics,
 }: TimelineProps) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const [timingDraft, setTimingDraft] = useState<ProjectTimingDraft | null>(null)
@@ -750,16 +748,6 @@ export function Timeline({
             >
               <TimerReset size={13} /> Clear from cursor
             </Button>
-            {onEditLyrics && (
-              <Button
-                size="sm"
-                variant="ghost"
-                title="Open the lyric text editor"
-                onClick={onEditLyrics}
-              >
-                <Edit3 size={13} /> Edit text
-              </Button>
-            )}
           </div>
           <span className="timeline-hint">Drag words · drag empty space to select · click ruler to seek</span>
           <div className="timeline-navigation" aria-label="Timeline navigation">

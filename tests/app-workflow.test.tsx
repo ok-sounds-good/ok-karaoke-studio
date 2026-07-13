@@ -208,6 +208,20 @@ describe('mounted first-time workflow', () => {
     await clickButton('Choose export')
   }
 
+  it('offers lyric editing only from Live Preview in the non-sync workspace', () => {
+    const preview = document.querySelector<HTMLElement>('[aria-label="Karaoke preview"]')
+    const timeline = document.querySelector<HTMLElement>('[aria-label="TimeBoard"]')
+    const editTextButtons = [...document.querySelectorAll<HTMLButtonElement>('button')]
+      .filter((button) => button.textContent?.trim() === 'Edit text')
+
+    expect(preview).not.toBeNull()
+    expect(timeline).not.toBeNull()
+    expect(editTextButtons).toHaveLength(1)
+    expect(preview?.contains(editTextButtons[0])).toBe(true)
+    expect(timeline?.contains(editTextButtons[0])).toBe(false)
+    expect(timeline?.textContent).not.toContain('Edit text')
+  })
+
   it('opens the real guide from TopBar and enforces the lyrics-to-sync transition', async () => {
     await clickButton('Workflow')
     expect(document.querySelector('[role="dialog"]')?.textContent).toContain(

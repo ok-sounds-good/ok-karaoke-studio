@@ -19,15 +19,17 @@ Okay Karaoke Studio is a single-window desktop application for editing and synch
   controls playback.
 - Live karaoke preview and MP4 output share a persisted 1-to-5 line count and
   Clear/Scroll advance mode, blank lyric rows separating sections, and the same
-  per-word timing. Stage lyric lines do not repeat the singer or track name, and
-  section gaps do not inject an automatic Instrumental graphic.
+  per-word timing and purple/orange production palette. Per-word color is the
+  lyric progress signal; stage lyric lines do not repeat the singer or track
+  name, and section gaps do not inject an automatic Instrumental graphic.
 - Draggable, resizable word blocks on a common chronological baseline, readable
   staggered label lanes, range selection, and timing controls on a zoomable
   waveform TimeBoard. Timing edits cannot cross the preceding or following
   timed word in lyric order, including across line boundaries.
-- An **Edit text** action opens raw lyric editing with syllable separators,
-  preserved blank-row section breaks, and screen-fit guidance; no Word Map is
-  persistently rendered in the main workspace.
+- Live Preview's single **Edit text** action opens raw lyric editing with
+  syllable separators, preserved blank-row section breaks, and screen-fit
+  guidance; TimeBoard does not duplicate it, and no Word Map is persistently
+  rendered in the main workspace.
 - LRC import, enhanced LRC and ASS export, configurable 240p-through-2160p MP4
   karaoke rendering at 30 or 60 fps, and versioned `.oks` projects.
 - Native open/save/import/export dialogs with secure linked-media streaming.
@@ -94,9 +96,10 @@ bun run test:video
 1. Launch into the clean-slate project, choose **New Project** for another clean
    slate, or open an existing `.oks` project.
 2. Choose **Attach an audio file** and select the backing track.
-3. Choose **Edit text** to paste one lyric line per row, retaining blank rows
-   between lyrical sections, or import an LRC into the active track. Applying
-   the dialog replaces the active track's text; cancelling leaves it unchanged.
+3. Choose **Edit text** in Live Preview to paste one lyric line per row,
+   retaining blank rows between lyrical sections, or import an LRC into the
+   active track. Applying the dialog replaces the active track's text;
+   cancelling leaves it unchanged.
 4. In Live Preview, choose 1 through 5 visible lyric lines and either **Clear**
    or **Scroll** advance behavior. These project settings also govern MP4 output.
 5. Move the playhead to the desired start and choose **Start Sync** in the

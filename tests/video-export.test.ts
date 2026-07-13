@@ -305,6 +305,25 @@ describe('karaoke video frame planning', () => {
     expect(() => new Script(script)).not.toThrow()
   })
 
+  it('uses the app palette for stage chrome while preserving authored word accents', () => {
+    const document = videoExport.renderDocument()
+
+    expect(document).toContain('#17111e')
+    expect(document).toContain('#21172b')
+    expect(document).toContain('#9b78cf')
+    expect(document).toContain('#ff8a2b')
+    expect(document).toContain('#f8f6fb')
+    expect(document).not.toMatch(/#(?:080a0e|171e1b|0e1217|171119|d7fa4a)/iu)
+    expect(document).not.toContain('rgba(215,250,74')
+    expect(document).not.toContain('rgba(88,214,222')
+    expect(document).toContain("lyric.style.setProperty('--accent',item.color)")
+    expect(document).toContain('color:var(--accent)')
+
+    const project = videoProject()
+    project.tracks[0].color = '#A1b2C3'
+    expect(videoExport.frameStateAt(project, 2_000).lines[0].color).toBe('#A1b2C3')
+  })
+
   it('uses only visible tracks when extending duration', () => {
     const project = videoProject()
     project.durationMs = 1_000
