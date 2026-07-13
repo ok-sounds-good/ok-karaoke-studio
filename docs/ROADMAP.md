@@ -1,8 +1,16 @@
 # Okay Karaoke Studio — Roadmap
 
-The version 0.1 MVP in [`MVP.md`](./MVP.md) is complete and green. This roadmap
-starts after that baseline. Ordering is intentional, but a roadmap item is not a
-commitment until it passes the decision gates below and is assigned to a release.
+The version 0.1 product-acceptance gate in [`MVP.md`](./MVP.md) remains open until
+the user makes and accepts a karaoke video for a new song with the Studio. This
+roadmap holds capabilities that are deliberately deferred from that active
+contract. Ordering is intentional, but a roadmap item is not a commitment until
+it passes the decision gates below and is assigned to a release.
+
+If the real-song attempt exposes a blocker, a capability may move into the MVP;
+if an MVP behavior does not serve that gate, it may be revised or removed. Record
+the observed blocker and contract change rather than treating this roadmap as a
+fixed post-MVP boundary. These product-scope decisions do not relax the
+requirement to keep `main` technically green and releasable.
 
 Okay Karaoke Studio is a karaoke editor. Automatic media preparation, live-show
 operation, and collaboration are not core-product goals. A future plugin could
@@ -12,8 +20,8 @@ no such integration is currently planned.
 ## Next: safer and faster editing
 
 - Crash-safe autosave snapshots and project recovery.
-- Ripple timing, range retime, quantize, nudge presets, copy/move to the other
-  voice, and unsynchronize-from-cursor.
+- Ripple timing, range retime, quantize, nudge presets, and copy/move to the other
+  voice.
 - Line, phrase, and arbitrary group dragging with magnetic snapping.
 - Loop ranges, markers, count-in, metronome, and configurable keyboard shortcuts.
 - Separate **reference audio** for lyric synchronization from **export audio**

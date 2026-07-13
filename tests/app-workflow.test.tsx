@@ -5,7 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import App from '../src/App'
-import { createDemoProject, serializeProject } from '../src/lib/model'
+import { createDemoProject, parseProject, serializeProject } from '../src/lib/model'
 
 interface StudioHarness {
   studio: StudioApi
@@ -14,6 +14,7 @@ interface StudioHarness {
   importAudio: ReturnType<typeof vi.fn>
   openProject: ReturnType<typeof vi.fn>
   saveProject: ReturnType<typeof vi.fn>
+  sendMenuAction: (action: StudioMenuAction) => void
 }
 
 function createStudioHarness(): StudioHarness {
@@ -22,6 +23,13 @@ function createStudioHarness(): StudioHarness {
   const importAudio = vi.fn(async () => null)
   const exportText = vi.fn(async () => ({ path: '/exports/project.oks' }))
   const exportVideo = vi.fn(async () => null)
+  let menuActionListener: ((action: StudioMenuAction) => void) | null = null
+  const onMenuAction = vi.fn((callback: (action: StudioMenuAction) => void) => {
+    menuActionListener = callback
+    return () => {
+      if (menuActionListener === callback) menuActionListener = null
+    }
+  })
   const studio = {
     openProject,
     saveProject,
@@ -33,10 +41,18 @@ function createStudioHarness(): StudioHarness {
     exportVideo,
     cancelVideoExport: vi.fn(async () => undefined),
     onVideoExportProgress: vi.fn(() => () => undefined),
-    onMenuAction: vi.fn(() => () => undefined),
+    onMenuAction,
   } as unknown as StudioApi
 
-  return { studio, exportText, exportVideo, importAudio, openProject, saveProject }
+  return {
+    studio,
+    exportText,
+    exportVideo,
+    importAudio,
+    openProject,
+    saveProject,
+    sendMenuAction: (action) => menuActionListener?.(action),
+  }
 }
 
 function deferred<T>() {
@@ -163,26 +179,368 @@ describe('mounted first-time workflow', () => {
     expect(document.querySelector('.transport')?.classList.contains('is-syncing')).toBe(false)
   })
 
-  it('sends exact serialized .oks save and export payloads through the desktop bridge', async () => {
-    const expectedContents = serializeProject(createDemoProject())
+  it('starts clean and sends the same semantic empty project through save and export', async () => {
+    expect(document.querySelector('.topbar__document')?.textContent).toContain('Untitled Song')
+    expect(document.body.textContent).not.toContain('Neon Afterglow')
+    expect(document.querySelectorAll('.lyric-line')).toHaveLength(0)
 
     await clickButton('Workflow')
     await clickButton('Save .oks')
-    expect(harness.saveProject).toHaveBeenCalledWith({
+    expect(harness.saveProject).toHaveBeenCalledWith(expect.objectContaining({
       path: undefined,
-      suggestedName: 'neon-afterglow.oks',
-      contents: expectedContents,
+      suggestedName: 'untitled-song.oks',
+    }))
+    const savedContents = harness.saveProject.mock.calls[0][0].contents
+    expect(parseProject(savedContents)).toMatchObject({
+      title: 'Untitled Song',
+      artist: 'Unknown Artist',
+      audioPath: null,
+      durationMs: null,
+      offsetMs: 0,
+      tracks: [{ name: 'Lead Vocal', lines: [] }],
     })
 
     await clickButton('Workflow')
     await clickButton('Choose export')
-    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Editable .oks project')
+    const exportDialog = document.querySelector<HTMLElement>('[role="dialog"]')
+    expect(exportDialog?.textContent).toContain('Add lyrics before exporting karaoke')
+    expect(exportDialog?.textContent).toContain('Editable .oks project')
+    const exportOption = (label: string) => [...exportDialog!.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.includes(label))
+    expect(exportOption('Enhanced LRC')?.disabled).toBe(true)
+    expect(exportOption('ASS karaoke subtitles')?.disabled).toBe(true)
+    expect(exportOption('Karaoke video')?.disabled).toBe(true)
+    expect(exportOption('Editable .oks project')?.disabled).toBe(false)
     await clickButton('Editable .oks project')
     expect(harness.exportText).toHaveBeenCalledWith({
-      suggestedName: 'okay-karaoke-neon-afterglow.oks',
-      contents: expectedContents,
+      suggestedName: 'unknown-artist-untitled-song.oks',
+      contents: savedContents,
       format: 'oks',
     })
+  })
+
+  it('reserves bare Space, uses Shift+Space for playback, and wires Stop to reset transport', async () => {
+    const bareSpace = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      code: 'Space',
+      key: ' ',
+    })
+    await act(async () => window.dispatchEvent(bareSpace))
+
+    expect(bareSpace.defaultPrevented).toBe(true)
+    expect(document.querySelector('[aria-label="Pause"]')).toBeNull()
+
+    const focusedButton = document.querySelector<HTMLButtonElement>('[aria-label="Play"]')
+    if (!focusedButton) throw new Error('Play transport control was not mounted')
+    focusedButton.focus()
+    const buttonSpace = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      code: 'Space',
+      key: ' ',
+    })
+    await act(async () => focusedButton.dispatchEvent(buttonSpace))
+
+    expect(buttonSpace.defaultPrevented).toBe(false)
+
+    const shiftedSpace = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      code: 'Space',
+      key: ' ',
+      shiftKey: true,
+    })
+    await act(async () => window.dispatchEvent(shiftedSpace))
+
+    expect(shiftedSpace.defaultPrevented).toBe(true)
+    expect(document.querySelector('[aria-label="Pause"]')).not.toBeNull()
+
+    const playingBareSpace = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      code: 'Space',
+      key: ' ',
+    })
+    await act(async () => window.dispatchEvent(playingBareSpace))
+    expect(playingBareSpace.defaultPrevented).toBe(true)
+    expect(document.querySelector('[aria-label="Pause"]')).not.toBeNull()
+
+    const skipForward = document.querySelector<HTMLButtonElement>(
+      '[aria-label="Skip forward five seconds"]',
+    )
+    if (!skipForward) throw new Error('Skip-forward transport control was not mounted')
+    await act(async () => skipForward.click())
+    expect(document.querySelector('.time-readout strong')?.textContent).toBe('0:05.000')
+
+    const stop = document.querySelector<HTMLButtonElement>('[aria-label="Stop"]')
+    if (!stop) throw new Error('Stop transport control was not mounted')
+    expect(stop.title).toBe('Stop and return to the start')
+    await act(async () => stop.click())
+
+    expect(document.querySelector('[aria-label="Play"]')).not.toBeNull()
+    expect(document.querySelector('.time-readout strong')?.textContent).toBe('0:00.000')
+    expect(document.querySelector<HTMLSelectElement>('[aria-label="Playback speed"]')?.title).toBe('Set playback speed')
+    expect(document.querySelector<HTMLInputElement>('[aria-label="Volume"]')?.title).toBe('Adjust playback volume')
+    expect(document.querySelector<HTMLInputElement>('[aria-label="Track 1 color"]')?.title).toBe('Choose color for Lead Vocal')
+  })
+
+  it.each([
+    { modifier: 'Control', init: { ctrlKey: true } },
+    { modifier: 'Command', init: { metaKey: true } },
+  ])('$modifier+A selects every active-track word outside typing fields', async ({ init }) => {
+    await clickButton('Edit text')
+    await replaceTextarea('Select every active word')
+    await clickButton('Apply lyrics')
+
+    const words = [...document.querySelectorAll<HTMLButtonElement>('.lyric-word')]
+    expect(words).toHaveLength(4)
+    await act(async () => words[0].click())
+    expect(document.querySelectorAll('.lyric-word.is-selected')).toHaveLength(1)
+
+    const selectAll = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      code: 'KeyA',
+      key: 'a',
+      ...init,
+    })
+    await act(async () => window.dispatchEvent(selectAll))
+
+    expect(selectAll.defaultPrevented).toBe(true)
+    expect(document.querySelectorAll('.lyric-word.is-selected')).toHaveLength(4)
+  })
+
+  it('routes desktop Select All to track words while preserving lyric-editor text selection', async () => {
+    await clickButton('Edit text')
+    await replaceTextarea('Menu selects words')
+    await clickButton('Apply lyrics')
+    const words = [...document.querySelectorAll<HTMLButtonElement>('.lyric-word')]
+    expect(words).toHaveLength(3)
+    await act(async () => words[0].click())
+    expect(document.querySelectorAll('.lyric-word.is-selected')).toHaveLength(1)
+
+    await act(async () => harness.sendMenuAction('select-all'))
+    expect(document.querySelectorAll('.lyric-word.is-selected')).toHaveLength(3)
+
+    await act(async () => words[0].click())
+    await clickButton('Edit text')
+    const textarea = document.querySelector<HTMLTextAreaElement>('textarea')!
+    textarea.focus()
+    textarea.setSelectionRange(0, 0)
+    await act(async () => harness.sendMenuAction('select-all'))
+    expect(textarea.selectionStart).toBe(0)
+    expect(textarea.selectionEnd).toBe(textarea.value.length)
+    expect(document.querySelectorAll('.lyric-word.is-selected')).toHaveLength(1)
+  })
+
+  it('leaves modified Space chords alone while armed and times only exact bare Space', async () => {
+    await clickButton('Edit text')
+    await replaceTextarea('Only')
+    await clickButton('Apply lyrics')
+    await clickButton('Start sync')
+
+    const modifiedChords = [
+      { ctrlKey: true },
+      { altKey: true },
+      { metaKey: true },
+      { ctrlKey: true, shiftKey: true },
+    ]
+    for (const modifiers of modifiedChords) {
+      const down = new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        code: 'Space',
+        key: ' ',
+        ...modifiers,
+      })
+      const up = new KeyboardEvent('keyup', {
+        bubbles: true,
+        cancelable: true,
+        code: 'Space',
+        key: ' ',
+        ...modifiers,
+      })
+      await act(async () => {
+        window.dispatchEvent(down)
+        window.dispatchEvent(up)
+      })
+      expect(down.defaultPrevented).toBe(false)
+      expect(up.defaultPrevented).toBe(false)
+    }
+    expect(document.querySelectorAll('.timeline-word')).toHaveLength(0)
+
+    const bareDown = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      code: 'Space',
+      key: ' ',
+    })
+    const bareUp = new KeyboardEvent('keyup', {
+      bubbles: true,
+      cancelable: true,
+      code: 'Space',
+      key: ' ',
+    })
+    await act(async () => {
+      window.dispatchEvent(bareDown)
+      window.dispatchEvent(bareUp)
+    })
+
+    expect(bareDown.defaultPrevented).toBe(true)
+    expect(bareUp.defaultPrevented).toBe(true)
+    expect(document.querySelectorAll('.timeline-word')).toHaveLength(1)
+  })
+
+  it('does not wrap synchronization to the first word after the last timed word', async () => {
+    await clickButton('Edit text')
+    await replaceTextarea('Only')
+    await clickButton('Apply lyrics')
+    await clickButton('Start sync')
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        code: 'Space',
+        key: ' ',
+      }))
+      window.dispatchEvent(new KeyboardEvent('keyup', {
+        bubbles: true,
+        cancelable: true,
+        code: 'Space',
+        key: ' ',
+      }))
+    })
+    const firstTiming = document.querySelector('.timeline-word')?.getAttribute('aria-label')
+    expect(firstTiming).toContain('Only timing block')
+
+    const stop = document.querySelector<HTMLButtonElement>('[aria-label="Stop"]')!
+    const forward = document.querySelector<HTMLButtonElement>('[aria-label="Skip forward five seconds"]')!
+    await act(async () => stop.click())
+    await act(async () => forward.click())
+    expect(document.querySelector('.time-readout strong')?.textContent).toBe('0:05.000')
+
+    await clickButton('Start sync')
+    expect(document.querySelector('.transport')?.classList.contains('is-syncing')).toBe(false)
+    expect(document.querySelector('[role="status"]')?.textContent).toContain('No words remain at or after the playhead')
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        code: 'Space',
+        key: ' ',
+      }))
+      window.dispatchEvent(new KeyboardEvent('keyup', {
+        bubbles: true,
+        cancelable: true,
+        code: 'Space',
+        key: ' ',
+      }))
+    })
+    expect(document.querySelector('.timeline-word')?.getAttribute('aria-label')).toBe(firstTiming)
+  })
+
+  it('clears active-track timing after the offset cursor as one undoable edit', async () => {
+    const demo = createDemoProject()
+    const lead = demo.tracks[0]
+    const duet = {
+      ...lead,
+      id: 'offset-duet',
+      name: 'Duet Vocal',
+      lines: lead.lines.map((line, lineIndex) => ({
+        ...line,
+        id: `offset-duet-line-${lineIndex}`,
+        words: line.words.map((word, wordIndex) => ({
+          ...word,
+          id: `offset-duet-word-${lineIndex}-${wordIndex}`,
+        })),
+      })),
+    }
+    const openedProject = {
+      ...demo,
+      id: 'offset-clear-project',
+      title: 'Offset Clear',
+      offsetMs: 500,
+      tracks: [lead, duet],
+    }
+    harness.openProject.mockResolvedValueOnce({
+      path: '/opened/offset-clear.oks',
+      contents: serializeProject(openedProject),
+    })
+
+    await clickButton('Workflow')
+    await clickButton('Open .oks')
+    const leadLane = document.querySelector<HTMLElement>('[data-track-id="demo-lead"]')!
+    const duetLane = document.querySelector<HTMLElement>('[data-track-id="offset-duet"]')!
+    const totalLeadWords = lead.lines.reduce((total, line) => total + line.words.length, 0)
+    const retainedLeadWords = lead.lines.slice(0, 2).reduce((total, line) => total + line.words.length, 0)
+    expect(leadLane.querySelectorAll('.timeline-word')).toHaveLength(totalLeadWords)
+    expect(duetLane.querySelectorAll('.timeline-word')).toHaveLength(totalLeadWords)
+
+    const forward = document.querySelector<HTMLButtonElement>('[aria-label="Skip forward five seconds"]')!
+    await act(async () => forward.click())
+    await act(async () => forward.click())
+    await act(async () => window.dispatchEvent(new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      code: 'ArrowRight',
+      key: 'ArrowRight',
+      shiftKey: true,
+    })))
+    expect(document.querySelector('.time-readout strong')?.textContent).toBe('0:11.000')
+
+    await clickButton('Clear from cursor')
+    expect(leadLane.querySelectorAll('.timeline-word')).toHaveLength(retainedLeadWords)
+    expect(duetLane.querySelectorAll('.timeline-word')).toHaveLength(totalLeadWords)
+    const undo = document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')!
+    expect(undo.disabled).toBe(false)
+
+    await act(async () => undo.click())
+    expect(leadLane.querySelectorAll('.timeline-word')).toHaveLength(totalLeadWords)
+    expect(duetLane.querySelectorAll('.timeline-word')).toHaveLength(totalLeadWords)
+    expect(document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')?.disabled).toBe(true)
+    expect(document.querySelector<HTMLButtonElement>('[aria-label="Redo"]')?.disabled).toBe(false)
+  })
+
+  it('keeps active-track LRC disabled when only another vocal track has lyrics', async () => {
+    const demo = createDemoProject()
+    const populated = demo.tracks[0]
+    const emptyLead = { ...populated, id: 'empty-lead', name: 'Lead Vocal', lines: [] }
+    const duet = {
+      ...populated,
+      id: 'populated-duet',
+      name: 'Duet Vocal',
+      lines: populated.lines.map((line, lineIndex) => ({
+        ...line,
+        id: `populated-duet-line-${lineIndex}`,
+        words: line.words.map((word, wordIndex) => ({
+          ...word,
+          id: `populated-duet-word-${lineIndex}-${wordIndex}`,
+        })),
+      })),
+    }
+    harness.openProject.mockResolvedValueOnce({
+      path: '/opened/duet-only.oks',
+      contents: serializeProject({
+        ...demo,
+        id: 'duet-only-project',
+        title: 'Duet Only',
+        tracks: [emptyLead, duet],
+      }),
+    })
+
+    await clickButton('Workflow')
+    await clickButton('Open .oks')
+    await clickButton('Workflow')
+    await clickButton('Choose export')
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!
+    const option = (label: string) => [...dialog.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.includes(label))
+    expect(option('Enhanced LRC')?.disabled).toBe(true)
+    expect(option('Enhanced LRC')?.textContent).toContain('add lyrics to this track first')
+    expect(option('ASS karaoke subtitles')?.disabled).toBe(false)
   })
 
   it('keeps export choices open when guided FFmpeg setup is postponed', async () => {
@@ -201,6 +559,9 @@ describe('mounted first-time workflow', () => {
       url: 'studio-media://asset/00000000-0000-0000-0000-000000000000/backing.mp3',
     })
 
+    await clickButton('Edit text')
+    await replaceTextarea('Ready to export')
+    await clickButton('Apply lyrics')
     await clickButton('Workflow')
     await clickButton('Attach audio')
     await clickButton('Workflow')

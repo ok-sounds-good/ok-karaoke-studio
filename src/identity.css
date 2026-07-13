@@ -506,6 +506,20 @@ select:focus-visible {
     #faf6fd;
 }
 
+.timeline-line-label {
+  color: color-mix(in srgb, var(--track-color) 38%, var(--text));
+}
+
+.timeline-line-label__word.is-selected {
+  background: color-mix(in srgb, var(--track-color) 12%, white);
+  color: var(--text);
+}
+
+.timeline-line-label__word.is-sync-target {
+  background: var(--orange-soft);
+  color: #a6480a;
+}
+
 .timeline-word {
   border-color: color-mix(in srgb, var(--track-color) 55%, #d4c8df);
   background: color-mix(in srgb, var(--track-color) 17%, white);

@@ -12,8 +12,9 @@ export function Button({ variant = 'secondary', size = 'md', className = '', ...
   return <button className={`button button--${variant} button--${size} ${className}`} {...props} />
 }
 
-export function IconButton({ className = '', ...props }: ButtonHTMLAttributes<HTMLButtonElement>) {
-  return <button className={`icon-button ${className}`} {...props} />
+export function IconButton({ className = '', title, ...props }: ButtonHTMLAttributes<HTMLButtonElement>) {
+  const hoverLabel = typeof props['aria-label'] === 'string' ? props['aria-label'] : undefined
+  return <button className={`icon-button ${className}`} title={title ?? hoverLabel} {...props} />
 }
 
 export function LogoMark({ small = false }: { small?: boolean }) {

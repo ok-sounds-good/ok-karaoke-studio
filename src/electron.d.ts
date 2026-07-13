@@ -12,6 +12,7 @@ declare global {
     | 'import-lrc'
     | 'export'
     | 'play-toggle'
+    | 'select-all'
     | 'undo'
     | 'redo'
 

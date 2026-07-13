@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { KaraokeProject, LyricWord, ValidationIssue, VocalTrack } from './lib/model'
 import {
-  createDemoProject,
   createProject,
   createVocalTrack,
   exportAss,
@@ -27,6 +26,7 @@ import {
   flattenProject,
   flattenTrack,
   applyTimingDraft,
+  clearTrackTimingFrom,
   patchWord,
   recalculateLine,
   shiftWords,
@@ -39,11 +39,14 @@ interface HistoryEntry {
   revision: number
 }
 
-function useProjectHistory(initialProject: KaraokeProject) {
+function useProjectHistory(initialProject: KaraokeProject | (() => KaraokeProject)) {
   const sequenceRef = useRef(0)
   const pastRef = useRef<HistoryEntry[]>([])
   const futureRef = useRef<HistoryEntry[]>([])
-  const [entry, setEntry] = useState<HistoryEntry>({ project: initialProject, revision: 0 })
+  const [entry, setEntry] = useState<HistoryEntry>(() => ({
+    project: typeof initialProject === 'function' ? initialProject() : initialProject,
+    revision: 0,
+  }))
   const [savedRevision, setSavedRevision] = useState(0)
   const [historyVersion, setHistoryVersion] = useState(0)
 
@@ -192,12 +195,60 @@ function inputHasTypingFocus() {
   return element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement || (element instanceof HTMLElement && element.isContentEditable)
 }
 
+function eventTargetsSpaceActivatableControl(event: KeyboardEvent) {
+  const target = event.target
+  return target instanceof Element && Boolean(target.closest('button, a[href], summary, [role="button"], [role="menuitem"]'))
+}
+
+function selectAllInFocusedEditor() {
+  const element = document.activeElement
+  if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+    try {
+      element.select()
+    } catch {
+      // Non-text input types do not expose a selectable text range.
+    }
+    return true
+  }
+  if (element instanceof HTMLSelectElement) return true
+  if (element instanceof HTMLElement && element.isContentEditable) {
+    const selection = window.getSelection()
+    if (selection) {
+      const range = document.createRange()
+      range.selectNodeContents(element.closest('[contenteditable]') ?? element)
+      selection.removeAllRanges()
+      selection.addRange(range)
+    }
+    return true
+  }
+  return false
+}
+
 export function lyricTimeAtPlayback(playbackMs: number, offsetMs: number) {
   return playbackMs - offsetMs
 }
 
+export function syncWordIndexFromLyricTime(words: LyricWord[], lyricTimeMs: number) {
+  const boundaryMs = lyricTimeMs - 80
+  const untimedIsEligible = new Set<number>()
+  let nextTimedStartMs: number | null = null
+  for (let index = words.length - 1; index >= 0; index -= 1) {
+    const word = words[index]
+    if (word.startMs !== null) {
+      nextTimedStartMs = word.startMs
+    } else if (nextTimedStartMs === null || nextTimedStartMs >= boundaryMs) {
+      untimedIsEligible.add(index)
+    }
+  }
+  return words.findIndex((word, index) => (
+    word.startMs === null
+      ? untimedIsEligible.has(index)
+      : word.startMs >= boundaryMs
+  ))
+}
+
 export default function App() {
-  const history = useProjectHistory(createDemoProject())
+  const history = useProjectHistory(createProject)
   const { project, commit, replaceCurrent } = history
   const [projectPath, setProjectPath] = useState<string | null>(null)
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
@@ -232,6 +283,10 @@ export default function App() {
 
   const activeTrack = project.tracks.find((track) => track.id === activeTrackId) ?? project.tracks[0]
   const syncWords = useMemo(() => (activeTrack ? flattenTrack(activeTrack).map(({ word }) => word) : []), [activeTrack])
+  const projectHasLyrics = useMemo(
+    () => project.tracks.some((track) => track.lines.some((line) => line.words.length > 0)),
+    [project.tracks],
+  )
   const durationMs = effectiveDuration(project)
   const playback = usePlayback({ durationMs, audioUrl, onDuration: persistAudioDuration })
   const waveform = useWaveform(audioUrl)
@@ -340,6 +395,8 @@ export default function App() {
     setActiveTrackId(next.tracks[0]?.id ?? '')
     setSelectedWordIds(new Set())
     setSyncMode(false)
+    syncHeldRef.current = null
+    setHeldWordId(null)
     playback.pause()
     playback.seek(0)
     setAudioUrl(null)
@@ -388,6 +445,8 @@ export default function App() {
     setActiveTrackId(next.tracks[0]?.id ?? '')
     setSelectedWordIds(new Set())
     setSyncMode(false)
+    syncHeldRef.current = null
+    setHeldWordId(null)
     playback.pause()
     playback.seek(0)
     void window.studio?.releaseAudio?.().catch((error: unknown) => {
@@ -466,6 +525,9 @@ export default function App() {
       const imported = importLrc(contents, activeTrack.id, project.offsetMs)
       replaceTrack(activeTrack.id, { ...imported, name: activeTrack.name, color: activeTrack.color })
       setSelectedWordIds(new Set())
+      syncHeldRef.current = null
+      setHeldWordId(null)
+      setSyncMode(false)
       showToast(`Imported LRC into ${activeTrack.name}`, 'success')
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Could not import that LRC file.', 'warning')
@@ -558,30 +620,83 @@ export default function App() {
     if (index >= 0 && syncMode) setSyncCursor(index)
   }, [playback.seek, project.offsetMs, syncMode, syncWords])
 
+  const cancelHeldSync = useCallback(() => {
+    syncHeldRef.current = null
+    setHeldWordId(null)
+  }, [])
+
+  const selectAllActiveTrackWords = useCallback(() => {
+    setSelectedWordIds(new Set(activeTrack ? flattenTrack(activeTrack).map(({ word }) => word.id) : []))
+  }, [activeTrack])
+
   const handleSelectWordId = useCallback((wordId: string, add: boolean) => {
     const item = flattenProject(project).find(({ word }) => word.id === wordId)
     if (item) {
-      if (item.track.id !== activeTrackId) setActiveTrackId(item.track.id)
-      handleSelectWord(item.word, add)
+      const changingTrack = item.track.id !== activeTrackId
+      if (changingTrack) {
+        cancelHeldSync()
+        setSyncMode(false)
+        setActiveTrackId(item.track.id)
+      }
+      handleSelectWord(item.word, changingTrack ? false : add)
     }
-  }, [activeTrackId, handleSelectWord, project])
+  }, [activeTrackId, cancelHeldSync, handleSelectWord, project])
+
+  const clearActiveTrackTimingFrom = useCallback((fromMs: number, successMessage: string, emptyMessage: string) => {
+    if (!activeTrack) return
+    const nextTrack = clearTrackTimingFrom(activeTrack, fromMs)
+    if (nextTrack === activeTrack) {
+      showToast(emptyMessage, 'neutral')
+      return
+    }
+    playback.pause()
+    cancelHeldSync()
+    setSyncMode(false)
+    setSelectedWordIds(new Set())
+    replaceTrack(activeTrack.id, nextTrack)
+    showToast(successMessage, 'success')
+  }, [activeTrack, cancelHeldSync, playback.pause, replaceTrack, showToast])
+
+  const handleClearTiming = useCallback(() => {
+    clearActiveTrackTimingFrom(0, 'Cleared active-track timing', 'The active track has no timing to clear')
+  }, [clearActiveTrackTimingFrom])
+
+  const handleClearTimingAfterCursor = useCallback(() => {
+    clearActiveTrackTimingFrom(
+      lyricTimeAtPlayback(currentTimeRef.current, project.offsetMs),
+      'Cleared active-track timing from the playhead',
+      'No active-track timing starts at or after the playhead',
+    )
+  }, [clearActiveTrackTimingFrom, project.offsetMs])
+
+  const handleStop = useCallback(() => {
+    cancelHeldSync()
+    setSyncMode(false)
+    playback.pause()
+    playback.seek(0)
+  }, [cancelHeldSync, playback.pause, playback.seek])
 
   const toggleSyncMode = useCallback(() => {
-    setSyncMode((enabled) => {
-      const next = !enabled
-      if (next) {
-        const lyricTimeMs = lyricTimeAtPlayback(currentTimeRef.current, project.offsetMs)
-        const fromPlayhead = syncWords.findIndex((word) => word.startMs === null || word.startMs >= lyricTimeMs - 80)
-        setSyncCursor(fromPlayhead >= 0 ? fromPlayhead : 0)
-        playback.play()
-        showToast('Tap sync armed — hold Space for each word', 'neutral')
-      } else {
-        syncHeldRef.current = null
-        setHeldWordId(null)
-      }
-      return next
-    })
-  }, [playback.play, project.offsetMs, showToast, syncWords])
+    if (syncMode) {
+      cancelHeldSync()
+      setSyncMode(false)
+      return
+    }
+    if (!syncWords.length) {
+      showToast('Add lyrics before starting sync', 'warning')
+      return
+    }
+    const lyricTimeMs = lyricTimeAtPlayback(currentTimeRef.current, project.offsetMs)
+    const fromPlayhead = syncWordIndexFromLyricTime(syncWords, lyricTimeMs)
+    if (fromPlayhead < 0) {
+      showToast('No words remain at or after the playhead', 'neutral')
+      return
+    }
+    setSyncCursor(fromPlayhead)
+    setSyncMode(true)
+    playback.play()
+    showToast('Tap sync armed — hold Space for each word', 'neutral')
+  }, [cancelHeldSync, playback.play, project.offsetMs, showToast, syncMode, syncWords])
 
   useEffect(() => {
     const keyDown = (event: KeyboardEvent) => {
@@ -590,8 +705,17 @@ export default function App() {
       if (event.code === 'Escape' && syncMode) {
         event.preventDefault()
         setSyncMode(false)
-        syncHeldRef.current = null
-        setHeldWordId(null)
+        cancelHeldSync()
+        return
+      }
+      if (
+        event.code === 'KeyA' &&
+        (event.metaKey || event.ctrlKey) &&
+        !event.altKey &&
+        !event.shiftKey
+      ) {
+        event.preventDefault()
+        selectAllActiveTrackWords()
         return
       }
       if ((event.code === 'Backspace' || event.code === 'Delete') && selectedWordIds.size) {
@@ -614,11 +738,16 @@ export default function App() {
         return
       }
       if (event.code !== 'Space') return
+      const exactShiftSpace = event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey
+      const exactBareSpace = !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey
+      if (!exactShiftSpace && !exactBareSpace) return
+      if (exactBareSpace && !syncMode && eventTargetsSpaceActivatableControl(event)) return
       event.preventDefault()
-      if (!syncMode) {
+      if (exactShiftSpace) {
         if (!event.repeat) playback.toggle()
         return
       }
+      if (!syncMode) return
       if (event.repeat || syncHeldRef.current) return
       const word = syncWords[syncCursor]
       if (!word) {
@@ -637,20 +766,18 @@ export default function App() {
     const keyUp = (event: KeyboardEvent) => {
       if (document.querySelector('[role="dialog"]')) {
         if (event.code === 'Space') {
-          syncHeldRef.current = null
-          setHeldWordId(null)
+          cancelHeldSync()
         }
         return
       }
       if (event.code !== 'Space' || !syncMode) return
-      event.preventDefault()
       const held = syncHeldRef.current
       if (!held) return
+      event.preventDefault()
       const rawCurrentMs = Math.max(0, lyricTimeAtPlayback(currentTimeRef.current, project.offsetMs))
       const endMs = Math.max(held.startMs + 100, rawCurrentMs)
       commit((current) => patchWord(current, held.wordId, { startMs: Math.round(held.startMs), endMs: Math.round(endMs) }))
-      syncHeldRef.current = null
-      setHeldWordId(null)
+      cancelHeldSync()
       setSyncCursor((index) => {
         const next = index + 1
         if (next >= syncWords.length) {
@@ -661,13 +788,17 @@ export default function App() {
       })
     }
 
+    const windowBlur = () => cancelHeldSync()
+
     window.addEventListener('keydown', keyDown)
     window.addEventListener('keyup', keyUp)
+    window.addEventListener('blur', windowBlur)
     return () => {
       window.removeEventListener('keydown', keyDown)
       window.removeEventListener('keyup', keyUp)
+      window.removeEventListener('blur', windowBlur)
     }
-  }, [commit, playback.play, playback.seek, playback.toggle, project.offsetMs, selectedWordIds, showToast, syncCursor, syncMode, syncWords])
+  }, [cancelHeldSync, commit, playback.play, playback.seek, playback.toggle, project.offsetMs, selectAllActiveTrackWords, selectedWordIds, showToast, syncCursor, syncMode, syncWords])
 
   useEffect(() => {
     if (!window.studio) return
@@ -687,10 +818,16 @@ export default function App() {
       else if (action === 'import-lrc') void handleImportLrc()
       else if (action === 'export') setExportDialogOpen(true)
       else if (action === 'play-toggle') playback.toggle()
+      else if (action === 'select-all') {
+        const editorHandledSelection = selectAllInFocusedEditor()
+        if (!editorHandledSelection && !document.querySelector('[role="dialog"]')) {
+          selectAllActiveTrackWords()
+        }
+      }
       else if (action === 'undo') history.undo()
       else if (action === 'redo') history.redo()
     })
-  }, [handleImportAudio, handleImportLrc, handleNew, handleOpen, handleSave, history.redo, history.undo, playback.toggle, showToast])
+  }, [handleImportAudio, handleImportLrc, handleNew, handleOpen, handleSave, history.redo, history.undo, playback.toggle, selectAllActiveTrackWords, showToast])
 
   const workflowGuideActions = createWorkflowGuideActions({
     canStartSync: syncWords.length > 0,
@@ -715,6 +852,7 @@ export default function App() {
         canUndo={history.canUndo}
         canRedo={history.canRedo}
         issueCount={reviewIssues.length}
+        hasLyrics={projectHasLyrics}
         onNew={handleNew}
         onOpen={() => void handleOpen()}
         onSave={() => void handleSave(false)}
@@ -729,28 +867,23 @@ export default function App() {
         <InspectorPanel
           project={project}
           activeTrackId={activeTrackId}
-          onSelectTrack={(trackId) => { setActiveTrackId(trackId); setSelectedWordIds(new Set()) }}
+          onSelectTrack={(trackId) => {
+            cancelHeldSync()
+            setSyncMode(false)
+            setActiveTrackId(trackId)
+            setSelectedWordIds(new Set())
+          }}
           onUpdateProject={updateProject}
           onUpdateTrack={updateTrack}
           onAddTrack={() => {
+            cancelHeldSync()
+            setSyncMode(false)
             const track = createVocalTrack({ id: crypto.randomUUID(), name: 'Duet Vocal', color: '#ff8f6b' })
             commit((current) => ({ ...current, tracks: [...current.tracks, track], updatedAt: new Date().toISOString() }))
             setActiveTrackId(track.id)
           }}
           onImportAudio={() => void handleImportAudio()}
           onImportLrc={() => void handleImportLrc()}
-          onClearTiming={() => {
-            if (!activeTrack) return
-            replaceTrack(activeTrack.id, {
-              ...activeTrack,
-              lines: activeTrack.lines.map((line) => ({
-                ...line,
-                startMs: null,
-                endMs: null,
-                words: line.words.map((word) => ({ ...word, startMs: null, endMs: null })),
-              })),
-            })
-          }}
         />
 
         <div className="unified-workspace">
@@ -767,7 +900,12 @@ export default function App() {
               lyricMs={lyricTimeMs}
               selectedWordIds={selectedWordIds}
               syncWordId={syncWordId}
-              onSelectTrack={(trackId) => { setActiveTrackId(trackId); setSelectedWordIds(new Set()) }}
+              onSelectTrack={(trackId) => {
+                cancelHeldSync()
+                setSyncMode(false)
+                setActiveTrackId(trackId)
+                setSelectedWordIds(new Set())
+              }}
               onSelectWord={handleSelectWord}
               onEditLyrics={() => setLyricsDialogOpen(true)}
             />
@@ -783,12 +921,17 @@ export default function App() {
             activeTrackId={activeTrackId}
             selectedWordIds={selectedWordIds}
             syncWordId={syncWordId}
+            syncMode={syncMode}
             onSeek={playback.seek}
             onZoom={setZoom}
             onSelectWord={handleSelectWordId}
+            onSelectWords={setSelectedWordIds}
             onShiftWords={(ids, deltaMs) => commit((current) => shiftWords(current, ids, deltaMs))}
             onResizeWord={(wordId, startMs, endMs) => commit((current) => patchWord(current, wordId, { startMs, endMs }))}
             onTimingDraftChange={updateTimingDraft}
+            onToggleSync={toggleSyncMode}
+            onClearTiming={handleClearTiming}
+            onClearTimingAfterCursor={handleClearTimingAfterCursor}
           />
         </div>
       </main>
@@ -804,6 +947,7 @@ export default function App() {
         syncTotal={syncWords.length}
         hasAudio={playback.hasAudio}
         onToggle={playback.toggle}
+        onStop={handleStop}
         onSeek={playback.seek}
         onRate={playback.setRate}
         onVolume={playback.setVolume}
@@ -850,6 +994,9 @@ export default function App() {
           onClose={() => setLyricsDialogOpen(false)}
           onSave={(text) => {
             replaceTrack(activeTrack.id, parseLyrics(text, activeTrack.id, activeTrack))
+            cancelHeldSync()
+            setSyncMode(false)
+            setSelectedWordIds(new Set())
             setLyricsDialogOpen(false)
             showToast('Lyrics updated', 'success')
           }}
@@ -863,6 +1010,8 @@ export default function App() {
           projectTitle={project.title}
           activeTrackName={activeTrack.name}
           issueCount={reviewIssues.length}
+          hasLyrics={projectHasLyrics}
+          activeTrackHasLyrics={syncWords.length > 0}
           onClose={() => setExportDialogOpen(false)}
           onExportLrc={() => void exportText('lrc')}
           onExportAss={() => void exportText('ass')}

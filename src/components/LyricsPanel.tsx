@@ -94,7 +94,10 @@ export function LyricsPanel({
               <div className="lyric-line__meta">
                 <span>{String(lineIndex + 1).padStart(2, '0')}</span>
                 {line.startMs !== null ? (
-                  <button onClick={() => line.startMs !== null && onSelectWord(line.words[0], false)}>
+                  <button
+                    title={`Select the first word and seek to ${formatTime(line.startMs, true)}`}
+                    onClick={() => line.startMs !== null && onSelectWord(line.words[0], false)}
+                  >
                     {formatTime(line.startMs, true)}
                   </button>
                 ) : (
@@ -112,7 +115,7 @@ export function LyricsPanel({
                     <button
                       key={word.id}
                       className={`lyric-word ${selected ? 'is-selected' : ''} ${isSyncWord ? 'is-sync-target' : ''} ${isPast ? 'is-past' : ''} ${isCurrent ? 'is-current' : ''} ${word.startMs === null ? 'is-untimed' : ''}`}
-                      onClick={(event) => onSelectWord(word, event.shiftKey || event.metaKey)}
+                      onClick={(event) => onSelectWord(word, event.shiftKey || event.metaKey || event.ctrlKey)}
                       title={word.startMs === null ? 'Not timed yet' : `${formatTime(word.startMs, true)} – ${formatTime(word.endMs ?? word.startMs, true)}`}
                     >
                       {word.text.replaceAll('/', '·')}

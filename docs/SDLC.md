@@ -1,17 +1,23 @@
 # Software Development Lifecycle
 
-The version 0.1 MVP is the green baseline. The purpose of this process is to keep
-`main` releasable while making product and technical decisions easy to audit.
+`main` is the technically green, releasable baseline. Version 0.1 product
+acceptance remains open and is held by the user until they make and accept a
+karaoke video for a new song with the Studio. The purpose of this process is to
+preserve that technical baseline while making product and technical decisions
+easy to audit.
 
 ## Change flow
 
-1. Start nontrivial work from a roadmap item or issue with acceptance criteria.
+1. Start nontrivial work from an observed MVP workflow blocker, a roadmap item,
+   or an issue with acceptance criteria.
 2. Create a short-lived branch from current `main`. Use a descriptive prefix such
    as `feature/`, `fix/`, `docs/`, or `chore/`.
 3. Open a draft pull request early. Keep unrelated changes in separate pull
    requests.
 4. Record scope, tests, manual checks, project-format impact, export or licensing
-   impact, and deliberate exclusions in the pull request.
+   impact, and deliberate exclusions in the pull request. For MVP work, record
+   the observation from the real-song attempt and any supporting contract
+   criterion added, removed, or revised.
 5. Merge only after the required macOS and Windows CI checks pass and all review
    conversations are resolved.
 6. Squash merge, delete the branch, and leave `main` green and releasable.
@@ -24,7 +30,8 @@ requirement avoids a solo maintainer deadlock.
 
 A change is done when:
 
-- Acceptance criteria are met without silently expanding the release scope.
+- Task acceptance criteria are met. Any supporting MVP scope change is explicit,
+  evidence-backed, and tied to the user-held product gate.
 - `bun run test` and `bun run build` pass.
 - `bun run dist:dir` passes when Electron, packaging, preload, or main-process code
   changes.
@@ -39,9 +46,9 @@ A change is done when:
 ## Recommended `main` ruleset
 
 Create one repository branch ruleset named `protect-main` in **Settings → Rules →
-Rulesets**. Target the default branch and set enforcement to **Active**. The MVP
-pull request confirms that the existing required check names are `macOS` and
-`Windows`; use the first protected pull request to confirm enforcement.
+Rulesets**. Target the default branch and set enforcement to **Active**. The
+required check names are `macOS` and `Windows`; use a protected pull request to
+confirm enforcement.
 
 Configure:
 
@@ -76,10 +83,11 @@ protection settings or revisit protection when the repository becomes public.
 
 ## Releases
 
-Create releases only from green `main`. Before the next distributable release,
-add a release checklist covering versioning, clean installation, the gated video
-smoke test, artifacts, signing/notarization where applicable, checksums, release
-notes, and known limitations.
+Create releases only from green `main`. Do not describe version 0.1 as
+product-accepted until the user-held gate in [`MVP.md`](./MVP.md) closes. Before
+the next distributable release, add a release checklist covering versioning,
+clean installation, the gated video smoke test, artifacts, signing/notarization
+where applicable, checksums, release notes, and known limitations.
 
 An emergency bypass is for restoring the delivery process or addressing an urgent
 security issue. Document why it was used, validate immediately afterward, and

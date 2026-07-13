@@ -8,13 +8,16 @@ import {
   EDITABLE_PROJECT_EXPORT_FORMAT,
   lyricTimeAtPlayback,
   projectForTimingPreview,
+  syncWordIndexFromLyricTime,
   type ActiveTimingDraft,
 } from '../src/App'
 import { KaraokePreview } from '../src/components/KaraokePreview'
 import { LyricsPanel } from '../src/components/LyricsPanel'
 import {
+  buildTimelineTrackLayout,
   createTimelineGestureSession,
   timelineTime,
+  timelineWordIdsInRect,
   timingDraftForGesture,
 } from '../src/components/Timeline'
 import { WorkflowGuideDialog } from '../src/components/Dialogs'
@@ -26,7 +29,7 @@ import {
   createVocalTrack,
   retimeLine,
 } from '../src/lib/karaoke'
-import { applyTimingDraft, patchWord, shiftWords } from '../src/utils'
+import { applyTimingDraft, clearTrackTimingFrom, patchWord, shiftWords } from '../src/utils'
 
 function offsetProject() {
   const line = retimeLine(createLyricLine('Hold'), 1_000, 2_000)
@@ -102,6 +105,7 @@ describe('offset-aware renderer state', () => {
 
     expect(before).not.toContain('is-current')
     expect(during).toContain('is-current')
+    expect(during).toContain('title="Select the first word and seek to 0:01.000"')
   })
 
   it('matches video export by showing only soloed preview tracks', () => {
@@ -128,6 +132,166 @@ describe('offset-aware renderer state', () => {
 
     expect(markup).toContain('Solo duet')
     expect(markup).not.toContain('>Lead<')
+  })
+})
+
+describe('TimeBoard layout and selection geometry', () => {
+  it('keeps long labels independent and separates overlapping lines and same-line blocks', () => {
+    const firstLine = createLyricLine('Extraordinarily brief', {
+      id: 'first-line',
+      startMs: 1_000,
+      endMs: 1_100,
+      words: [
+        createLyricWord('Extraordinarily', {
+          id: 'long-label',
+          startMs: 1_000,
+          endMs: 1_050,
+        }),
+        createLyricWord('brief', {
+          id: 'overlapping-block',
+          startMs: 1_020,
+          endMs: 1_100,
+        }),
+      ],
+    })
+    const overlappingLine = createLyricLine('Second line', {
+      id: 'second-line',
+      startMs: 1_025,
+      endMs: 1_400,
+      words: [
+        createLyricWord('Second', {
+          id: 'second-line-word',
+          startMs: 1_025,
+          endMs: 1_400,
+        }),
+      ],
+    })
+    const track = createVocalTrack({ id: 'lead', lines: [firstLine, overlappingLine] })
+    const layout = buildTimelineTrackLayout(track, 0, 100)
+    const firstLayout = layout.lines.find((line) => line.line.id === 'first-line')!
+    const secondLayout = layout.lines.find((line) => line.line.id === 'second-line')!
+    const longLabel = firstLayout.words.find((word) => word.word.id === 'long-label')!
+    const overlappingBlock = firstLayout.words.find(
+      (word) => word.word.id === 'overlapping-block',
+    )!
+
+    expect(longLabel.width).toBe(16)
+    expect(longLabel.labelWidth).toBeGreaterThan(longLabel.width)
+    expect(longLabel.top).not.toBe(overlappingBlock.top)
+    expect(firstLayout.lane).not.toBe(secondLayout.lane)
+    expect(firstLayout.top).not.toBe(secondLayout.top)
+  })
+
+  it('returns only active-layout timing blocks intersected by a marquee rectangle', () => {
+    const line = createLyricLine('First Second', {
+      id: 'selection-line',
+      startMs: 1_000,
+      endMs: 3_500,
+      words: [
+        createLyricWord('First', { id: 'first', startMs: 1_000, endMs: 1_500 }),
+        createLyricWord('Second', { id: 'second', startMs: 3_000, endMs: 3_500 }),
+      ],
+    })
+    const layout = buildTimelineTrackLayout(
+      createVocalTrack({ id: 'active-track', lines: [line] }),
+      0,
+      100,
+    )
+    const first = layout.lines[0].words[0]
+
+    expect(timelineWordIdsInRect(layout, {
+      left: first.left + 8,
+      top: first.top + 8,
+      right: first.left + 2,
+      bottom: first.top + 2,
+    })).toEqual(new Set(['first']))
+  })
+})
+
+describe('active-track timing clearing', () => {
+  it('keeps timings that span the cursor and clears word and line starts at the offset-aware boundary', () => {
+    const mixedLine = createLyricLine('Keep authored punctuation — exactly.', {
+      id: 'mixed-line',
+      startMs: 1_000,
+      endMs: 8_000,
+      words: [
+        createLyricWord('Before', { id: 'before', startMs: 1_000, endMs: 2_000 }),
+        createLyricWord('Spanning', { id: 'spanning', startMs: 4_500, endMs: 5_500 }),
+        createLyricWord('Boundary', { id: 'boundary', startMs: 5_000, endMs: 6_000 }),
+        createLyricWord('After', { id: 'after', startMs: 7_000, endMs: 8_000 }),
+        createLyricWord('EndOnly', { id: 'end-only', startMs: null, endMs: 8_500 }),
+      ],
+    })
+    const lineOnlySpanning = createLyricLine('Line only spanning', {
+      id: 'line-only-spanning',
+      startMs: 4_500,
+      endMs: 5_500,
+    })
+    const lineOnlyBoundary = createLyricLine('Line only boundary', {
+      id: 'line-only-boundary',
+      startMs: 5_000,
+      endMs: 6_000,
+    })
+    const lineOnlyEnd = createLyricLine('Line only end', {
+      id: 'line-only-end',
+      startMs: null,
+      endMs: 6_500,
+    })
+    const track = createVocalTrack({
+      id: 'lead',
+      lines: [mixedLine, lineOnlySpanning, lineOnlyBoundary, lineOnlyEnd],
+    })
+    const lyricBoundary = lyricTimeAtPlayback(5_500, 500)
+    const cleared = clearTrackTimingFrom(track, lyricBoundary)
+    const words = cleared.lines[0].words
+
+    expect(lyricBoundary).toBe(5_000)
+    expect(words.find((word) => word.id === 'before')).toMatchObject({
+      startMs: 1_000,
+      endMs: 2_000,
+    })
+    expect(words.find((word) => word.id === 'spanning')).toMatchObject({
+      startMs: 4_500,
+      endMs: 5_500,
+    })
+    expect(words.find((word) => word.id === 'boundary')).toMatchObject({
+      startMs: null,
+      endMs: null,
+    })
+    expect(words.find((word) => word.id === 'after')).toMatchObject({
+      startMs: null,
+      endMs: null,
+    })
+    expect(words.find((word) => word.id === 'end-only')).toMatchObject({
+      startMs: null,
+      endMs: 8_500,
+    })
+    expect(cleared.lines[0].text).toBe('Keep authored punctuation — exactly.')
+    expect(cleared.lines[1]).toMatchObject({ startMs: 4_500, endMs: 5_500 })
+    expect(cleared.lines[2]).toMatchObject({ startMs: null, endMs: null })
+    expect(cleared.lines[3]).toMatchObject({ startMs: null, endMs: 6_500 })
+    expect(clearTrackTimingFrom(track, -500).lines.every((line) => (
+      line.startMs === null && line.endMs === null && line.words.every((word) => (
+        word.startMs === null && word.endMs === null
+      ))
+    ))).toBe(true)
+  })
+})
+
+describe('tap-sync cursor selection', () => {
+  it('skips an earlier untimed gap after its next timed anchor has passed', () => {
+    const words = [
+      createLyricWord('First', { startMs: 1_000, endMs: 2_000 }),
+      createLyricWord('Gap', { startMs: null, endMs: null }),
+      createLyricWord('Anchor', { startMs: 10_000, endMs: 11_000 }),
+    ]
+
+    expect(syncWordIndexFromLyricTime(words, 5_000)).toBe(1)
+    expect(syncWordIndexFromLyricTime(words, 12_000)).toBe(-1)
+    expect(syncWordIndexFromLyricTime(
+      [...words, createLyricWord('Tail', { startMs: null, endMs: null })],
+      12_000,
+    )).toBe(3)
   })
 })
 
@@ -239,6 +403,7 @@ describe('first-time workflow', () => {
         canUndo={false}
         canRedo={false}
         issueCount={0}
+        hasLyrics={false}
         onNew={() => undefined}
         onOpen={() => undefined}
         onSave={() => undefined}
@@ -292,6 +457,22 @@ describe('first-time workflow', () => {
     expect(styles).toMatch(
       /@media \(max-height: 720px\)\s*\{[\s\S]*?\.workflow-guide > li\s*\{[\s\S]*?min-height:\s*52px;/,
     )
+  })
+
+  it('assigns playback to Shift+Space without registering bare Space globally', () => {
+    const electronMain = readFileSync(new URL('../electron/main.cjs', import.meta.url), 'utf8')
+    const playbackMenu = electronMain.match(
+      /label:\s*'Play\/Pause',[\s\S]{0,180}?accelerator:\s*'([^']+)'[\s\S]{0,180}?registerAccelerator:\s*(\w+)/,
+    )
+    const selectAllMenu = electronMain.match(
+      /label:\s*'Select All',[\s\S]{0,180}?accelerator:\s*'([^']+)'[\s\S]{0,180}?sendMenuAction\('([^']+)'\)/,
+    )
+
+    expect(playbackMenu?.[1]).toBe('Shift+Space')
+    expect(playbackMenu?.[2]).toBe('false')
+    expect(selectAllMenu?.[1]).toBe('CommandOrControl+A')
+    expect(selectAllMenu?.[2]).toBe('select-all')
+    expect(electronMain).not.toMatch(/role:\s*'selectAll'/)
   })
 })
 

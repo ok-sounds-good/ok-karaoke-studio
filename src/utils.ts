@@ -93,6 +93,40 @@ export function recalculateLine(line: LyricLine): LyricLine {
   }
 }
 
+export function clearTrackTimingFrom(track: VocalTrack, fromMs: number): VocalTrack {
+  const boundaryMs = Math.max(0, Math.round(fromMs))
+  let trackChanged = false
+  const lines = track.lines.map((line) => {
+    let wordsChanged = false
+    const words = line.words.map((word) => {
+      const clearWord = boundaryMs === 0
+        ? word.startMs !== null || word.endMs !== null
+        : word.startMs !== null && word.startMs >= boundaryMs
+      if (!clearWord) return word
+      wordsChanged = true
+      return { ...word, startMs: null, endMs: null }
+    })
+
+    if (wordsChanged) {
+      trackChanged = true
+      return { ...recalculateLine({ ...line, words }), text: line.text }
+    }
+
+    const hasTimedWords = line.words.some((word) => word.startMs !== null || word.endMs !== null)
+    const clearLine = boundaryMs === 0
+      ? line.startMs !== null || line.endMs !== null
+      : line.startMs !== null && line.startMs >= boundaryMs
+    if (!hasTimedWords && clearLine) {
+      trackChanged = true
+      return { ...line, startMs: null, endMs: null }
+    }
+
+    return line
+  })
+
+  return trackChanged ? { ...track, lines } : track
+}
+
 export function patchWord(
   project: KaraokeProject,
   wordId: string,

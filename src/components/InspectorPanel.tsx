@@ -1,4 +1,4 @@
-import { FileAudio2, Import, Mic2, Music2, Plus, RotateCcw, SlidersHorizontal, UsersRound } from 'lucide-react'
+import { FileAudio2, Import, Mic2, Music2, Plus, SlidersHorizontal, UsersRound } from 'lucide-react'
 import type { KaraokeProject, VocalTrack } from '../lib/model'
 import { formatTime } from '../lib/model'
 import { effectiveDuration, flattenProject, flattenTrack } from '../utils'
@@ -13,7 +13,6 @@ interface InspectorPanelProps {
   onAddTrack: () => void
   onImportAudio: () => void
   onImportLrc: () => void
-  onClearTiming: () => void
 }
 
 export function InspectorPanel({
@@ -25,13 +24,9 @@ export function InspectorPanel({
   onAddTrack,
   onImportAudio,
   onImportLrc,
-  onClearTiming,
 }: InspectorPanelProps) {
   const allWords = flattenProject(project)
   const untimed = allWords.filter(({ word }) => word.startMs === null).length
-  const activeTrack = project.tracks.find((track) => track.id === activeTrackId) ?? project.tracks[0]
-  const activeWords = activeTrack ? flattenTrack(activeTrack) : []
-
   return (
     <aside className="inspector panel" aria-label="Project inspector">
       <header className="panel-header">
@@ -85,7 +80,7 @@ export function InspectorPanel({
             <span>Backing track</span>
             <FileAudio2 size={13} />
           </div>
-          <button className="audio-source" onClick={onImportAudio}>
+          <button className="audio-source" title="Attach or replace the project audio file" onClick={onImportAudio}>
             <span className="audio-source__icon"><FileAudio2 size={18} /></span>
             <span>
               <strong>{project.audioPath?.split('/').pop() ?? 'Attach an audio file'}</strong>
@@ -123,6 +118,7 @@ export function InspectorPanel({
                     <input
                       className="track-color"
                       aria-label={`Track ${index + 1} color`}
+                      title={`Choose color for ${track.name}`}
                       type="color"
                       value={track.color}
                       onClick={(event) => event.stopPropagation()}
@@ -134,10 +130,14 @@ export function InspectorPanel({
                     <div>
                       <button
                         className={track.muted ? 'is-on' : ''}
+                        aria-label={`${track.muted ? 'Unmute' : 'Mute'} ${track.name}`}
+                        title={`${track.muted ? 'Unmute' : 'Mute'} ${track.name}`}
                         onClick={(event) => { event.stopPropagation(); onUpdateTrack(track.id, { muted: !track.muted }) }}
                       >M</button>
                       <button
                         className={track.solo ? 'is-on' : ''}
+                        aria-label={`${track.solo ? 'Disable solo for' : 'Solo'} ${track.name}`}
+                        title={`${track.solo ? 'Disable solo for' : 'Solo'} ${track.name}`}
                         onClick={(event) => { event.stopPropagation(); onUpdateTrack(track.id, { solo: !track.solo }) }}
                       >S</button>
                     </div>
@@ -159,11 +159,8 @@ export function InspectorPanel({
             <SlidersHorizontal size={13} />
           </div>
           <div className="stacked-actions">
-            <Button size="sm" variant="secondary" onClick={onImportLrc}>
+            <Button size="sm" variant="secondary" title="Import timed lyrics into the active track" onClick={onImportLrc}>
               <Import size={14} /> Import LRC lyrics
-            </Button>
-            <Button size="sm" variant="ghost" disabled={activeWords.every(({ word }) => word.startMs === null)} onClick={onClearTiming}>
-              <RotateCcw size={14} /> Clear timing
             </Button>
           </div>
         </section>
@@ -175,7 +172,11 @@ export function InspectorPanel({
           </div>
           <div>
             <span className="eyebrow">Timing coverage</span>
-            <strong>{untimed ? `${untimed} words still need timing` : 'Ready for export'}</strong>
+            <strong>{allWords.length === 0
+              ? 'Add lyrics to begin'
+              : untimed
+                ? `${untimed} words still need timing`
+                : 'Timing complete'}</strong>
           </div>
         </section>
       </div>

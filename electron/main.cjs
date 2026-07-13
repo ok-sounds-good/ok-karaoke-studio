@@ -60,6 +60,7 @@ const MENU_ACTIONS = new Set([
   'import-lrc',
   'export',
   'play-toggle',
+  'select-all',
   'undo',
   'redo',
 ])
@@ -852,7 +853,7 @@ function applicationMenuTemplate() {
         { role: 'paste' },
         { role: 'pasteAndMatchStyle' },
         { role: 'delete' },
-        { role: 'selectAll' },
+        { label: 'Select All', accelerator: 'CommandOrControl+A', click: () => sendMenuAction('select-all') },
       ],
     },
     {
@@ -860,7 +861,7 @@ function applicationMenuTemplate() {
       submenu: [
         {
           label: 'Play/Pause',
-          accelerator: 'Space',
+          accelerator: 'Shift+Space',
           registerAccelerator: false,
           click: () => sendMenuAction('play-toggle'),
         },

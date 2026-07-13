@@ -25,6 +25,7 @@ const MENU_ACTIONS = new Set([
   'import-lrc',
   'export',
   'play-toggle',
+  'select-all',
   'undo',
   'redo',
 ])

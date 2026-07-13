@@ -4,7 +4,7 @@
 
 import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { projectForTimingPreview, type ActiveTimingDraft } from '../src/App'
 import { KaraokePreview } from '../src/components/KaraokePreview'
@@ -99,9 +99,11 @@ function Harness() {
         activeTrackId="lead"
         selectedWordIds={new Set(['hold'])}
         syncWordId={null}
+        syncMode={false}
         onSeek={() => undefined}
         onZoom={() => undefined}
         onSelectWord={() => undefined}
+        onSelectWords={() => undefined}
         onShiftWords={(ids, deltaMs) => replaceProject((current) => shiftWords(current, ids, deltaMs))}
         onResizeWord={(wordId, startMs, endMs) => (
           replaceProject((current) => patchWord(current, wordId, { startMs, endMs }))
@@ -109,6 +111,9 @@ function Harness() {
         onTimingDraftChange={(timings: ProjectTimingDraft | null) => (
           setDraft(timings ? { revision, timings } : null)
         )}
+        onToggleSync={() => undefined}
+        onClearTiming={() => undefined}
+        onClearTimingAfterCursor={() => undefined}
       />
       <output data-testid="saved-timing">{`${heldWord.startMs}:${heldWord.endMs}`}</output>
       <output data-testid="draft-state">{draft ? 'draft' : 'committed'}</output>
@@ -131,6 +136,37 @@ function Harness() {
   )
 }
 
+function MarqueeHarness() {
+  const [selectedWordIds, setSelectedWordIds] = useState(new Set(['hold']))
+  return (
+    <>
+      <Timeline
+        project={initialProject()}
+        peaks={[]}
+        isAnalyzing={false}
+        durationMs={30_000}
+        currentMs={0}
+        zoom={1}
+        activeTrackId="lead"
+        selectedWordIds={selectedWordIds}
+        syncWordId={null}
+        syncMode={false}
+        onSeek={() => undefined}
+        onZoom={() => undefined}
+        onSelectWord={() => undefined}
+        onSelectWords={setSelectedWordIds}
+        onShiftWords={() => undefined}
+        onResizeWord={() => undefined}
+        onTimingDraftChange={() => undefined}
+        onToggleSync={() => undefined}
+        onClearTiming={() => undefined}
+        onClearTimingAfterCursor={() => undefined}
+      />
+      <output data-testid="marquee-selection">{[...selectedWordIds].sort().join(',')}</output>
+    </>
+  )
+}
+
 function renderHarness() {
   container = document.createElement('div')
   document.body.append(container)
@@ -139,17 +175,32 @@ function renderHarness() {
   return container
 }
 
-function pointerEvent(type: string, pointerId: number, clientX: number) {
+function pointerEvent(
+  type: string,
+  pointerId: number,
+  clientX: number,
+  clientY = 0,
+  modifiers: PointerEventInit = {},
+) {
   return new PointerEvent(type, {
     bubbles: true,
     composed: true,
     pointerId,
     clientX,
+    clientY,
+    ...modifiers,
   })
 }
 
-function dispatchPointer(target: EventTarget, type: string, pointerId: number, clientX: number) {
-  act(() => target.dispatchEvent(pointerEvent(type, pointerId, clientX)))
+function dispatchPointer(
+  target: EventTarget,
+  type: string,
+  pointerId: number,
+  clientX: number,
+  clientY = 0,
+  modifiers: PointerEventInit = {},
+) {
+  act(() => target.dispatchEvent(pointerEvent(type, pointerId, clientX, clientY, modifiers)))
 }
 
 function previewProgress(scope: HTMLElement, word = 'Hold') {
@@ -160,12 +211,109 @@ function previewProgress(scope: HTMLElement, word = 'Hold') {
 
 function timelineWord(scope: HTMLElement, word = 'Hold') {
   const button = [...scope.querySelectorAll<HTMLButtonElement>('.timeline-word')]
-    .find((element) => element.textContent?.trim() === word)
+    .find((element) => element.getAttribute('aria-label')?.startsWith(`${word} timing block,`))
   if (!button) throw new Error(`Missing timeline word: ${word}`)
   return button
 }
 
 describe('mounted Timeline live-preview wiring', () => {
+  it('selects by visible marquee, adds with a modifier, and cleans up cancelled capture', () => {
+    container = document.createElement('div')
+    document.body.append(container)
+    root = createRoot(container)
+    act(() => root!.render(<MarqueeHarness />))
+    const lane = container.querySelector<HTMLElement>('.timeline-lane')!
+    const selection = () => container!.querySelector('[data-testid="marquee-selection"]')?.textContent
+
+    dispatchPointer(lane, 'pointerdown', 71, 200, 20)
+    dispatchPointer(lane, 'pointermove', 71, 300, 50)
+    expect(container.querySelector('.timeline-marquee')).not.toBeNull()
+    dispatchPointer(lane, 'pointerup', 71, 300, 50)
+    expect(container.querySelector('.timeline-marquee')).toBeNull()
+    expect(selection()).toBe('next')
+    expect(captures.get(lane)?.has(71)).toBe(false)
+
+    dispatchPointer(lane, 'pointerdown', 72, 60, 20, { shiftKey: true })
+    dispatchPointer(lane, 'pointermove', 72, 150, 50)
+    dispatchPointer(lane, 'pointerup', 72, 150, 50)
+    expect(selection()).toBe('hold,next')
+
+    dispatchPointer(lane, 'pointerdown', 73, 400, 10)
+    dispatchPointer(lane, 'pointermove', 73, 500, 50)
+    expect(container.querySelector('.timeline-marquee')).not.toBeNull()
+    dispatchPointer(lane, 'pointercancel', 73, 500, 50)
+    expect(container.querySelector('.timeline-marquee')).toBeNull()
+    expect(selection()).toBe('hold,next')
+
+    dispatchPointer(lane, 'pointerdown', 74, 400, 10)
+    dispatchPointer(lane, 'pointermove', 74, 500, 50)
+    captures.get(lane)?.delete(74)
+    dispatchPointer(lane, 'lostpointercapture', 74, 500, 50)
+    expect(container.querySelector('.timeline-marquee')).toBeNull()
+    expect(selection()).toBe('hold,next')
+  })
+
+  it('wires discoverable timing controls and orders timeline navigation by intent', () => {
+    const onToggleSync = vi.fn()
+    const onClearTiming = vi.fn()
+    const onClearTimingAfterCursor = vi.fn()
+    container = document.createElement('div')
+    document.body.append(container)
+    root = createRoot(container)
+    act(() => root!.render(
+      <Timeline
+        project={initialProject()}
+        peaks={[]}
+        isAnalyzing={false}
+        durationMs={30_000}
+        currentMs={1_500}
+        zoom={1}
+        activeTrackId="lead"
+        selectedWordIds={new Set()}
+        syncWordId={null}
+        syncMode={false}
+        onSeek={() => undefined}
+        onZoom={() => undefined}
+        onSelectWord={() => undefined}
+        onSelectWords={() => undefined}
+        onShiftWords={() => undefined}
+        onResizeWord={() => undefined}
+        onTimingDraftChange={() => undefined}
+        onToggleSync={onToggleSync}
+        onClearTiming={onClearTiming}
+        onClearTimingAfterCursor={onClearTimingAfterCursor}
+      />,
+    ))
+
+    const controls = [...container.querySelectorAll<HTMLButtonElement>('.timeline-sync-tools button')]
+    expect(controls.map((button) => button.textContent?.trim())).toEqual([
+      'Start sync',
+      'Clear timing',
+      'Clear from cursor',
+    ])
+    expect(controls.map((button) => button.title)).toEqual([
+      'Start lyric synchronization from the playhead',
+      'Clear every timing in the active track; lyric text is preserved',
+      'Clear active-track timings that begin at or after the playhead',
+    ])
+    act(() => controls.forEach((button) => button.click()))
+    expect(onToggleSync).toHaveBeenCalledOnce()
+    expect(onClearTiming).toHaveBeenCalledOnce()
+    expect(onClearTimingAfterCursor).toHaveBeenCalledOnce()
+
+    const navigation = [...container.querySelectorAll<HTMLButtonElement>('.timeline-navigation button')]
+    expect(navigation.map((button) => button.getAttribute('aria-label'))).toEqual([
+      'Jump timeline view to start',
+      'Scroll timeline backward',
+      'Scroll timeline forward',
+    ])
+    expect(navigation.map((button) => button.title)).toEqual([
+      'Jump timeline view to start',
+      'Scroll timeline backward',
+      'Scroll timeline forward',
+    ])
+  })
+
   it.each([
     { mode: 'move', selector: null, moveX: 136, expectedProgress: '0%', committed: '1500:2500' },
     { mode: 'start resize', selector: '.timeline-word__handle--start', moveX: 136, expectedProgress: '0%', committed: '1500:2000' },

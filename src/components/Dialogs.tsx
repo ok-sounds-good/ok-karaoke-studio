@@ -191,6 +191,8 @@ interface ExportDialogProps {
   projectTitle: string
   activeTrackName: string
   issueCount: number
+  hasLyrics: boolean
+  activeTrackHasLyrics: boolean
   onClose: () => void
   onExportLrc: () => void
   onExportAss: () => void
@@ -205,6 +207,8 @@ export function ExportDialog({
   projectTitle,
   activeTrackName,
   issueCount,
+  hasLyrics,
+  activeTrackHasLyrics,
   onClose,
   onExportLrc,
   onExportAss,
@@ -221,9 +225,11 @@ export function ExportDialog({
       ? 'Encoding MP4 and mixing the backing track…'
       : videoProgress
         ? 'Preparing video export and checking FFmpeg…'
-        : videoAvailable
-          ? '1080p MP4 · both voices and linked audio'
-          : 'Attach audio in the desktop app to enable'
+        : !hasLyrics
+          ? 'Add lyrics to enable karaoke video export'
+          : videoAvailable
+            ? '1080p MP4 · both voices and linked audio'
+            : 'Attach audio in the desktop app to enable'
 
   return (
     <Modal
@@ -232,11 +238,19 @@ export function ExportDialog({
       onClose={onClose}
       closeDisabled={exportingVideo}
     >
-      <div className={`export-readiness ${issueCount ? 'export-readiness--warning' : ''}`}>
-        {issueCount ? <AlertTriangle size={18} /> : <CheckCircle2 size={18} />}
+      <div className={`export-readiness ${!hasLyrics || issueCount ? 'export-readiness--warning' : ''}`}>
+        {!hasLyrics || issueCount ? <AlertTriangle size={18} /> : <CheckCircle2 size={18} />}
         <div>
-          <strong>{issueCount ? `${issueCount} timing ${issueCount === 1 ? 'item needs' : 'items need'} review` : 'Timing checks passed'}</strong>
-          <span>{issueCount ? 'You can export a draft now or review the timing first.' : 'This project is ready to hand off.'}</span>
+          <strong>{!hasLyrics
+            ? 'Add lyrics before exporting karaoke'
+            : issueCount
+              ? `${issueCount} timing ${issueCount === 1 ? 'item needs' : 'items need'} review`
+              : 'Timing checks passed'}</strong>
+          <span>{!hasLyrics
+            ? 'The editable .oks project is available now; karaoke formats need lyric content.'
+            : issueCount
+              ? 'You can export a draft now or review the timing first.'
+              : 'This project is ready to hand off.'}</span>
         </div>
       </div>
       {videoProgress && (
@@ -250,19 +264,22 @@ export function ExportDialog({
         </div>
       )}
       <div className="export-options">
-        <button onClick={onExportLrc} disabled={exportingVideo}>
+        <button onClick={onExportLrc} disabled={exportingVideo || !activeTrackHasLyrics}>
           <span className="export-option__icon"><FileText size={21} /></span>
-          <span><strong>Enhanced LRC</strong><small>{activeTrackName} · line and word timing</small></span>
+          <span>
+            <strong>Enhanced LRC</strong>
+            <small>{activeTrackName} · {activeTrackHasLyrics ? 'line and word timing' : 'add lyrics to this track first'}</small>
+          </span>
           <Download size={16} />
         </button>
-        <button onClick={onExportAss} disabled={exportingVideo}>
+        <button onClick={onExportAss} disabled={exportingVideo || !hasLyrics}>
           <span className="export-option__icon"><Music size={21} /></span>
           <span><strong>ASS karaoke subtitles</strong><small>Both voices · karaoke timing tags</small></span>
           <Download size={16} />
         </button>
         <button
           onClick={exportingVideo ? onCancelVideo : onExportVideo}
-          disabled={!exportingVideo && !videoAvailable}
+          disabled={!exportingVideo && (!hasLyrics || !videoAvailable)}
           aria-busy={exportingVideo}
         >
           <span className="export-option__icon">

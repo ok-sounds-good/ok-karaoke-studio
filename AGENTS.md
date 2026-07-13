@@ -7,13 +7,17 @@ repository.
 
 Read these before nontrivial work:
 
-- `docs/MVP.md` defines the completed version 0.1 product contract.
+- `docs/MVP.md` defines the active, user-held version 0.1 product-acceptance
+  contract.
 - `docs/ROADMAP.md` defines current priorities and explicit exclusions.
 - `docs/SDLC.md` defines branch, pull-request, review, CI, and release policy.
 - `CONTRIBUTING.md` defines setup, verification, and safe reproduction guidance.
 
-Keep `main` green and releasable. Do not silently expand a task beyond its
-acceptance criteria or the roadmap scope.
+Keep `main` green and releasable. Version 0.1 product acceptance remains open
+until the user makes and accepts a karaoke video for a new song with the Studio.
+Supporting MVP criteria may change when that attempt exposes evidence; document
+the blocker and contract change instead of silently changing task scope or the
+roadmap boundary.
 
 ## Toolchain and setup
 

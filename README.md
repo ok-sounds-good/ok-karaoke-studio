@@ -2,23 +2,31 @@
 
 Okay Karaoke Studio is a single-window desktop application for editing and synchronizing karaoke lyrics. It combines a live stage preview, line-and-word editor, waveform TimeBoard, project inspector, and playback transport in one workspace.
 
-![Status](https://img.shields.io/badge/status-MVP-d7fa4a?labelColor=171e1b)
+![Status](https://img.shields.io/badge/status-MVP%20acceptance%20open-d7fa4a?labelColor=171e1b)
 ![Electron](https://img.shields.io/badge/Electron-desktop-58d6de?labelColor=171e1b)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-ff8064?labelColor=171e1b)
 
 ## MVP highlights
 
 - Unified viewer, editor, timeline, inspector, and playback controls—no detached production windows.
+- Clean-slate startup with one empty lead-vocal track and no implicit example content.
 - One lead vocal plus an optional independently timed duet track.
-- Spacebar press/release word synchronization with an obvious next-word cursor.
+- Spacebar press/release word synchronization with an obvious next-word cursor;
+  Shift+Space controls playback.
 - Live karaoke preview with word-progress highlighting and simultaneous duet lines.
-- Draggable, resizable word blocks on a zoomable waveform TimeBoard.
+- Draggable, resizable word blocks, readable label lanes, range selection, and
+  timing controls on a zoomable waveform TimeBoard.
 - Raw lyric editing with syllable separators and screen-fit guidance.
 - LRC import, enhanced LRC and ASS export, 1080p MP4 karaoke rendering, and versioned `.oks` projects.
 - Native open/save/import/export dialogs with secure linked-media streaming.
-- Command history, timing review, browser fallback, and a ready-to-explore demo project.
+- Command history, timing review, hover help, playback Stop, and browser fallback.
 
-The exact version 0.1 contract is in [`docs/MVP.md`](docs/MVP.md). Additional ideas are deliberately separated into [`docs/ROADMAP.md`](docs/ROADMAP.md).
+The version 0.1 product-acceptance gate remains open until the user makes and
+accepts a karaoke video for a new song with the Studio. Supporting criteria can
+change when that real workflow exposes a blocker, while every iteration must
+leave `main` technically green and releasable. The active contract is in
+[`docs/MVP.md`](docs/MVP.md); deliberately deferred ideas are in
+[`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 Changes follow the lightweight, green-`main` workflow in
 [`docs/SDLC.md`](docs/SDLC.md). Contribution setup and verification expectations
@@ -69,24 +77,32 @@ bun run test:video
 
 ## Editing workflow
 
-1. Open the bundled demo or create a new project.
+1. Launch into the clean-slate project, choose **New Project** for another clean
+   slate, or open an existing `.oks` project.
 2. Choose **Attach an audio file** and select the backing track.
 3. Choose **Edit text** to paste one lyric line per row, or import an LRC into the active track.
-4. Move the playhead to the desired start and choose **Tap sync**.
+4. Move the playhead to the desired start and choose **Start Sync** in the
+   TimeBoard.
 5. Hold Space while each word is sung; release it at the word end. Press Escape to leave sync mode.
-6. Select words in the lyric map or TimeBoard. Drag blocks to move timing and drag either edge to resize.
+6. Select words in the lyric map or TimeBoard. Command/Ctrl+A selects the active
+   track outside text fields; dragging across empty TimeBoard space creates a
+   marquee selection. Drag blocks to move timing and drag either edge to resize.
 7. Add a duet track when needed and synchronize it independently.
-8. Review the timing status, save the `.oks` project, and export LRC, ASS, or a 1080p MP4 karaoke video. Video export requires attached audio.
+8. Use the TimeBoard's **Clear Timing** or **Clear Timing After Cursor** controls
+   when resynchronizing. Use transport **Stop** to pause and return to `0:00`.
+9. Review the timing status, save the `.oks` project, and export LRC, ASS, or a 1080p MP4 karaoke video. Video export requires attached audio.
 
 ## Keyboard controls
 
 | Key | Action |
 |---|---|
-| Space | Play/pause, or press/release the current word in Tap Sync |
+| Space | Press/release the current word while Tap Sync is armed; never controls playback |
+| Shift + Space | Play/pause |
 | Escape | Exit Tap Sync |
 | Left / Right | Nudge playhead by 250 ms |
 | Shift + Left / Right | Nudge playhead by 1 second |
 | Delete / Backspace | Clear timing from selected words |
+| Command/Ctrl + A | Select every word in the active track when not editing text |
 | Command/Ctrl + Z | Undo |
 | Shift + Command/Ctrl + Z | Redo |
 | Command/Ctrl + S | Save project |
@@ -102,16 +118,12 @@ src/
   lib/                 Project model, migration, validation, LRC, and ASS
   App.tsx               Application state, commands, sync, and file workflows
 tests/                  Pure model and interchange tests
-docs/MVP.md             Version 0.1 release contract
-docs/ROADMAP.md         Prioritized post-MVP capabilities and product boundaries
+docs/MVP.md             Active version 0.1 product-acceptance contract
+docs/ROADMAP.md         Prioritized future capabilities and product boundaries
 docs/SDLC.md            Pull-request, verification, ruleset, and release policy
 ```
 
 The canonical model stores integer-millisecond word timings inside lines and vocal tracks. The renderer does not receive Node.js access. Electron exposes a small typed bridge for project dialogs, audio import, project-authorized audio restoration, text/video export, and menu commands. Linked audio is streamed through an owner-scoped, tokenized read-only custom protocol with byte-range support. MP4 export renders the stage in an isolated offscreen Electron surface and streams backpressured PNG frames directly into a shell-free FFmpeg process for H.264/AAC encoding. Cancellation terminates the encoder and removes its partial output before close or quit continues.
-
-## Reference boundaries
-
-The product workflow was researched from [MidiCo Maker](https://www.midicokaraoke.com/user-guide/maker.php), [Karaoke Suite](https://github.com/jonesy827/karaoke-suite), and [ChromaLyric](https://github.com/mattjoykaraoke/ChromaLyric). This implementation is clean-room and does not copy their source. Karaoke Suite is AGPL-3.0; ChromaLyric identifies itself as proprietary. Their code is not a dependency of this project.
 
 ## License
 

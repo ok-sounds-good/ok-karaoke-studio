@@ -7,6 +7,7 @@ interface TopBarProps {
   canUndo: boolean
   canRedo: boolean
   issueCount: number
+  hasLyrics: boolean
   onNew: () => void
   onOpen: () => void
   onSave: () => void
@@ -23,6 +24,7 @@ export function TopBar({
   canUndo,
   canRedo,
   issueCount,
+  hasLyrics,
   onNew,
   onOpen,
   onSave,
@@ -63,9 +65,13 @@ export function TopBar({
         <Button className="workflow-button" variant="ghost" onClick={onShowWorkflow}>
           <CircleHelp size={15} /> Workflow
         </Button>
-        <button className={`validation-button ${issueCount ? 'has-issues' : ''}`} onClick={onValidate}>
+        <button
+          className={`validation-button ${issueCount ? 'has-issues' : ''}`}
+          title={issueCount ? 'Review timing issues' : hasLyrics ? 'No timing issues found' : 'Add lyrics to begin timing'}
+          onClick={onValidate}
+        >
           <CheckCircle2 size={15} />
-          {issueCount ? `${issueCount} to review` : 'Timing clean'}
+          {issueCount ? `${issueCount} to review` : hasLyrics ? 'Timing clean' : 'Add lyrics'}
         </button>
         <Button variant="primary" onClick={onExport}>
           <Download size={15} /> Export
