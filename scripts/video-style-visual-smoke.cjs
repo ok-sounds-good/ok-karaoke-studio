@@ -4,7 +4,6 @@ const { randomUUID } = require('node:crypto')
 const os = require('node:os')
 const path = require('node:path')
 
-const electron = require('electron')
 const { outputState } = require('../electron/smoke-artifacts.cjs')
 const {
   createOwnedSmokeProfile,
@@ -60,8 +59,9 @@ async function run(options = {}) {
     return 1
   }
 
+  const electronExecutable = options.electronExecutable ?? require('electron')
   const outcome = await runChild({
-    executable: electron,
+    executable: electronExecutable,
     args: ['--force-device-scale-factor=1', '.', '--video-style-visual-smoke'],
     spawnOptions: {
       cwd: repositoryRoot,

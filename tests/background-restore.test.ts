@@ -1,9 +1,10 @@
 import { createRequire } from 'node:module'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { createProject, serializeProject } from '../src/lib/karaoke'
+import { nativeFixturePath } from './support/native-path'
 
 const require = createRequire(import.meta.url)
 const { createProjectBackgroundResolver } = require('../electron/background-restore.cjs') as {
@@ -53,6 +54,7 @@ describe('project background restore sequencing', () => {
   it('does not issue a Preview capability for a header-valid image that cannot decode', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'oks-corrupt-background-restore-'))
     const imagePath = join(directory, 'stage.png')
+    const projectPath = nativeFixturePath('projects', 'corrupt.oks')
     const ownerContents = { id: 29 }
     const registry = createLinkedAssetRegistry(new Set(['.mp3']))
     const sequencer = createMediaRequestSequencer()
@@ -67,14 +69,14 @@ describe('project background restore sequencing', () => {
     await writeFile(imagePath, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
     registry.authorizeProject(
       ownerContents.id,
-      '/projects/corrupt.oks',
+      projectPath,
       projectWithBackground(imagePath),
     )
 
     try {
       await expect(resolveBackground({
         ownerContents,
-        projectPath: '/projects/corrupt.oks',
+        projectPath,
       })).resolves.toEqual({ status: 'missing' })
       expect(makeMediaResult).not.toHaveBeenCalled()
     } finally {
@@ -107,12 +109,17 @@ describe('project background restore sequencing', () => {
     const validationA = deferred<string>()
     const validationB = deferred<string>()
     const producedTokens: string[] = []
-    const staleToken = registry.register('/images/prior.png', ownerContents.id, 'background')
+    const imageA = nativeFixturePath('images', 'a.png')
+    const imageB = nativeFixturePath('images', 'b.png')
+    const priorImage = nativeFixturePath('images', 'prior.png')
+    const projectA = nativeFixturePath('projects', 'a.oks')
+    const projectB = nativeFixturePath('projects', 'b.oks')
+    const staleToken = registry.register(priorImage, ownerContents.id, 'background')
     const resolveBackground = createProjectBackgroundResolver({
       linkedAssets: registry,
       requestSequencer: sequencer,
       validateLinkedImage: (filePath: string) => (
-        filePath.endsWith('/a.png') ? validationA.promise : validationB.promise
+        basename(filePath) === 'a.png' ? validationA.promise : validationB.promise
       ),
       makeMediaResult: (filePath: string, owner: { id: number }, kind: string) => {
         const token = registry.register(filePath, owner.id, kind)
@@ -123,28 +130,28 @@ describe('project background restore sequencing', () => {
 
     registry.authorizeProject(
       ownerContents.id,
-      '/projects/a.oks',
-      projectWithBackground('/images/a.png'),
+      projectA,
+      projectWithBackground(imageA),
     )
-    const restoreA = resolveBackground({ ownerContents, projectPath: '/projects/a.oks' })
+    const restoreA = resolveBackground({ ownerContents, projectPath: projectA })
     registry.authorizeProject(
       ownerContents.id,
-      '/projects/b.oks',
-      projectWithBackground('/images/b.png'),
+      projectB,
+      projectWithBackground(imageB),
     )
-    const restoreB = resolveBackground({ ownerContents, projectPath: '/projects/b.oks' })
+    const restoreB = resolveBackground({ ownerContents, projectPath: projectB })
 
     expect(registry.get(staleToken)).toBeNull()
-    validationB.resolve('/images/b.png')
+    validationB.resolve(imageB)
     await expect(restoreB).resolves.toMatchObject({
       status: 'success',
-      media: { path: '/images/b.png' },
+      media: { path: imageB },
     })
-    validationA.resolve('/images/a.png')
+    validationA.resolve(imageA)
     await expect(restoreA).resolves.toEqual({ status: 'stale' })
 
     expect(producedTokens).toHaveLength(1)
-    expect(registry.get(producedTokens[0])?.filePath).toBe('/images/b.png')
+    expect(registry.get(producedTokens[0])?.filePath).toBe(imageB)
   })
 
   it('reports stale without revoking a user-chosen B that supersedes deferred restore A', async () => {
@@ -152,6 +159,9 @@ describe('project background restore sequencing', () => {
     const registry = createLinkedAssetRegistry(new Set(['.mp3']))
     const sequencer = createMediaRequestSequencer()
     const validationA = deferred<string>()
+    const imageA = nativeFixturePath('images', 'a.png')
+    const imageB = nativeFixturePath('images', 'b.png')
+    const projectA = nativeFixturePath('projects', 'a.oks')
     const resolveBackground = createProjectBackgroundResolver({
       linkedAssets: registry,
       requestSequencer: sequencer,
@@ -160,16 +170,16 @@ describe('project background restore sequencing', () => {
     })
     registry.authorizeProject(
       ownerContents.id,
-      '/projects/a.oks',
-      projectWithBackground('/images/a.png'),
+      projectA,
+      projectWithBackground(imageA),
     )
-    const restoreA = resolveBackground({ ownerContents, projectPath: '/projects/a.oks' })
+    const restoreA = resolveBackground({ ownerContents, projectPath: projectA })
 
     sequencer.begin(ownerContents.id, 'background')
-    registry.register('/images/b.png', ownerContents.id, 'background')
-    validationA.resolve('/images/a.png')
+    registry.register(imageB, ownerContents.id, 'background')
+    validationA.resolve(imageA)
 
     await expect(restoreA).resolves.toEqual({ status: 'stale' })
-    expect(registry.activeOwnerPath(ownerContents.id, 'background')).toBe('/images/b.png')
+    expect(registry.activeOwnerPath(ownerContents.id, 'background')).toBe(imageB)
   })
 })

@@ -10,6 +10,7 @@ const launcher = require('../scripts/video-style-visual-smoke.cjs') as {
 }
 
 const temporaryDirectories: string[] = []
+const ELECTRON_EXECUTABLE = '/fixed/electron'
 
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) => (
@@ -50,10 +51,12 @@ describe('visual smoke outer launcher', () => {
     let args: string[] = []
     const code = await launcher.run({
       createProfile: async () => profile(),
+      electronExecutable: ELECTRON_EXECUTABLE,
       emitFailure: vi.fn(),
       environment: { OKS_VISUAL_SMOKE_OUTPUT: output },
-      runChild: async (options: { args: string[] }) => {
+      runChild: async (options: { args: string[]; executable: string }) => {
         args = options.args
+        expect(options.executable).toBe(ELECTRON_EXECUTABLE)
         return successfulOutcome()
       },
       validateResult: async () => ({}),
@@ -73,6 +76,7 @@ describe('visual smoke outer launcher', () => {
     const emitted = vi.fn()
     const code = await launcher.run({
       createProfile: async () => profile(),
+      electronExecutable: ELECTRON_EXECUTABLE,
       emitFailure: emitted,
       environment: { OKS_VISUAL_SMOKE_OUTPUT: output },
       runChild: async () => {
@@ -94,15 +98,21 @@ describe('visual smoke outer launcher', () => {
     await rm(repositoryPath, { recursive: true, force: true })
     const runChild = vi.fn()
     const emitted = vi.fn()
-
-    const code = await launcher.run({
+    const readElectronExecutable = vi.fn(() => ELECTRON_EXECUTABLE)
+    const options = {
       emitFailure: emitted,
       environment: { OKS_VISUAL_SMOKE_OUTPUT: relative },
       runChild,
+    }
+    Object.defineProperty(options, 'electronExecutable', {
+      get: readElectronExecutable,
     })
+
+    const code = await launcher.run(options)
 
     expect(code).toBe(1)
     expect(emitted).toHaveBeenCalledWith('VISUAL_SMOKE_OUTPUT_INVALID')
+    expect(readElectronExecutable).not.toHaveBeenCalled()
     expect(runChild).not.toHaveBeenCalled()
     await expect(readFile(repositoryPath)).rejects.toMatchObject({ code: 'ENOENT' })
   })
@@ -113,6 +123,7 @@ describe('visual smoke outer launcher', () => {
     const emitted = vi.fn()
     const code = await launcher.run({
       createProfile: async () => profile(),
+      electronExecutable: ELECTRON_EXECUTABLE,
       emitFailure: emitted,
       environment: { OKS_VISUAL_SMOKE_OUTPUT: output },
       runChild: async () => ({
