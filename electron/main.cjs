@@ -36,6 +36,7 @@ const {
   isCanonicalSavePath,
   showCanonicalSaveDialog,
 } = require('./save-paths.cjs')
+const { createLocalFontPermissionPolicy } = require('./local-font-access.cjs')
 
 const APP_NAME = 'Okay Karaoke Studio'
 const APP_SCHEME = 'studio-app'
@@ -1032,6 +1033,23 @@ function focusMainWindow() {
   mainWindow.focus()
 }
 
+function installRendererPermissionPolicy() {
+  const localFonts = createLocalFontPermissionPolicy({
+    getMainWindow: () => mainWindow,
+    trustedOrigin: rendererOrigin(),
+  })
+  session.defaultSession.setPermissionCheckHandler(
+    (webContents, permission, requestingOrigin, details) => (
+      localFonts.check(webContents, permission, requestingOrigin, details)
+    ),
+  )
+  session.defaultSession.setPermissionRequestHandler(
+    (webContents, permission, callback, details) => callback(
+      localFonts.request(webContents, permission, details),
+    ),
+  )
+}
+
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
 if (!hasSingleInstanceLock) {
@@ -1055,8 +1073,7 @@ if (!hasSingleInstanceLock) {
       applicationVersion: app.getVersion(),
     })
 
-    session.defaultSession.setPermissionCheckHandler(() => false)
-    session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false))
+    installRendererPermissionPolicy()
 
     await createMainWindow()
   }).catch((error) => {

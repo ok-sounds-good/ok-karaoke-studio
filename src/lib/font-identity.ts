@@ -1,5 +1,7 @@
 export type FontIdentitySlant = 'normal' | 'italic' | 'oblique'
 
+export const MAX_FONT_FACES_PER_TYPEFACE = 100
+
 export interface FontFaceIdentity {
   readonly fullName: string
   readonly style: string
