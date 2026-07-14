@@ -9,7 +9,9 @@ import {
   type VocalStyle,
 } from './video-style'
 
-export const PROJECT_SCHEMA_VERSION = 4 as const
+export const PROJECT_SCHEMA_VERSION = 0 as const
+export const UNSUPPORTED_PROJECT_FORMAT_ERROR =
+  'Unsupported project format. This build accepts only the current v0 format (schemaVersion 0).'
 export const MAX_PROJECT_DURATION_MS = 4 * 60 * 60 * 1_000
 export const MAX_PROJECT_TRACKS = 8
 export const MAX_PROJECT_LINES = 20_000
@@ -736,7 +738,7 @@ export function validateProject(project: KaraokeProject): ValidationIssue[] {
       issues,
       'error',
       'schema-version',
-      `Expected project schema version ${PROJECT_SCHEMA_VERSION}.`,
+      UNSUPPORTED_PROJECT_FORMAT_ERROR,
       'schemaVersion',
     )
   }
@@ -1713,14 +1715,7 @@ export function decodeProject(value: unknown): KaraokeProject {
   if (!isRecord(value)) throw new TypeError('Project data must be a JSON object.')
   const declaredVersion = value.schemaVersion
   if (declaredVersion !== PROJECT_SCHEMA_VERSION) {
-    if (typeof declaredVersion === 'number' && declaredVersion > PROJECT_SCHEMA_VERSION) {
-      throw new Error(
-        `Project schema version ${declaredVersion} is newer than supported version ${PROJECT_SCHEMA_VERSION}.`,
-      )
-    }
-    throw new Error(
-      `Unsupported project schema version ${String(declaredVersion)}. This build accepts only version ${PROJECT_SCHEMA_VERSION}.`,
-    )
+    throw new Error(UNSUPPORTED_PROJECT_FORMAT_ERROR)
   }
   const project = decodeCurrentProject(value)
   const firstError = validateProject(project).find((validationIssue) => (

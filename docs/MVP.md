@@ -15,8 +15,12 @@ capabilities that are deliberately deferred belong in
 
 Version 0.1 is a clean-slate **v0** product. Before v1.0, `.oks` files are
 disposable development artifacts: an MVP iteration may replace the project
-format without migration or backward compatibility. Each build accepts only
-its current schema, and fixtures and tests change in lockstep with that schema.
+format without migration or backward compatibility. During this clean-slate
+pre-v1 period, each build writes and accepts one canonical project format. This
+build's format is current v0, identified by numeric `schemaVersion: 0`. A later
+build may intentionally accept older formats and add migrations after the
+product promises compatibility. Fixtures and tests change in lockstep with the
+current format.
 
 ## Acceptance status and scope control
 
@@ -86,7 +90,7 @@ Karaoke Studio identity.
 
 ### Projects and media
 
-- New, open, save, and save-as for versioned `.oks` JSON project files.
+- New, open, save, and save-as for current v0 `.oks` JSON project files.
 - Link MP3, WAV, M4A, FLAC, AAC, or OGG audio without copying it into the project.
 - Link one static background image without copying it into the project. A
   missing, animated, or decoder-invalid linked image must be reported before
@@ -278,10 +282,11 @@ Karaoke Studio identity.
 
 - Save lyric text, blank-row section separators, word timings, lyric-display
   settings, stage style, track styling and overrides, linked media paths, and
-  metadata in a versioned `.oks` schema.
-- The current v0 build rejects unsupported older MVP schemas with a clear
-  format-version error. It does not migrate or accept them. All fields and
-  linked paths in the current schema must round trip without loss.
+  metadata in the current v0 `.oks` format.
+- The current build accepts only numeric `schemaVersion: 0`. Any other value is
+  rejected with one clear unsupported-format error. This build does not provide
+  compatibility handling or migration. All fields and linked paths in the
+  current format must round trip without loss.
 - Export the active vocal track as LRC.
 - Export the project as ASS with karaoke timing tags.
 - Render an MP4 up to 30 minutes from the persisted stage style, lyric line
@@ -332,8 +337,8 @@ Karaoke Studio identity.
   user changes them.
 - Icon-only and compact controls expose concise hover help that names the action
   and, when applicable, its keyboard shortcut.
-- Unit tests for TypeScript/main-process strict current-schema acceptance
-  parity and round trips, clear rejection of unsupported pre-v1 formats and
+- Unit tests for TypeScript/main-process strict current v0 format acceptance
+  parity and round trips, clear rejection of every other project format and
   authorization from rejected data, blank-row section preservation,
   synchronization semantics/history, timing validation, and LRC/ASS round
   trips.
@@ -371,9 +376,9 @@ Karaoke Studio identity.
 - [x] The main workspace has no persistent Word Map or lyric list; its single
   **Edit text** action lives in Live Preview (or its Sync Focus replacement),
   not in Lyric Timing, and transactionally applies or cancels lyric edits.
-- [ ] The current v0 project schema round trips every project field and linked
-  path without loss, while unsupported older MVP schema versions fail with a
-  clear format-version error and no partial load state.
+- [x] The current v0 project format round trips every project field and linked
+  path without loss, while every nonzero or nonnumeric `schemaVersion` fails
+  with the generic unsupported-format error and no partial load state.
 - [x] Lyric Timing start, clear-all, and clear-after-cursor actions operate on
   the active track without deleting lyrics.
 - [x] Bare Space times words only while synchronization is armed; Shift+Space

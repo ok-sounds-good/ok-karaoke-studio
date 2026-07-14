@@ -2,7 +2,9 @@
 
 const { decodeStageStyle, decodeVocalStyle } = require('./video-style-schema.cjs')
 
-const PROJECT_SCHEMA_VERSION = 4
+const PROJECT_SCHEMA_VERSION = 0
+const UNSUPPORTED_PROJECT_FORMAT_ERROR =
+  'Unsupported project format. This build accepts only the current v0 format (schemaVersion 0).'
 const MAX_PROJECT_DURATION_MS = 4 * 60 * 60 * 1_000
 const MAX_PROJECT_TRACKS = 8
 const MAX_PROJECT_LINES = 20_000
@@ -213,14 +215,7 @@ function validateProject(project) {
 function decodeProject(value) {
   const source = record(value, 'Project data')
   if (source.schemaVersion !== PROJECT_SCHEMA_VERSION) {
-    if (typeof source.schemaVersion === 'number' && source.schemaVersion > PROJECT_SCHEMA_VERSION) {
-      throw new Error(
-        `Project schema version ${source.schemaVersion} is newer than supported version ${PROJECT_SCHEMA_VERSION}.`,
-      )
-    }
-    throw new Error(
-      `Unsupported project schema version ${String(source.schemaVersion)}. This build accepts only version ${PROJECT_SCHEMA_VERSION}.`,
-    )
+    throw new Error(UNSUPPORTED_PROJECT_FORMAT_ERROR)
   }
   exactKeys(source, [
     'schemaVersion', 'id', 'title', 'artist', 'audioPath', 'durationMs', 'offsetMs',

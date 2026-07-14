@@ -6,6 +6,7 @@ import {
   MAX_PROJECT_TRACKS,
   parseProject,
   serializeProject,
+  UNSUPPORTED_PROJECT_FORMAT_ERROR,
   type KaraokeProject,
 } from '../src/lib/karaoke'
 
@@ -19,7 +20,7 @@ const videoExport = require('../electron/video-export.cjs') as {
 }
 
 const GOLDEN_JSON = readFileSync(
-  new URL('./fixtures/current-project-v4.json', import.meta.url),
+  new URL('./fixtures/current-project-v0.json', import.meta.url),
   'utf8',
 ).trim()
 
@@ -37,6 +38,36 @@ function objectAt(value: JsonObject, path: Array<string | number>): JsonObject {
   return path.reduce<unknown>((current, key) => (current as JsonObject)[key], value) as JsonObject
 }
 
+function projectJsonWithSchemaVersion(schemaVersion: unknown): string {
+  const project = clone()
+  project.schemaVersion = schemaVersion
+  return JSON.stringify(project)
+}
+
+function legacyProjectJson(): string {
+  const legacy = clone()
+  const track = objectAt(legacy, ['tracks', 0])
+  track.color = '#22d3ee'
+  delete track.vocalStyle
+  return JSON.stringify(legacy)
+}
+
+function malformedCurrentProjectJson(): string {
+  const malformed = clone()
+  malformed.title = 42
+  return JSON.stringify(malformed)
+}
+
+function representativeRejectedProjectJson(): string[] {
+  return [
+    '{oops',
+    projectJsonWithSchemaVersion(1),
+    projectJsonWithSchemaVersion('0'),
+    malformedCurrentProjectJson(),
+    legacyProjectJson(),
+  ]
+}
+
 function parity(json: string, accepted: boolean) {
   const outcomes = [
     () => parseProject(json),
@@ -44,9 +75,13 @@ function parity(json: string, accepted: boolean) {
     () => videoExport.parseProjectForVideo(json),
   ].map((parse) => {
     try {
-      return { accepted: true, value: parse() }
-    } catch {
-      return { accepted: false, value: null }
+      return { accepted: true, value: parse(), error: null }
+    } catch (error) {
+      return {
+        accepted: false,
+        value: null,
+        error: error instanceof Error ? error.message : String(error),
+      }
     }
   })
   expect(outcomes.map(({ accepted: result }) => result)).toEqual([
@@ -58,7 +93,7 @@ function parity(json: string, accepted: boolean) {
 }
 
 describe('current project schema parity', () => {
-  it('deeply round-trips the independent v4 golden project in all three decoders', () => {
+  it('deeply round-trips the independent current-v0 golden project in all three decoders', () => {
     const outcomes = parity(GOLDEN_JSON, true)
     const expected = golden()
     outcomes.forEach(({ value }) => expect(value).toStrictEqual(expected))
@@ -115,18 +150,24 @@ describe('current project schema parity', () => {
     expect(() => serializeProject(extraForSerialize)).toThrow('unexpected is not supported')
   })
 
-  it('rejects schemas 1 through 3 and the legacy track color shape', () => {
-    for (const schemaVersion of [1, 2, 3]) {
-      const value = clone()
-      value.schemaVersion = schemaVersion
-      parity(JSON.stringify(value), false)
+  it('rejects nonzero and nonnumeric schema declarations with one current-v0 error', () => {
+    const declarations: unknown[] = [1, -1, 0.5, '0', null, false, {}, []]
+    const missing = clone()
+    delete missing.schemaVersion
+
+    for (const json of [
+      ...declarations.map(projectJsonWithSchemaVersion),
+      JSON.stringify(missing),
+    ]) {
+      const outcomes = parity(json, false)
+      expect(outcomes.map(({ error }) => error)).toEqual([
+        UNSUPPORTED_PROJECT_FORMAT_ERROR,
+        UNSUPPORTED_PROJECT_FORMAT_ERROR,
+        UNSUPPORTED_PROJECT_FORMAT_ERROR,
+      ])
     }
 
-    const legacy = clone()
-    const track = objectAt(legacy, ['tracks', 0])
-    track.color = '#22d3ee'
-    delete track.vocalStyle
-    parity(JSON.stringify(legacy), false)
+    parity(legacyProjectJson(), false)
   })
 
   it('matches on malformed, cardinality, timing, ID, and semantic rejection', () => {
@@ -163,10 +204,10 @@ describe('current project schema parity', () => {
   it('guards main-process open/save effects behind successful parsing', () => {
     let effects = 0
     const invalid = clone()
-    invalid.schemaVersion = 3
+    invalid.schemaVersion = 1
     expect(() => projectSchema.withParsedProject(JSON.stringify(invalid), () => {
       effects += 1
-    })).toThrow('Unsupported project schema version 3')
+    })).toThrow(UNSUPPORTED_PROJECT_FORMAT_ERROR)
     expect(effects).toBe(0)
 
     projectSchema.withParsedProject(GOLDEN_JSON, () => { effects += 1 })
@@ -178,15 +219,12 @@ describe('current project schema parity', () => {
 
   it('gates the video-export effect region behind strict project parsing', () => {
     let effects = 0
-    const rejected = ['{oops', ...[1, 2, 3].map((schemaVersion) => {
-      const project = clone()
-      project.schemaVersion = schemaVersion
-      return JSON.stringify(project)
-    })]
-    rejected.forEach((projectJson) => expect(() => projectSchema.withParsedProject(
-      projectJson,
-      () => { effects += 1 },
-    )).toThrow())
+    representativeRejectedProjectJson().forEach((projectJson) => {
+      expect(() => projectSchema.withParsedProject(
+        projectJson,
+        () => { effects += 1 },
+      )).toThrow()
+    })
     expect(effects).toBe(0)
 
     const mainSource = readFileSync(new URL('../electron/main.cjs', import.meta.url), 'utf8')
@@ -203,18 +241,12 @@ describe('current project schema parity', () => {
 
   it('gates editable-project export effects behind strict project parsing', () => {
     let effects = 0
-    const legacy = clone()
-    const legacyTrack = objectAt(legacy, ['tracks', 0])
-    legacyTrack.color = '#ffffff'
-    delete legacyTrack.vocalStyle
-    const rejected = ['{oops', legacy, ...[1, 2, 3].map((schemaVersion) => ({
-      ...clone(),
-      schemaVersion,
-    }))]
-    rejected.forEach((project) => expect(() => projectSchema.withParsedProject(
-      typeof project === 'string' ? project : JSON.stringify(project),
-      () => { effects += 1 },
-    )).toThrow())
+    representativeRejectedProjectJson().forEach((projectJson) => {
+      expect(() => projectSchema.withParsedProject(
+        projectJson,
+        () => { effects += 1 },
+      )).toThrow()
+    })
     expect(effects).toBe(0)
 
     const mainSource = readFileSync(new URL('../electron/main.cjs', import.meta.url), 'utf8')
