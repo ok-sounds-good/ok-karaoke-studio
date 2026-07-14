@@ -6,7 +6,6 @@ import {
   exportLrc,
   importLrc,
   parseLyrics,
-  parseProject,
   serializeProject,
   validateProject,
 } from './lib/model'
@@ -15,10 +14,21 @@ import { InspectorPanel } from './components/InspectorPanel'
 import { KaraokePreview } from './components/KaraokePreview'
 import { SyncCueStrip } from './components/SyncCueStrip'
 import { Timeline } from './components/Timeline'
+import { VideoStyleWorkspace } from './components/VideoStyleWorkspace'
+import {
+  StyleDiscardDialog,
+  StyleLifecycleDialog,
+} from './components/StyleLifecycleDialog'
+import { ProjectCloseDialog } from './components/ProjectCloseDialog'
+import { SungColorDialog } from './components/SungColorDialog'
 import { TransportBar } from './components/TransportBar'
 import { ExportDialog, LyricsEditorDialog, ValidationDialog, WorkflowGuideDialog } from './components/Dialogs'
 import { usePlayback } from './hooks/usePlayback'
 import { useWaveform } from './hooks/useWaveform'
+import { useProjectHistory } from './hooks/useProjectHistory'
+import { useProjectLifecycle } from './hooks/useProjectLifecycle'
+import { useVideoStyleController } from './hooks/useVideoStyleController'
+import { useVideoStyleLifecycle } from './hooks/useVideoStyleLifecycle'
 import {
   downloadText,
   effectiveDuration,
@@ -33,92 +43,14 @@ import {
   slugify,
   type ProjectTimingDraft,
 } from './utils'
-
-interface HistoryEntry {
-  project: KaraokeProject
-  revision: number
-}
-
-function useProjectHistory(initialProject: KaraokeProject | (() => KaraokeProject)) {
-  const sequenceRef = useRef(0)
-  const pastRef = useRef<HistoryEntry[]>([])
-  const futureRef = useRef<HistoryEntry[]>([])
-  const [entry, setEntry] = useState<HistoryEntry>(() => ({
-    project: typeof initialProject === 'function' ? initialProject() : initialProject,
-    revision: 0,
-  }))
-  const [savedRevision, setSavedRevision] = useState(0)
-  const [historyVersion, setHistoryVersion] = useState(0)
-
-  const commit = useCallback((updater: KaraokeProject | ((project: KaraokeProject) => KaraokeProject)) => {
-    setEntry((current) => {
-      const nextProject = typeof updater === 'function' ? updater(current.project) : updater
-      if (nextProject === current.project) return current
-      pastRef.current.push(current)
-      if (pastRef.current.length > 120) pastRef.current.shift()
-      futureRef.current = []
-      sequenceRef.current += 1
-      setHistoryVersion((value) => value + 1)
-      return { project: nextProject, revision: sequenceRef.current }
-    })
-  }, [])
-
-  const replaceCurrent = useCallback((updater: (project: KaraokeProject) => KaraokeProject) => {
-    setEntry((current) => {
-      const nextProject = updater(current.project)
-      if (nextProject === current.project) return current
-      sequenceRef.current += 1
-      return { project: nextProject, revision: sequenceRef.current }
-    })
-  }, [])
-
-  const reset = useCallback((project: KaraokeProject, markClean = true) => {
-    sequenceRef.current += 1
-    const next = { project, revision: sequenceRef.current }
-    pastRef.current = []
-    futureRef.current = []
-    setEntry(next)
-    if (markClean) setSavedRevision(next.revision)
-    setHistoryVersion((value) => value + 1)
-  }, [])
-
-  const undo = useCallback(() => {
-    setEntry((current) => {
-      const previous = pastRef.current.pop()
-      if (!previous) return current
-      futureRef.current.push(current)
-      setHistoryVersion((value) => value + 1)
-      return previous
-    })
-  }, [])
-
-  const redo = useCallback(() => {
-    setEntry((current) => {
-      const next = futureRef.current.pop()
-      if (!next) return current
-      pastRef.current.push(current)
-      setHistoryVersion((value) => value + 1)
-      return next
-    })
-  }, [])
-
-  const markSaved = useCallback((revision: number) => setSavedRevision(revision), [])
-
-  return {
-    project: entry.project,
-    revision: entry.revision,
-    dirty: entry.revision !== savedRevision,
-    canUndo: pastRef.current.length > 0,
-    canRedo: futureRef.current.length > 0,
-    historyVersion,
-    commit,
-    replaceCurrent,
-    reset,
-    undo,
-    redo,
-    markSaved,
-  }
-}
+import {
+  projectWithVideoStyleDraft,
+} from './lib/style-session'
+import {
+  backgroundReadiness,
+  cloneVocalStyle,
+  resolveVocalStyle,
+} from './lib/video-style'
 
 interface ToastState {
   message: string
@@ -271,9 +203,14 @@ function adjacentTimedWord(
 
 export default function App() {
   const history = useProjectHistory(createProject)
-  const { project, commit: commitHistory, replaceCurrent } = history
-  const [projectPath, setProjectPath] = useState<string | null>(null)
+  const {
+    project,
+    commit: commitHistory,
+    replaceCurrent,
+    replaceHistoryBoundary,
+  } = history
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
+  const [activeAudioPath, setActiveAudioPath] = useState<string | null>(null)
   const [activeTrackId, setActiveTrackId] = useState(project.tracks[0]?.id ?? '')
   const [selectedWordIds, setSelectedWordIds] = useState<Set<string>>(new Set())
   const [zoom, setZoom] = useState(1)
@@ -286,19 +223,40 @@ export default function App() {
   const [workflowGuideOpen, setWorkflowGuideOpen] = useState(false)
   const [toast, setToast] = useState<ToastState | null>(null)
   const [timingDraft, setTimingDraft] = useState<ActiveTimingDraft | null>(null)
+  const [sungColorEditorTrackId, setSungColorEditorTrackId] = useState<string | null>(null)
+  const videoStyle = useVideoStyleController({
+    project,
+    commitProject: commitHistory,
+  })
+  const {
+    draft: styleDraft,
+    setDraft: setStyleDraft,
+  } = videoStyle
+  const {
+    error: backgroundError,
+    setError: setBackgroundError,
+    setUrl: setBackgroundUrl,
+    url: backgroundUrl,
+  } = videoStyle.background
+  const [timelineGestureActive, setTimelineGestureActive] = useState(false)
+  const canonicalBackgroundReadiness = backgroundReadiness(
+    project.stageStyle.background,
+    backgroundUrl,
+    backgroundError,
+  )
   const projectInputRef = useRef<HTMLInputElement>(null)
   const audioInputRef = useRef<HTMLInputElement>(null)
   const lrcInputRef = useRef<HTMLInputElement>(null)
+  const backgroundInputRef = useRef<HTMLInputElement>(null)
   const syncHeldRef = useRef<{
     wordId: string
     startMs: number
     isLineFinal: boolean
     nextTimedStartMs: number | null
+    projectBefore: KaraokeProject
+    createdSessionHistory: boolean
   } | null>(null)
   const syncSessionHasCommitRef = useRef(false)
-  const projectRestoreSequenceRef = useRef(0)
-  const projectLifecycleSequenceRef = useRef(0)
-  const saveRequestSequenceRef = useRef(0)
   const videoExportActiveRef = useRef(false)
   const lastReviewIssuesRef = useRef<ValidationIssue[]>([])
 
@@ -334,12 +292,24 @@ export default function App() {
     onDuration: persistAudioDuration,
     refreshIntervalMs: syncMode ? 50 : 16,
   })
+  const videoUnavailableReason = !window.studio?.exportVideo
+    ? 'Video export is available in the desktop app.'
+    : !activeAudioPath || !playback.hasAudio
+      ? 'Attach a readable audio track before exporting video.'
+      : canonicalBackgroundReadiness.reason
   const waveform = useWaveform(audioUrl)
   const lyricTimeMs = lyricTimeAtPlayback(playback.currentMs, project.offsetMs)
   const previewProject = useMemo(
     () => projectForTimingPreview(project, history.revision, timingDraft),
     [history.revision, project, timingDraft],
   )
+  const styledPreviewProject = useMemo(
+    () => styleDraft ? projectWithVideoStyleDraft(previewProject, styleDraft) : previewProject,
+    [previewProject, styleDraft],
+  )
+  const inspectorProject = styleDraft
+    ? projectWithVideoStyleDraft(project, styleDraft)
+    : project
 
   const updateTimingDraft = useCallback((timings: ProjectTimingDraft | null) => {
     setTimingDraft(timings ? { revision: history.revision, timings } : null)
@@ -356,6 +326,11 @@ export default function App() {
     return window.studio.onVideoExportProgress(setVideoExportProgress)
   }, [])
 
+  useEffect(() => window.studio?.onLinkedAssetInvalidated?.((invalidation) => {
+    if (invalidation.kind !== 'background') return
+    videoStyle.background.markInvalid(invalidation.path, invalidation.message)
+  }), [videoStyle.background.markInvalid])
+
   useEffect(() => {
     videoExportActiveRef.current = videoExportProgress !== null
   }, [videoExportProgress])
@@ -363,16 +338,6 @@ export default function App() {
   useEffect(() => {
     if (!activeTrack && project.tracks[0]) setActiveTrackId(project.tracks[0].id)
   }, [activeTrack, project.tracks])
-
-  useEffect(() => {
-    if (!history.dirty) return
-    const beforeUnload = (event: BeforeUnloadEvent) => {
-      event.preventDefault()
-      event.returnValue = ''
-    }
-    window.addEventListener('beforeunload', beforeUnload)
-    return () => window.removeEventListener('beforeunload', beforeUnload)
-  }, [history.dirty])
 
   const reviewProject = syncMode ? null : project
   const reviewIssues = useMemo<ValidationIssue[]>(() => {
@@ -420,7 +385,7 @@ export default function App() {
     }))
   }, [commit])
 
-  const updateTrack = useCallback((trackId: string, patch: Partial<Pick<VocalTrack, 'name' | 'color' | 'muted' | 'solo'>>) => {
+  const updateTrack = useCallback((trackId: string, patch: Partial<Pick<VocalTrack, 'name' | 'muted' | 'solo'>>) => {
     commit((current) => ({
       ...current,
       updatedAt: new Date().toISOString(),
@@ -428,140 +393,97 @@ export default function App() {
     }))
   }, [commit])
 
-  const openProjectContents = useCallback(async (contents: string, path: string | null) => {
-    let next: KaraokeProject
-    try {
-      next = parseProject(contents)
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Could not open that project.', 'warning')
-      return
-    }
-
-    if (!confirmDiscardChanges('Discard the unsaved changes and open another project?')) return
-
-    const restoreSequence = projectRestoreSequenceRef.current + 1
-    projectRestoreSequenceRef.current = restoreSequence
-    projectLifecycleSequenceRef.current += 1
-    history.reset(next, true)
-    setProjectPath(path)
-    setActiveTrackId(next.tracks[0]?.id ?? '')
-    setSelectedWordIds(new Set())
-    setSyncMode(false)
-    syncHeldRef.current = null
-    syncSessionHasCommitRef.current = false
-    playback.pause()
-    playback.seek(0)
-    setAudioUrl(null)
-
-    if (window.studio?.releaseAudio) {
-      try {
-        await window.studio.releaseAudio()
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : 'Media release failed.'
-        showToast(`Project opened, but the previous audio could not be released: ${detail}`, 'warning')
+  const updateSungColor = useCallback((trackId: string, color: string) => {
+    if (videoStyle.updateSungColor(trackId, color)) return
+    commit((current) => {
+      const track = current.tracks.find((candidate) => candidate.id === trackId)
+      if (
+        !track ||
+        track.vocalStyle.sungColor === color ||
+        (track.vocalStyle.sungColor === null && current.stageStyle.lyrics.sungColor === color)
+      ) return current
+      return {
+        ...current,
+        updatedAt: new Date().toISOString(),
+        tracks: current.tracks.map((candidate) => candidate.id === trackId
+          ? {
+              ...candidate,
+              vocalStyle: { ...cloneVocalStyle(candidate.vocalStyle), sungColor: color },
+            }
+          : candidate),
       }
-    }
-
-    if (!next.audioPath) {
-      showToast(`Opened ${next.title}`, 'success')
-      return
-    }
-    if (!window.studio?.resolveProjectAudio || !path) {
-      showToast('Project opened; relink its audio file in this browser.', 'warning')
-      return
-    }
-
-    try {
-      const resolved = await window.studio.resolveProjectAudio(path)
-      if (restoreSequence !== projectRestoreSequenceRef.current) return
-      setAudioUrl(resolved?.url ?? null)
-      showToast(
-        resolved ? `Opened ${next.title}` : 'Project opened; relink the missing audio file.',
-        resolved ? 'success' : 'warning',
-      )
-    } catch (error) {
-      if (restoreSequence !== projectRestoreSequenceRef.current) return
-      const detail = error instanceof Error ? error.message : 'Audio restoration failed.'
-      showToast(`Project opened, but its audio could not be restored: ${detail}`, 'warning')
-    }
-  }, [confirmDiscardChanges, history.reset, playback.pause, playback.seek, showToast])
-
-  const handleNew = useCallback(() => {
-    if (!confirmDiscardChanges('Discard the unsaved changes and start a new project?')) return
-    projectRestoreSequenceRef.current += 1
-    projectLifecycleSequenceRef.current += 1
-    const next = createProject({ title: 'Untitled Song', artist: 'Unknown Artist' })
-    history.reset(next, true)
-    setProjectPath(null)
-    setAudioUrl(null)
-    setActiveTrackId(next.tracks[0]?.id ?? '')
-    setSelectedWordIds(new Set())
-    setSyncMode(false)
-    syncHeldRef.current = null
-    syncSessionHasCommitRef.current = false
-    playback.pause()
-    playback.seek(0)
-    void window.studio?.releaseAudio?.().catch((error: unknown) => {
-      console.error('Unable to release the previous audio:', error)
     })
-    showToast('New project ready', 'neutral')
-  }, [confirmDiscardChanges, history.reset, playback.pause, playback.seek, showToast])
+  }, [commit, videoStyle])
 
-  const handleOpen = useCallback(async () => {
-    if (window.studio) {
-      const result = await window.studio.openProject()
-      if (result) await openProjectContents(result.contents, result.path)
-    } else {
-      projectInputRef.current?.click()
-    }
-  }, [openProjectContents])
+  const sungColorEditorTrack = sungColorEditorTrackId
+    ? inspectorProject.tracks.find((track) => track.id === sungColorEditorTrackId) ?? null
+    : null
 
-  const handleSave = useCallback(async (saveAs = false) => {
-    const saveRequestSequence = saveRequestSequenceRef.current + 1
-    saveRequestSequenceRef.current = saveRequestSequence
-    const projectLifecycleSequence = projectLifecycleSequenceRef.current
-    const savedRevision = history.revision
-    const saveIsCurrent = () => (
-      saveRequestSequence === saveRequestSequenceRef.current &&
-      projectLifecycleSequence === projectLifecycleSequenceRef.current
-    )
-
-    try {
-      const contents = serializeProject(project)
-      const suggestedName = `${slugify(project.title)}.oks`
-      if (window.studio) {
-        const result = await window.studio.saveProject({
-          path: saveAs ? undefined : projectPath ?? undefined,
-          suggestedName,
-          contents,
-        })
-        if (!result) return
-        if (!saveIsCurrent()) return
-        setProjectPath(result.path)
-      } else {
-        downloadText(suggestedName, contents, 'application/json')
-      }
-      if (!saveIsCurrent()) return
-      history.markSaved(savedRevision)
-      showToast('Project saved', 'success')
-    } catch (error) {
-      if (!saveIsCurrent()) return
-      setValidationDialogOpen(true)
-      showToast(error instanceof Error ? error.message : 'Project could not be saved.', 'warning')
-    }
-  }, [history.markSaved, history.revision, project, projectPath, showToast])
+  const resetEditorForProject = useCallback((next: KaraokeProject) => {
+    setActiveTrackId(next.tracks[0]?.id ?? '')
+    setSelectedWordIds(new Set())
+    setSyncMode(false)
+    syncHeldRef.current = null
+    syncSessionHasCommitRef.current = false
+  }, [])
+  const projectLifecycle = useProjectLifecycle({
+    project,
+    revision: history.revision,
+    dirty: history.dirty,
+    markSaved: history.markSaved,
+    resetProject: history.reset,
+    resetVideoStyle: videoStyle.resetSession,
+    pausePlayback: playback.pause,
+    seekPlayback: playback.seek,
+    setAudioUrl,
+    setActiveAudioPath,
+    beginBackgroundRestore: videoStyle.background.beginOperation,
+    resolveBackgroundRestore: videoStyle.background.resolveOperation,
+    resetBackground: videoStyle.background.reset,
+    resetEditorState: resetEditorForProject,
+    confirmDiscard: confirmDiscardChanges,
+    openBrowserProject: () => projectInputRef.current?.click(),
+    showSaveFailure: () => setValidationDialogOpen(true),
+    showToast,
+  })
+  const handleNew = projectLifecycle.newProject
+  const handleOpen = projectLifecycle.openProject
+  const openProjectContents = projectLifecycle.openProjectContents
+  const handleSave = projectLifecycle.saveProject
+  const projectClose = projectLifecycle.close
+  const styleLifecycle = useVideoStyleLifecycle({
+    controller: videoStyle,
+    newProject: handleNew,
+    openProject: handleOpen,
+    saveProject: handleSave,
+    openExport: () => setExportDialogOpen(true),
+    requestProjectClose: projectClose.requestClose,
+    acknowledgeCloseCancellation: () => projectLifecycle.resolveWindowClose(false),
+    showWarning: (message) => showToast(message, 'warning'),
+  })
 
   const applyAudio = useCallback((path: string, url: string, name?: string) => {
-    projectRestoreSequenceRef.current += 1
+    projectLifecycle.invalidateAudioRestore()
     playback.pause()
     playback.seek(0)
     setAudioUrl((current) => {
       if (current?.startsWith('blob:')) URL.revokeObjectURL(current)
       return url
     })
-    commit((current) => ({ ...current, audioPath: path, updatedAt: new Date().toISOString() }))
+    setActiveAudioPath(path)
+    replaceHistoryBoundary((current) => ({
+      ...current,
+      audioPath: path,
+      updatedAt: new Date().toISOString(),
+    }))
     showToast(`${name ?? path.split('/').pop() ?? 'Audio'} linked`, 'success')
-  }, [commit, playback.pause, playback.seek, showToast])
+  }, [
+    playback.pause,
+    playback.seek,
+    projectLifecycle.invalidateAudioRestore,
+    replaceHistoryBoundary,
+    showToast,
+  ])
 
   const handleImportAudio = useCallback(async () => {
     if (window.studio) {
@@ -572,11 +494,24 @@ export default function App() {
     }
   }, [applyAudio])
 
+  const handleChooseBackground = useCallback(async () => {
+    if (window.studio?.chooseBackgroundImage) {
+      try {
+        const result = await window.studio.chooseBackgroundImage()
+        if (result) videoStyle.applyBackgroundImage(result.path, result.url)
+      } catch (error) {
+        setBackgroundError(error instanceof Error ? error.message : 'The selected image could not be linked.')
+      }
+    } else {
+      backgroundInputRef.current?.click()
+    }
+  }, [setBackgroundError, videoStyle])
+
   const applyLrc = useCallback((contents: string) => {
     if (!activeTrack) return
     try {
       const imported = importLrc(contents, activeTrack.id, project.offsetMs)
-      replaceTrack(activeTrack.id, { ...imported, name: activeTrack.name, color: activeTrack.color })
+      replaceTrack(activeTrack.id, { ...imported, name: activeTrack.name, vocalStyle: cloneVocalStyle(activeTrack.vocalStyle) })
       setSelectedWordIds(new Set())
       syncHeldRef.current = null
       syncSessionHasCommitRef.current = false
@@ -627,8 +562,12 @@ export default function App() {
       showToast('Video export is available in the desktop app.', 'warning')
       return
     }
-    if (!project.audioPath || !playback.hasAudio) {
+    if (!activeAudioPath || !playback.hasAudio) {
       showToast('Attach a readable audio track before exporting video.', 'warning')
+      return
+    }
+    if (!canonicalBackgroundReadiness.ready) {
+      showToast(canonicalBackgroundReadiness.reason ?? 'Resolve the linked background image.', 'warning')
       return
     }
 
@@ -639,14 +578,22 @@ export default function App() {
       const result = await window.studio.exportVideo({
         suggestedName: `${slugify(`${project.artist}-${project.title}`)}.mp4`,
         projectJson: serializeProject(project),
-        audioPath: project.audioPath,
+        audioPath: activeAudioPath,
         durationMs: Math.max(1_000, Math.round(playback.durationMs)),
         resolution,
         fps,
       })
       if (!result) return
       setExportDialogOpen(false)
-      showToast(`Video export created with ${result.frameCount} lyric frames`, 'success')
+      if (result.fontFallbacks.length > 0) {
+        const fallback = result.fontFallbacks[0]
+        showToast(
+          `Video exported; requested ${fallback.requested}, rendered with ${fallback.effective}.`,
+          'warning',
+        )
+      } else {
+        showToast(`Video export created with ${result.frameCount} lyric frames`, 'success')
+      }
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'Video export failed.'
       const canceled = /cancel(?:led|ed|ing)/iu.test(detail)
@@ -658,7 +605,16 @@ export default function App() {
       videoExportActiveRef.current = false
       setVideoExportProgress(null)
     }
-  }, [playback.durationMs, playback.hasAudio, playback.pause, project, showToast])
+  }, [
+    canonicalBackgroundReadiness.ready,
+    canonicalBackgroundReadiness.reason,
+    activeAudioPath,
+    playback.durationMs,
+    playback.hasAudio,
+    playback.pause,
+    project,
+    showToast,
+  ])
 
   const cancelVideoExport = useCallback(async () => {
     if (!window.studio?.cancelVideoExport) return false
@@ -681,6 +637,33 @@ export default function App() {
     syncHeldRef.current = null
   }, [])
 
+  const rollbackHeldSync = useCallback(() => {
+    const held = syncHeldRef.current
+    if (!held) return project
+    if (held.createdSessionHistory) history.rollbackLatest()
+    else replaceCurrent(() => held.projectBefore)
+    syncHeldRef.current = null
+    return held.projectBefore
+  }, [history.rollbackLatest, project, replaceCurrent])
+
+  const openVideoStyle = useCallback(() => {
+    if (timelineGestureActive || styleDraft) return
+    const styleProject = rollbackHeldSync()
+    setSyncMode(false)
+    syncSessionHasCommitRef.current = false
+    videoStyle.open(styleProject)
+  }, [
+    rollbackHeldSync,
+    styleDraft,
+    timelineGestureActive,
+    videoStyle,
+  ])
+
+  const requestStyleCommand = videoStyle.requestCommand
+  const cancelVideoStyle = videoStyle.cancel
+  const applyVideoStyle = videoStyle.apply
+  const handleClearBackground = videoStyle.clearBackgroundImage
+
   const applySyncMutation = useCallback((
     updater: (current: KaraokeProject) => KaraokeProject,
   ) => {
@@ -697,18 +680,34 @@ export default function App() {
   }, [commitHistory, replaceCurrent])
 
   const handleUndo = useCallback(() => {
+    if (styleDraft) return
     cancelHeldSync()
     syncSessionHasCommitRef.current = false
     setSyncMode(false)
+    const next = history.peekUndoProject()
     history.undo()
-  }, [cancelHeldSync, history.undo])
+    if (next) {
+      void videoStyle.background.synchronizeProject(
+        next.stageStyle.background.mode,
+        next.stageStyle.background.imagePath,
+      )
+    }
+  }, [cancelHeldSync, history, styleDraft, videoStyle.background])
 
   const handleRedo = useCallback(() => {
+    if (styleDraft) return
     cancelHeldSync()
     syncSessionHasCommitRef.current = false
     setSyncMode(false)
+    const next = history.peekRedoProject()
     history.redo()
-  }, [cancelHeldSync, history.redo])
+    if (next) {
+      void videoStyle.background.synchronizeProject(
+        next.stageStyle.background.mode,
+        next.stageStyle.background.imagePath,
+      )
+    }
+  }, [cancelHeldSync, history, styleDraft, videoStyle.background])
 
   const selectAllActiveTrackWords = useCallback(() => {
     setSelectedWordIds(new Set(activeTrack ? flattenTrack(activeTrack).map(({ word }) => word.id) : []))
@@ -765,6 +764,10 @@ export default function App() {
   }, [cancelHeldSync, playback.pause, playback.seek])
 
   const toggleSyncMode = useCallback(() => {
+    if (styleDraft) {
+      showToast('Close Video style to start lyric sync', 'neutral')
+      return
+    }
     if (syncMode) {
       cancelHeldSync()
       setSyncMode(false)
@@ -786,11 +789,17 @@ export default function App() {
     setSyncMode(true)
     playback.play()
     showToast('Tap sync armed — press each word onset; hold the final word of a line', 'neutral')
-  }, [cancelHeldSync, playback.getCurrentMs, playback.play, project.offsetMs, showToast, syncMode, syncWords])
+  }, [cancelHeldSync, playback.getCurrentMs, playback.play, project.offsetMs, showToast, styleDraft, syncMode, syncWords])
 
   useEffect(() => {
     const keyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return
       if (document.querySelector('[role="dialog"]')) return
+      if (event.code === 'Escape' && styleDraft) {
+        event.preventDefault()
+        cancelVideoStyle()
+        return
+      }
       if (inputHasTypingFocus()) return
       if (event.code === 'Escape' && syncMode) {
         event.preventDefault()
@@ -805,11 +814,13 @@ export default function App() {
         !event.altKey &&
         !event.shiftKey
       ) {
+        if (styleDraft) return
         event.preventDefault()
         selectAllActiveTrackWords()
         return
       }
       if ((event.code === 'Backspace' || event.code === 'Delete') && selectedWordIds.size) {
+        if (styleDraft) return
         event.preventDefault()
         const patches = new Map([...selectedWordIds].map((id) => [
           id,
@@ -870,6 +881,8 @@ export default function App() {
         string,
         Partial<Pick<LyricWord, 'startMs' | 'endMs'>>
       >()
+      const projectBefore = project
+      const createdSessionHistory = !syncSessionHasCommitRef.current
       if (previous && sameLine && previous.word.startMs !== null) {
         patches.set(previous.word.id, { endMs: startMs })
       }
@@ -886,6 +899,8 @@ export default function App() {
         startMs,
         isLineFinal: item.wordIndex === item.line.words.length - 1,
         nextTimedStartMs,
+        projectBefore,
+        createdSessionHistory,
       }
       playback.play()
     }
@@ -934,7 +949,7 @@ export default function App() {
       window.removeEventListener('keyup', keyUp)
       window.removeEventListener('blur', windowBlur)
     }
-  }, [applySyncMutation, cancelHeldSync, commit, playback.getCurrentMs, playback.play, playback.seek, playback.toggle, project.offsetMs, selectAllActiveTrackWords, selectedWordIds, showToast, syncCursor, syncItems, syncMode, syncWords])
+  }, [applySyncMutation, cancelHeldSync, cancelVideoStyle, commit, playback.getCurrentMs, playback.play, playback.seek, playback.toggle, project, project.offsetMs, selectAllActiveTrackWords, selectedWordIds, showToast, styleDraft, syncCursor, syncItems, syncMode, syncWords])
 
   useEffect(() => {
     if (!window.studio) return
@@ -946,24 +961,38 @@ export default function App() {
         showToast('Cancel the video export before changing projects or media.', 'warning')
         return
       }
-      if (action === 'new') handleNew()
-      else if (action === 'open') void handleOpen()
-      else if (action === 'save') void handleSave(false)
-      else if (action === 'save-as') void handleSave(true)
+      if (action === 'new') requestStyleCommand('new')
+      else if (action === 'open') requestStyleCommand('open')
+      else if (action === 'save') requestStyleCommand('save')
+      else if (action === 'save-as') requestStyleCommand('save-as')
       else if (action === 'import-audio') void handleImportAudio()
       else if (action === 'import-lrc') void handleImportLrc()
-      else if (action === 'export') setExportDialogOpen(true)
+      else if (action === 'export') requestStyleCommand('export')
       else if (action === 'play-toggle') playback.toggle()
       else if (action === 'select-all') {
         const editorHandledSelection = selectAllInFocusedEditor()
-        if (!editorHandledSelection && !document.querySelector('[role="dialog"]')) {
+        if (
+          !styleDraft &&
+          !editorHandledSelection &&
+          !document.querySelector('[role="dialog"]')
+        ) {
           selectAllActiveTrackWords()
         }
       }
       else if (action === 'undo') handleUndo()
       else if (action === 'redo') handleRedo()
     })
-  }, [handleImportAudio, handleImportLrc, handleNew, handleOpen, handleRedo, handleSave, handleUndo, playback.toggle, selectAllActiveTrackWords, showToast])
+  }, [
+    handleImportAudio,
+    handleImportLrc,
+    handleRedo,
+    handleUndo,
+    playback.toggle,
+    requestStyleCommand,
+    selectAllActiveTrackWords,
+    showToast,
+    styleDraft,
+  ])
 
   const handleSelectTrack = useCallback((trackId: string) => {
     cancelHeldSync()
@@ -976,14 +1005,14 @@ export default function App() {
   const workflowGuideActions = createWorkflowGuideActions({
     canStartSync: syncWords.length > 0,
     close: () => setWorkflowGuideOpen(false),
-    startNew: handleNew,
-    open: () => void handleOpen(),
+    startNew: () => requestStyleCommand('new'),
+    open: () => requestStyleCommand('open'),
     attachAudio: () => void handleImportAudio(),
     editLyrics: () => setLyricsDialogOpen(true),
     importLrc: () => void handleImportLrc(),
     startSync: toggleSyncMode,
-    save: () => void handleSave(false),
-    exportProject: () => setExportDialogOpen(true),
+    save: () => requestStyleCommand('save'),
+    exportProject: () => requestStyleCommand('export'),
   })
 
   const syncWordId = syncMode ? syncWords[syncCursor]?.id ?? null : null
@@ -993,32 +1022,36 @@ export default function App() {
       <TopBar
         title={project.title}
         dirty={history.dirty}
-        canUndo={history.canUndo}
-        canRedo={history.canRedo}
+        canUndo={!styleDraft && history.canUndo}
+        canRedo={!styleDraft && history.canRedo}
         issueCount={reviewIssues.length}
         hasLyrics={projectHasLyrics}
-        onNew={handleNew}
-        onOpen={() => void handleOpen()}
-        onSave={() => void handleSave(false)}
+        onNew={() => requestStyleCommand('new')}
+        onOpen={() => requestStyleCommand('open')}
+        onSave={() => requestStyleCommand('save')}
         onUndo={handleUndo}
         onRedo={handleRedo}
         onShowWorkflow={() => setWorkflowGuideOpen(true)}
         onValidate={() => setValidationDialogOpen(true)}
-        onExport={() => setExportDialogOpen(true)}
+        onExport={() => requestStyleCommand('export')}
       />
 
       <main className="studio-main">
         <InspectorPanel
-          project={project}
+          project={inspectorProject}
           activeTrackId={activeTrackId}
           onSelectTrack={handleSelectTrack}
           onUpdateProject={updateProject}
+          styleOpen={Boolean(styleDraft)}
+          styleDisabled={timelineGestureActive}
+          onOpenStyle={openVideoStyle}
           onUpdateTrack={updateTrack}
+          onEditSungColor={setSungColorEditorTrackId}
           onImportAudio={handleImportAudio}
           onImportLrc={handleImportLrc}
         />
 
-        <div className={`unified-workspace ${syncMode ? 'is-syncing' : ''}`}>
+        <div className={`unified-workspace ${syncMode ? 'is-syncing' : ''} ${styleDraft ? 'is-style-editing' : ''}`}>
           <div className="workspace-top">
             {syncMode && activeTrack ? (
               <SyncCueStrip
@@ -1028,16 +1061,19 @@ export default function App() {
               />
             ) : (
               <KaraokePreview
-                project={previewProject}
+                project={styledPreviewProject}
                 playbackMs={playback.currentMs}
                 lyricMs={lyricTimeMs}
                 selectedWordIds={selectedWordIds}
+                backgroundUrl={backgroundUrl}
+                backgroundError={backgroundError}
                 onUpdateLyricDisplay={updateLyricDisplay}
                 onEditLyrics={() => setLyricsDialogOpen(true)}
               />
             )}
           </div>
 
+          <div className="timeline-slot" aria-hidden={styleDraft ? true : undefined} inert={styleDraft ? true : undefined}>
           <Timeline
             project={project}
             peaks={waveform.peaks}
@@ -1059,7 +1095,38 @@ export default function App() {
             onToggleSync={toggleSyncMode}
             onClearTiming={handleClearTiming}
             onClearTimingAfterCursor={handleClearTimingAfterCursor}
+            onGestureActiveChange={setTimelineGestureActive}
           />
+          </div>
+
+          {styleDraft && (
+            <div className="style-workspace">
+              <VideoStyleWorkspace
+                project={project}
+                activeTrack={activeTrack}
+                draft={styleDraft}
+                backgroundUrl={backgroundUrl}
+                backgroundError={backgroundError}
+                settlementError={videoStyle.lifecycleError}
+                settling={videoStyle.settling}
+                onDraftChange={setStyleDraft}
+                onChooseBackground={() => void handleChooseBackground()}
+                onClearBackground={handleClearBackground}
+                onSelectBackgroundMode={videoStyle.setBackgroundMode}
+                onCancel={cancelVideoStyle}
+                onApply={() => { void applyVideoStyle() }}
+              />
+              <KaraokePreview
+                project={styledPreviewProject}
+                playbackMs={playback.currentMs}
+                lyricMs={lyricTimeMs}
+                selectedWordIds={selectedWordIds}
+                backgroundUrl={backgroundUrl}
+                backgroundError={backgroundError}
+                compactHeader
+              />
+            </div>
+          )}
         </div>
       </main>
 
@@ -1073,6 +1140,7 @@ export default function App() {
         syncPosition={syncCursor}
         syncTotal={syncWords.length}
         hasAudio={playback.hasAudio}
+        syncDisabled={Boolean(styleDraft)}
         onToggle={playback.toggle}
         onStop={handleStop}
         onSeek={playback.seek}
@@ -1114,6 +1182,20 @@ export default function App() {
           event.currentTarget.value = ''
         }}
       />
+      <input
+        ref={backgroundInputRef}
+        hidden
+        type="file"
+        accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp"
+        onChange={(event) => {
+          const file = event.target.files?.[0]
+          if (file) {
+            videoStyle.applyBackgroundImage(file.name, URL.createObjectURL(file))
+            setBackgroundError('Open the desktop app to link this image with a persistent absolute path.')
+          }
+          event.currentTarget.value = ''
+        }}
+      />
 
       {lyricsDialogOpen && activeTrack && (
         <LyricsEditorDialog
@@ -1146,8 +1228,58 @@ export default function App() {
           onExportVideo={(settings) => void exportVideo(settings)}
           onCancelVideo={cancelVideoExport}
           onExportProject={() => void exportText(EDITABLE_PROJECT_EXPORT_FORMAT)}
-          videoAvailable={Boolean(window.studio?.exportVideo && project.audioPath && playback.hasAudio)}
+          videoAvailable={videoUnavailableReason === null}
+          videoUnavailableReason={videoUnavailableReason}
           videoProgress={videoExportProgress}
+        />
+      )}
+      {styleLifecycle.command && (
+        <StyleLifecycleDialog
+          command={styleLifecycle.command}
+          applyDisabled={!videoStyle.draftValid}
+          busy={styleLifecycle.busy}
+          error={styleLifecycle.error}
+          onApply={styleLifecycle.apply}
+          onDiscard={styleLifecycle.discard}
+          onKeep={styleLifecycle.keepEditing}
+        />
+      )}
+      {projectClose.pending && (
+        <ProjectCloseDialog
+          busy={projectClose.busy}
+          saving={projectClose.saving}
+          onSave={() => void projectClose.saveAndClose()}
+          onDiscard={() => void projectClose.discardAndClose()}
+          onKeep={() => void projectClose.keepEditing()}
+        />
+      )}
+      {sungColorEditorTrack && (
+        <SungColorDialog
+          key={sungColorEditorTrack.id}
+          trackName={sungColorEditorTrack.name}
+          initialColor={resolveVocalStyle(
+            inspectorProject.stageStyle.lyrics,
+            sungColorEditorTrack.vocalStyle,
+          ).sungColor}
+          onApply={(color) => {
+            updateSungColor(sungColorEditorTrack.id, color)
+            setSungColorEditorTrackId(null)
+          }}
+          onCancel={() => setSungColorEditorTrackId(null)}
+        />
+      )}
+      {videoStyle.cancelPending && (
+        <StyleDiscardDialog
+          busy={videoStyle.settling}
+          error={videoStyle.lifecycleError}
+          onDiscard={() => {
+            void videoStyle.discardChanges().then((discarded) => {
+              if (!discarded) {
+                showToast('The original linked background could not be restored. Try again.', 'warning')
+              }
+            })
+          }}
+          onKeep={videoStyle.keepCancelEditing}
         />
       )}
       {validationDialogOpen && <ValidationDialog issues={reviewIssues} onClose={() => setValidationDialogOpen(false)} />}

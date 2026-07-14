@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { AudioWaveform, ChevronLeft, ChevronRight, Minus, Plus, RotateCcw, SkipBack, TimerReset, Zap, ZoomIn } from 'lucide-react'
 import type { KaraokeProject, LyricLine, LyricWord, VocalTrack } from '../lib/model'
-import { formatTime } from '../lib/model'
+import { formatTime, resolveVocalStyle } from '../lib/model'
 import {
   constrainWordResizeTiming,
   constrainWordShiftDelta,
@@ -32,6 +32,7 @@ interface TimelineProps {
   onToggleSync: () => void
   onClearTiming: () => void
   onClearTimingAfterCursor: () => void
+  onGestureActiveChange?: (active: boolean) => void
 }
 
 const TIMELINE_LABEL_GAP_PX = 4
@@ -482,6 +483,7 @@ export function Timeline({
   onToggleSync,
   onClearTiming,
   onClearTimingAfterCursor,
+  onGestureActiveChange,
 }: TimelineProps) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const [timingDraft, setTimingDraft] = useState<ProjectTimingDraft | null>(null)
@@ -508,6 +510,9 @@ export function Timeline({
   const tickStepSeconds = zoom < 0.8 ? 5 : zoom < 1.7 ? 2 : 1
   const labelStepSeconds = zoom < 0.8 ? 10 : zoom < 1.7 ? 5 : 2
   const activeTrack = project.tracks.find((track) => track.id === activeTrackId)
+  const sungColor = (track: VocalTrack) => (
+    resolveVocalStyle(project.stageStyle.lyrics, track.vocalStyle).sungColor
+  )
   const activeTrackWords = activeTrack ? flattenTrack(activeTrack) : []
   const clearBoundaryMs = Math.max(0, currentMs - project.offsetMs)
   const activeHasTiming = Boolean(activeTrack?.lines.some((line) => (
@@ -613,10 +618,12 @@ export function Timeline({
       currentX: point.x,
       currentY: point.y,
     })
+    onGestureActiveChange?.(true)
     try {
       event.currentTarget.setPointerCapture(event.pointerId)
     } catch {
       setMarquee(null)
+      onGestureActiveChange?.(false)
     }
   }
 
@@ -643,12 +650,14 @@ export function Timeline({
     selected.forEach((wordId) => next.add(wordId))
     onSelectWords(next)
     setMarquee(null)
+    onGestureActiveChange?.(false)
     safelyReleasePointerCapture(event.currentTarget, event.pointerId)
   }
 
   const marqueePointerCancel = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!marquee || marquee.pointerId !== event.pointerId) return
     setMarquee(null)
+    onGestureActiveChange?.(false)
     safelyReleasePointerCapture(event.currentTarget, event.pointerId)
   }
 
@@ -656,6 +665,7 @@ export function Timeline({
     if (!marquee || marquee.pointerId !== event.pointerId) return
     if (safelyHasPointerCapture(event.currentTarget, event.pointerId)) return
     setMarquee(null)
+    onGestureActiveChange?.(false)
   }
 
   const pointerDown = (event: ReactPointerEvent<HTMLButtonElement>, word: LyricWord) => {
@@ -675,11 +685,13 @@ export function Timeline({
       deltaMs: 0,
     }
     if (!gestureSessionRef.current!.begin(drag)) return
+    onGestureActiveChange?.(true)
     if (!selectedWordIds.has(word.id)) onSelectWord(word.id, event.shiftKey || event.metaKey || event.ctrlKey)
     try {
       event.currentTarget.setPointerCapture(event.pointerId)
     } catch {
       gestureSessionRef.current!.cancel(event.pointerId, event.currentTarget)
+      onGestureActiveChange?.(false)
     }
   }
 
@@ -689,17 +701,21 @@ export function Timeline({
 
   const pointerUp = (event: ReactPointerEvent<HTMLButtonElement>) => {
     if (!gestureSessionRef.current!.finish(event.pointerId, event.currentTarget)) return
+    onGestureActiveChange?.(false)
     safelyReleasePointerCapture(event.currentTarget, event.pointerId)
   }
 
   const pointerCancel = (event: ReactPointerEvent<HTMLButtonElement>) => {
     if (!gestureSessionRef.current!.cancel(event.pointerId, event.currentTarget)) return
+    onGestureActiveChange?.(false)
     safelyReleasePointerCapture(event.currentTarget, event.pointerId)
   }
 
   const lostPointerCapture = (event: ReactPointerEvent<HTMLButtonElement>) => {
     if (safelyHasPointerCapture(event.currentTarget, event.pointerId)) return
-    gestureSessionRef.current!.captureLost(event.pointerId, event.currentTarget)
+    if (gestureSessionRef.current!.captureLost(event.pointerId, event.currentTarget)) {
+      onGestureActiveChange?.(false)
+    }
   }
 
   const wordKeyDown = (
@@ -820,7 +836,7 @@ export function Timeline({
                 className={`timeline-track-label ${track.id === activeTrackId ? 'is-active' : ''}`}
                 style={{ height: trackLayoutById.get(track.id)?.height ?? TIMELINE_MIN_TRACK_HEIGHT_PX }}
               >
-                <span style={{ background: track.color }}>{index + 1}</span>
+                <span style={{ background: sungColor(track) }}>{index + 1}</span>
                 <div><strong>{track.name}</strong><small>Voice {index + 1}</small></div>
               </div>
             ))}
@@ -882,7 +898,7 @@ export function Timeline({
                             left: lineLayout.intervalStart,
                             width: Math.max(1, lineLayout.intervalEnd - lineLayout.intervalStart),
                             height: lineLayout.height - 2,
-                            '--track-color': track.color,
+                            '--track-color': sungColor(track),
                           } as CSSProperties}
                         />
                         <span
@@ -891,7 +907,7 @@ export function Timeline({
                             top: lineLayout.top + TIMELINE_LABEL_TOP_PX,
                             left: lineLayout.labelLeft,
                             width: lineLayout.labelWidth,
-                            '--track-color': track.color,
+                            '--track-color': sungColor(track),
                           } as CSSProperties}
                           aria-hidden="true"
                         >
@@ -924,7 +940,7 @@ export function Timeline({
                                 left: wordLayout.left,
                                 width: wordLayout.width,
                                 height: TIMELINE_WORD_HEIGHT_PX,
-                                '--track-color': track.color,
+                                '--track-color': sungColor(track),
                               } as CSSProperties}
                               aria-label={`${timelineWordLabel(word)} timing block, ${timingLabel}`}
                               aria-pressed={selected}
@@ -976,7 +992,7 @@ export function Timeline({
             <button
               key={word.id}
               className={`${syncWordId === word.id ? 'is-sync-target' : ''} ${selectedWordIds.has(word.id) ? 'is-selected' : ''}`}
-              style={{ '--track-color': track.color } as CSSProperties}
+              style={{ '--track-color': sungColor(track) } as CSSProperties}
               title={`Select untimed word: ${timelineWordLabel(word)}`}
               onClick={(event) => onSelectWord(word.id, event.shiftKey || event.metaKey || event.ctrlKey)}
             >{word.text.replaceAll('/', '·')}</button>

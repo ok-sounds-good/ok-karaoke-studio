@@ -13,6 +13,7 @@ import {
   serializeProject,
   type KaraokeProject,
 } from '../src/lib/karaoke'
+import { cloneVocalStyle, DEFAULT_VOCAL_STYLE } from '../src/lib/video-style'
 
 const require = createRequire(import.meta.url)
 const projectFiles = require('../electron/project-files.cjs') as {
@@ -69,7 +70,10 @@ function completeProjectFixture(): KaraokeProject {
       createVocalTrack({
         id: 'track-lead',
         name: 'Lead Vocal',
-        color: '#12aBcD',
+        vocalStyle: {
+          ...cloneVocalStyle(DEFAULT_VOCAL_STYLE),
+          sungColor: '#12ABCD',
+        },
         muted: false,
         solo: true,
         lines: [leadLine],
@@ -77,7 +81,10 @@ function completeProjectFixture(): KaraokeProject {
       createVocalTrack({
         id: 'track-guide',
         name: 'Guide / Harmony',
-        color: '#fedcba',
+        vocalStyle: {
+          ...cloneVocalStyle(DEFAULT_VOCAL_STYLE),
+          sungColor: '#FEDCBA',
+        },
         muted: true,
         solo: false,
         lines: [guideLine],
@@ -133,5 +140,24 @@ describe('Electron project file persistence', () => {
 
     const reopened = parseProject(await readFile(filePath, 'utf8'))
     expect(reopened).toStrictEqual(second)
+  })
+
+  it('waits for an in-flight same-path save before opening the project', async () => {
+    const { filePath } = await temporaryProjectPath()
+    const first = completeProjectFixture()
+    const second = { ...first, title: 'Read only after promotion' }
+    await projectFiles.queueProjectWrite(filePath, serializeProject(first))
+
+    const pendingSave = projectFiles.queueProjectWrite(filePath, serializeProject(second))
+    const openedDuringSave = projectFiles.readUtf8FileWithinLimit(
+      filePath,
+      32 * 1024 * 1024,
+      'Project file',
+    )
+
+    await expect(openedDuringSave.then(parseProject)).resolves.toMatchObject({
+      title: 'Read only after promotion',
+    })
+    await pendingSave
   })
 })

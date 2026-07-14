@@ -15,7 +15,7 @@ jobs:
   desktop:
     name: ${{ matrix.os-name }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 20
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -32,11 +32,27 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v6
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
 
       - name: Install locked dependencies
         run: bun install --frozen-lockfile
+
+      - name: Install FFmpeg on macOS
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+
+      - name: Install FFmpeg on Windows
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg --yes --no-progress
+
+      - name: Verify FFmpeg encoder capability
+        run: bun run test:ffmpeg
 
       - name: Run unit tests
         run: bun run test
@@ -44,5 +60,28 @@ jobs:
       - name: Build renderer
         run: bun run build
 
+      # Smoke profiles are intentionally retained under runner.temp so cleanup
+      # cannot follow a swapped pathname; hosted runners discard them afterward.
+      - name: Verify installed font access
+        run: bun run test:fonts
+
+      - name: Capture Video Style Editor evidence
+        id: visual
+        env:
+          OKS_VISUAL_SMOKE_OUTPUT: ${{ runner.temp }}/okay-karaoke-video-style-evidence
+        run: bun run test:visual
+
+      - name: Upload Video Style Editor evidence
+        if: ${{ always() && steps.visual.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-style-evidence-${{ matrix.os-name }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/okay-karaoke-video-style-evidence
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Render representative H.264/AAC videos
+        run: bun run test:video
+
       - name: Package unpacked desktop app
-        run: bunx electron-builder --dir --publish never
+        run: bun run dist:dir

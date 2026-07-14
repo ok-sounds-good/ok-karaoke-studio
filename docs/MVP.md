@@ -80,8 +80,9 @@ preview, editor, and transport must never become separate application windows.
 - New, open, save, and save-as for versioned `.oks` JSON project files.
 - Link MP3, WAV, M4A, FLAC, AAC, or OGG audio without copying it into the project.
 - Link one static background image without copying it into the project. A
-  missing or unreadable linked image must be reported before export rather than
-  silently replaced in the requested result.
+  missing, animated, or decoder-invalid linked image must be reported before
+  export rather than silently replaced in the requested result; a matching
+  filename extension or magic header alone is not sufficient.
 - Display the decoded waveform when possible, with a deterministic placeholder before audio is attached.
 - Song title, artist, global timing offset, audio path, and duration metadata.
 - First launch and **New Project** create a clean slate: one empty **Lead Vocal**
@@ -202,7 +203,12 @@ preview, editor, and transport must never become separate application windows.
 - The font selector enumerates fonts installed on the current system, exposes
   their available typefaces and styles, accepts a size, and previews
   `This is <typeface>` using the selected style and size. The chosen face must
-  resolve consistently in Live Preview and MP4 output.
+  resolve consistently in Live Preview and MP4 output. Typeface, Style, and
+  Size are separate persisted fields; selecting or inheriting one does not
+  mutate the others. Persisted local faces use actual enumerated PostScript
+  names and a deterministic catalog/trait fallback, never a guessed name. A
+  changed installed catalog is an explicit Typeface replacement: until chosen,
+  the persisted face and its shared Preview/MP4 fallback remain selected.
 - Font files are neither copied into projects nor bundled with the application.
   Reopening a project on a system without its selected font produces a visible
   warning and uses a deterministic fallback rather than silently changing only
@@ -216,8 +222,9 @@ preview, editor, and transport must never become separate application windows.
   configured line count and Clear or Scroll advance behavior.
 - One built-in sync-aid animation cues only the first lyric line of each blank-
   row-separated lyric section, including the first section. It renders only
-  when that line has a timed first word and never transfers to a later line in
-  the section.
+  when that line's literal first word has a valid start/end timing pair and
+  never transfers to a later word or line in the section. Its horizontal travel
+  is at least 128 logical pixels for Left, Center, and Right alignment.
 - Let `A` be the available time between that first line becoming visible and its
   first sung word, `Min` the minimum useful sync-aid lead time, and `Max` the
   configured maximum. Let `D = min(A, Max, Preview time)`. Render the aid only
@@ -227,6 +234,28 @@ preview, editor, and transport must never become separate application windows.
   lyric line.
 - Live Preview and MP4 output use the same resolved styles, font fallback,
   background asset, line-visibility plan, and sync-aid timing.
+- A missing or errored active Image background is not MP4-ready even if a stale
+  scoped URL remains. Applying the style preserves the linked-path warning;
+  both the Export UI and command handler block MP4 until it is resolved.
+
+### Saved style templates
+
+- Save the Studio's creator preferences as named, application-level templates
+  that can be created, applied, renamed, and deleted.
+- A template includes every supported creator-configurable stage, lyric-display,
+  vocal-style, sync-aid, and export-default setting. It includes the linked
+  background-image selection and path, but does not copy or embed the image.
+- A template excludes project content and timing: title, artist, loaded audio,
+  audio metadata, lyrics, section separators, word timings, global offset, and
+  vocal-track identity remain properties of the `.oks` project.
+- Applying a template changes only the included preferences, is one undoable
+  project edit, and never replaces excluded project content. Saving, renaming,
+  or deleting a template does not dirty the open project.
+- A template retains a missing linked-image path and shows the established
+  Preview warning/fallback, but MP4 export remains blocked until the image is
+  replaced, cleared, or no longer selected. An unavailable font remains selected
+  and uses the same named deterministic fallback in Live Preview and MP4 output
+  as a font loaded directly from the project.
 
 ### Saved style templates
 

@@ -12,6 +12,7 @@ interface TransportBarProps {
   syncPosition: number
   syncTotal: number
   hasAudio: boolean
+  syncDisabled?: boolean
   onToggle: () => void
   onStop: () => void
   onSeek: (timeMs: number) => void
@@ -30,6 +31,7 @@ export function TransportBar({
   syncPosition,
   syncTotal,
   hasAudio,
+  syncDisabled = false,
   onToggle,
   onStop,
   onSeek,
@@ -42,14 +44,20 @@ export function TransportBar({
       <div className="transport__sync">
         <button
           className={`sync-button ${syncMode ? 'is-active' : ''}`}
-          title={syncMode ? 'Exit lyric synchronization (Escape)' : 'Start lyric synchronization from the playhead'}
-          disabled={!syncTotal}
+          title={syncDisabled ? 'Close Video style to start lyric sync' : syncMode ? 'Exit lyric synchronization (Escape)' : 'Start lyric synchronization from the playhead'}
+          disabled={!syncTotal || syncDisabled}
           onClick={onToggleSync}
         >
           <span><Zap size={17} fill="currentColor" /></span>
           <div>
             <strong>{syncMode ? 'Syncing words' : 'Start sync'}</strong>
-            <small>{syncMode ? `${Math.min(syncPosition + 1, syncTotal)} of ${syncTotal}` : syncTotal ? 'Time lyrics by feel' : 'Add lyrics first'}</small>
+            <small>
+              {syncDisabled
+                ? 'Close Video style to start lyric sync'
+                : syncMode
+                  ? `${Math.min(syncPosition + 1, syncTotal)} of ${syncTotal}`
+                  : syncTotal ? 'Time lyrics by feel' : 'Add lyrics first'}
+            </small>
           </div>
           <KeyboardKey>Space</KeyboardKey>
         </button>

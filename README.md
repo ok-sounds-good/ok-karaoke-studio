@@ -1,6 +1,9 @@
 # Okay Karaoke Studio
 
-Okay Karaoke Studio is a single-window desktop application for editing and synchronizing karaoke lyrics. It combines a verification-focused stage preview, transactional lyric editor, waveform TimeBoard, project inspector, and playback transport in one workspace.
+Okay Karaoke Studio is a single-window desktop application for editing and
+synchronizing karaoke lyrics. It combines a verification-focused stage preview,
+transactional lyric editor, waveform TimeBoard, project inspector, and playback
+transport in one workspace.
 
 ![Status](https://img.shields.io/badge/status-MVP%20acceptance%20open-d7fa4a?labelColor=171e1b)
 ![Electron](https://img.shields.io/badge/Electron-desktop-58d6de?labelColor=171e1b)
@@ -78,18 +81,44 @@ bun run dev:web
 ```bash
 bun run test
 bun run build
+bun run test:fonts
+bun run test:visual
 bun run dist:dir
 # Requires Electron, FFmpeg, and FFprobe:
+bun run test:ffmpeg
 bun run test:video
 ```
 
-- `bun run test` runs project-model and schema-migration coverage, synchronization
-  semantics/history, preview/video display planning, validation, LRC, ASS, and
-  renderer tests through Vitest.
+- `bun run test` runs project-model and strict current-schema coverage,
+  synchronization semantics/history, preview/video display planning, validation,
+  LRC, ASS, and renderer tests through Vitest.
 - `bun run build` performs a strict TypeScript check and production renderer build.
+- `bun run test:fonts` loads that production renderer through the packaged
+  `studio-app://app` origin, privately loads one installed face in both the
+  renderer and sandboxed video-rendering document, and reports only aggregate
+  evidence.
+- `bun run test:visual` drives the production desktop renderer at an exact
+  1280 x 720 content size and writes three ordered PNGs plus hashed result
+  metadata. The font screenshot uses the production React `FontSelector` with a
+  fixed public-only System-font state; installed font names remain hidden behind
+  a fail-closed capture boundary. Set `OKS_VISUAL_SMOKE_OUTPUT` to
+  a path that does not exist yet, or omit it for a unique temporary path. The
+  smoke never replaces an existing path, and publishes `result.json` or
+  `failure.json` last as the completion marker.
+- Both desktop smoke launchers retain their identity-verified browser profiles
+  under the operating system's temporary directory. This avoids a pathname-swap
+  race inherent in recursive cleanup; hosted runners discard the temporary data,
+  and public smoke output never includes the absolute profile path.
 - `bun run dist:dir` creates an unpacked desktop application in `release/`.
-- `bun run dist` creates distributable macOS artifacts. Public distribution still requires signing and notarization credentials.
-- `bun run test:video` performs the gated end-to-end H.264/AAC render and stream inspection.
+- `bun run dist` creates distributable macOS artifacts. Public distribution still
+  requires signing and notarization credentials.
+- `bun run test:ffmpeg` verifies that the discovered FFmpeg provides `libx264`
+  and AAC, rather than checking only for an executable.
+- `bun run test:video` performs representative 240p/30 fps and 360p/60 fps
+  H.264/AAC renders, strict two-stream metadata inspection, exporter-result and
+  frame-transition checks, ordinary FFmpeg failure atomicity, and a readable
+  cancellation partial. The complete resolution/rate matrix remains a separate
+  MVP gate.
 
 ## Editing workflow
 
@@ -120,23 +149,39 @@ bun run test:video
    undoable edits.
 8. Use the TimeBoard's **Clear Timing** or **Clear Timing After Cursor** controls
    when resynchronizing. Use transport **Stop** to pause and return to `0:00`.
-9. Review the timing status, save the schema-v3 `.oks` project, and export LRC,
-   ASS, or an MP4 karaoke video. Video export requires attached audio and offers
-   240p (426 x 240), 360p (640 x 360), 480p (854 x 480), 720p (1280 x 720),
+9. Choose **Style** in the Project header to edit the stage without leaving the
+   unified window. Configure a solid, gradient, or linked-image background;
+   project lyric defaults; title-card and Stage-frame roles; and vocal overrides,
+   preview time, and sync aid. **Apply & close** commits the complete style draft
+   as one undoable project edit. **Cancel** leaves the canonical project style
+   unchanged. Typeface, Style, and Size inherit independently. The installed-font
+   selector previews each selected face and reports its deterministic fallback
+   when the face is unavailable; opening it or changing only Size does not change
+   the selected Typeface or Style. Searching does not preview an uncommitted
+   result, and a changed installed family catalog is used only after an explicit
+   Typeface choice.
+10. Review the timing and style, save the current-format `.oks` project, and
+   export LRC, ASS, or an MP4 karaoke video. Video export requires attached audio
+   and offers these presets: 240p (426 x 240), 360p (640 x 360),
+   480p (854 x 480), 720p (1280 x 720),
    1080p (1920 x 1080), 1440p (2560 x 1440), and 2160p (3840 x 2160), each at
    30 or 60 fps. It defaults to 720p at 30 fps for faster iteration. Closing the
    export dialog, closing the application, quitting, or choosing Cancel during an
    active export asks for confirmation; a confirmed cancellation preserves a
-   UUID-named partial file beside the destination.
-   Schema-v1 and schema-v2 projects open with the 3-line/Clear display defaults.
+   UUID-named partial file beside the destination. A missing linked background
+   image, or one that Electron cannot decode as a static image, blocks MP4
+   export until it is replaced, cleared, or no longer selected.
+   A missing local font remains selected and uses the same named fallback in
+   Live Preview and MP4 output.
 
 ## Keyboard controls
 
 | Key | Action |
 |---|---|
-| Space | Key-down starts the current word; the next same-line onset closes the preceding word, and key-up extends the final word of a line. Ignored before lyric time `0:00`; never controls playback |
+| Space | Time words in Tap Sync; key-up extends the line's final word. Ignored before lyric time `0:00`; never controls playback |
 | Shift + Space | Play/pause |
-| Escape | Exit Tap Sync and restore Live Preview |
+| Escape | Exit Tap Sync or back/cancel Video style; changed drafts ask before discard |
+| Arrow keys / Home / End | Move through Video style sections while their navigation has focus |
 | Left / Right | Nudge playhead by 250 ms |
 | Shift + Left / Right | Nudge playhead by 1 second |
 | Delete / Backspace | Clear timing from selected words |
@@ -153,7 +198,7 @@ electron/              Secure Electron main process and preload bridge
 src/
   components/          Unified workspace panels, dialogs, and transport
   hooks/               Audio playback and waveform decoding
-  lib/                 Project model, migration, validation, LRC, and ASS
+  lib/                 Project model, current-format decoding, validation, LRC, and ASS
   App.tsx               Application state, commands, sync, and file workflows
 tests/                  Pure model and interchange tests
 docs/MVP.md             Active version 0.1 product-acceptance contract
@@ -161,22 +206,27 @@ docs/ROADMAP.md         Prioritized future capabilities and product boundaries
 docs/SDLC.md            Pull-request, verification, ruleset, and release policy
 ```
 
-The canonical schema-v3 model stores integer-millisecond word timings, blank-row
-section separators, and shared Live Preview/MP4 lyric-display settings inside
-the project. Schema-v1 and schema-v2 projects migrate to 3 visible lines and
-Clear advance mode. The active MVP authors one lead track; adding new singer
-tracks remains deferred. The renderer does not receive Node.js access. Electron
-exposes a small typed bridge for project dialogs, audio import,
-project-authorized audio restoration, text/video export, and menu commands.
-Linked audio is streamed through an owner-scoped, tokenized read-only custom
-protocol with byte-range support. MP4 export renders the same line-selection
-plan and per-word timing as Live Preview in an isolated offscreen Electron
-surface. It renders target-resolution, selected-rate unique frames, waits for
-each requested compositor paint, streams backpressured JPEGs into a shell-free
-FFmpeg process, and uses a faster `libx264` preset for H.264/AAC encoding.
-Ordinary failures leave the chosen destination safe. Confirmed cancellation
-terminates the encoder and preserves any partial output under a UUID-based
-filename beside that destination.
+The current clean-slate v0 schema stores integer-millisecond word timings,
+blank-row section separators, shared Live Preview/MP4 lyric-display settings,
+and the complete persisted video style. Font choices store a typeface and its
+real enumerated face catalog separately from the selected face and size; no font
+bytes or synthesized PostScript names are stored. Pre-v1 `.oks` artifacts from other MVP
+iterations are rejected clearly instead of migrated. The active MVP authors one
+lead track; adding new singer tracks remains deferred. The renderer does not
+receive Node.js access. Electron exposes a small typed bridge for project dialogs,
+linked audio and background-image capabilities, installed-font permission,
+text/video export, lifecycle coordination, and menu commands. Linked media is
+served through owner-scoped, tokenized read-only capabilities. A relative audio
+path stays relative in the saved `.oks`; playback and MP4 export retain the
+owner-scoped canonical path resolved from that project's location instead of
+resolving the saved value against the process working directory. MP4 export renders
+the same line-selection and stage-style plan as Live Preview in an isolated
+offscreen Electron surface. It renders target-resolution, selected-rate unique
+frames, waits for each requested compositor paint, streams backpressured JPEGs
+into a shell-free FFmpeg process, and uses a faster `libx264` preset for H.264/AAC
+encoding. Ordinary failures leave the chosen destination safe. Confirmed
+cancellation terminates the encoder and preserves any partial output under a
+UUID-based filename beside that destination.
 
 ## License
 

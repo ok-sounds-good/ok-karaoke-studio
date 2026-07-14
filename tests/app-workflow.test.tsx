@@ -1,186 +1,36 @@
 // @vitest-environment happy-dom
 
 import { act } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import App from '../src/App'
 import { createDemoProject, parseProject, serializeProject } from '../src/lib/model'
-
-interface StudioHarness {
-  studio: StudioApi
-  cancelVideoExport: ReturnType<typeof vi.fn>
-  exportText: ReturnType<typeof vi.fn>
-  exportVideo: ReturnType<typeof vi.fn>
-  importAudio: ReturnType<typeof vi.fn>
-  openProject: ReturnType<typeof vi.fn>
-  saveProject: ReturnType<typeof vi.fn>
-  sendMenuAction: (action: StudioMenuAction) => void
-}
-
-function createStudioHarness(): StudioHarness {
-  const openProject = vi.fn(async () => null)
-  const saveProject = vi.fn(async () => ({ path: '/saved/project.oks' }))
-  const importAudio = vi.fn(async () => null)
-  const exportText = vi.fn(async () => ({ path: '/exports/project.oks' }))
-  const exportVideo = vi.fn(async () => null)
-  const cancelVideoExport = vi.fn(async () => true)
-  let menuActionListener: ((action: StudioMenuAction) => void) | null = null
-  const onMenuAction = vi.fn((callback: (action: StudioMenuAction) => void) => {
-    menuActionListener = callback
-    return () => {
-      if (menuActionListener === callback) menuActionListener = null
-    }
-  })
-  const studio = {
-    openProject,
-    saveProject,
-    importAudio,
-    resolveProjectAudio: vi.fn(async () => null),
-    releaseAudio: vi.fn(async () => undefined),
-    importLrc: vi.fn(async () => null),
-    exportText,
-    exportVideo,
-    cancelVideoExport,
-    onVideoExportProgress: vi.fn(() => () => undefined),
-    onMenuAction,
-  } as unknown as StudioApi
-
-  return {
-    studio,
-    cancelVideoExport,
-    exportText,
-    exportVideo,
-    importAudio,
-    openProject,
-    saveProject,
-    sendMenuAction: (action) => menuActionListener?.(action),
-  }
-}
-
-async function selectValue(ariaLabel: string, value: string) {
-  const select = document.querySelector<HTMLSelectElement>(`[aria-label="${ariaLabel}"]`)
-  if (!select) throw new Error(`Could not find select: ${ariaLabel}`)
-  await act(async () => {
-    select.value = value
-    select.dispatchEvent(new Event('change', { bubbles: true }))
-  })
-}
-
-function deferred<T>() {
-  let resolve!: (value: T) => void
-  let reject!: (reason?: unknown) => void
-  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise
-    reject = rejectPromise
-  })
-  return { promise, reject, resolve }
-}
-
-function buttonContaining(label: string): HTMLButtonElement {
-  const button = [...document.querySelectorAll<HTMLButtonElement>('button')]
-    .find((candidate) => candidate.textContent?.includes(label))
-  if (!button) throw new Error(`Could not find button containing: ${label}`)
-  return button
-}
-
-async function clickButton(label: string) {
-  await act(async () => {
-    buttonContaining(label).click()
-    await new Promise((resolve) => window.setTimeout(resolve, 0))
-  })
-}
-
-async function replaceTextarea(text: string) {
-  const textarea = document.querySelector<HTMLTextAreaElement>('textarea')
-  if (!textarea) throw new Error('Lyrics textarea was not mounted')
-  await act(async () => {
-    const nativeValueSetter = Object.getOwnPropertyDescriptor(
-      HTMLTextAreaElement.prototype,
-      'value',
-    )?.set
-    if (!nativeValueSetter) throw new Error('Textarea value setter is unavailable')
-    nativeValueSetter.call(textarea, text)
-    textarea.dispatchEvent(new InputEvent('input', { bubbles: true, data: text }))
-  })
-}
-
-async function replaceProjectTitle(text: string) {
-  const input = document.querySelector<HTMLInputElement>('[aria-label="Project inspector"] input')
-  if (!input) throw new Error('Project title input was not mounted')
-  await act(async () => {
-    const nativeValueSetter = Object.getOwnPropertyDescriptor(
-      HTMLInputElement.prototype,
-      'value',
-    )?.set
-    if (!nativeValueSetter) throw new Error('Input value setter is unavailable')
-    nativeValueSetter.call(input, text)
-    input.dispatchEvent(new InputEvent('input', { bubbles: true, data: text }))
-  })
-}
-
-async function pressKey(code: string, init: KeyboardEventInit = {}) {
-  await act(async () => window.dispatchEvent(new KeyboardEvent('keydown', {
-    bubbles: true,
-    cancelable: true,
-    code,
-    key: code === 'Space' ? ' ' : code,
-    ...init,
-  })))
-}
-
-async function releaseKey(code: string, init: KeyboardEventInit = {}) {
-  await act(async () => window.dispatchEvent(new KeyboardEvent('keyup', {
-    bubbles: true,
-    cancelable: true,
-    code,
-    key: code === 'Space' ? ' ' : code,
-    ...init,
-  })))
-}
-
-async function tapSyncWord() {
-  await pressKey('Space')
-  await releaseKey('Space')
-}
-
-function timelineTimingLabels() {
-  return [...document.querySelectorAll<HTMLElement>('.timeline-word')]
-    .map((word) => word.getAttribute('aria-label'))
-}
+import {
+  buttonContaining,
+  clickButton,
+  deferred,
+  mountApp,
+  pressKey,
+  releaseKey,
+  replaceProjectTitle,
+  replaceTextarea,
+  selectValue,
+  tapSyncWord,
+  timelineTimingLabels,
+  type StudioHarness,
+} from './support/app-harness'
 
 describe('mounted first-time workflow', () => {
-  let container: HTMLDivElement
-  let root: Root | null
   let harness: StudioHarness
+  let unmount: () => Promise<void>
 
   beforeEach(async () => {
-    ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean })
-      .IS_REACT_ACT_ENVIRONMENT = true
-    harness = createStudioHarness()
-    Object.defineProperty(window, 'studio', {
-      configurable: true,
-      value: harness.studio,
-    })
-    Object.defineProperty(window, 'confirm', {
-      configurable: true,
-      value: vi.fn(() => true),
-    })
-    vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 1)
-    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined)
-    container = document.createElement('div')
-    document.body.append(container)
-    root = createRoot(container)
-    await act(async () => root?.render(<App />))
+    const mounted = await mountApp()
+    harness = mounted.harness
+    unmount = mounted.unmount
   })
 
   afterEach(async () => {
-    if (root) await act(async () => root?.unmount())
-    root = null
-    container.remove()
-    Object.defineProperty(window, 'studio', { configurable: true, value: undefined })
-    vi.restoreAllMocks()
-    vi.unstubAllGlobals()
+    await unmount()
   })
 
   async function prepareVideoExportProject() {
@@ -385,7 +235,9 @@ describe('mounted first-time workflow', () => {
     expect(document.querySelector('.time-readout strong')?.textContent).toBe('0:00.000')
     expect(document.querySelector<HTMLSelectElement>('[aria-label="Playback speed"]')?.title).toBe('Set playback speed')
     expect(document.querySelector<HTMLInputElement>('[aria-label="Volume"]')?.title).toBe('Adjust playback volume')
-    expect(document.querySelector<HTMLInputElement>('[aria-label="Track 1 color"]')?.title).toBe('Choose color for Lead Vocal')
+    expect(document.querySelector<HTMLButtonElement>('[aria-label="Edit Track 1 Sung color"]')?.title).toBe(
+      'Edit sung color for Lead Vocal',
+    )
   })
 
   it('keeps timing-block selection on bare Space while Shift+Space controls playback', async () => {
@@ -899,6 +751,7 @@ describe('mounted first-time workflow', () => {
       tracks: [lead, duet],
     }
     harness.openProject.mockResolvedValueOnce({
+      requestId: 'offset-clear-open',
       path: '/opened/offset-clear.oks',
       contents: serializeProject(openedProject),
     })
@@ -955,6 +808,7 @@ describe('mounted first-time workflow', () => {
       })),
     }
     harness.openProject.mockResolvedValueOnce({
+      requestId: 'duet-only-open',
       path: '/opened/duet-only.oks',
       contents: serializeProject({
         ...demo,
@@ -1006,6 +860,273 @@ describe('mounted first-time workflow', () => {
     }))
   })
 
+  it('exports restored relative audio through its canonical active capability path', async () => {
+    vi.stubGlobal('AudioContext', class {
+      async close() {}
+      async decodeAudioData() {
+        return { getChannelData: () => new Float32Array([0]) }
+      }
+    })
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      arrayBuffer: async () => new ArrayBuffer(0),
+    })))
+    const opened = createDemoProject()
+    opened.audioPath = '../audio/backing.mp3'
+    harness.openProject.mockResolvedValueOnce({
+      requestId: 'relative-audio-open',
+      path: '/projects/song/song.oks',
+      contents: serializeProject(opened),
+    })
+    harness.resolveProjectAudio.mockResolvedValueOnce({
+      status: 'success',
+      media: {
+        path: '/projects/audio/backing.mp3',
+        name: 'backing.mp3',
+        url: 'studio-media://asset/canonical-audio/backing.mp3',
+      },
+    })
+
+    await clickButton('Workflow')
+    await clickButton('Open .oks')
+    await clickButton('Workflow')
+    await clickButton('Choose export')
+    await clickButton('Karaoke video')
+
+    expect(harness.exportVideo).toHaveBeenCalledOnce()
+    const request = harness.exportVideo.mock.calls[0][0]
+    expect(request.audioPath).toBe('/projects/audio/backing.mp3')
+    expect(parseProject(request.projectJson).audioPath).toBe('../audio/backing.mp3')
+  })
+
+  it('makes audio replacement a dirty non-undoable boundary with coherent save and export', async () => {
+    vi.stubGlobal('AudioContext', class {
+      async close() {}
+      async decodeAudioData() {
+        return { getChannelData: () => new Float32Array([0]) }
+      }
+    })
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      arrayBuffer: async () => new ArrayBuffer(0),
+    })))
+    const opened = createDemoProject()
+    opened.audioPath = '/music/a.mp3'
+    harness.openProject.mockResolvedValueOnce({
+      requestId: 'audio-boundary-open',
+      path: '/projects/audio-boundary.oks',
+      contents: serializeProject(opened),
+    })
+    harness.resolveProjectAudio.mockResolvedValueOnce({
+      status: 'success',
+      media: {
+        path: '/music/a.mp3',
+        name: 'a.mp3',
+        url: 'studio-media://asset/audio-a/a.mp3',
+      },
+    })
+    await clickButton('Workflow')
+    await clickButton('Open .oks')
+    await replaceProjectTitle('Edit before audio replacement')
+    expect(document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')?.disabled).toBe(false)
+
+    harness.importAudio.mockResolvedValueOnce({
+      path: '/music/b.mp3',
+      name: 'b.mp3',
+      url: 'studio-media://asset/audio-b/b.mp3',
+    })
+    await act(async () => {
+      harness.sendMenuAction('import-audio')
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
+    })
+    expect(document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')?.disabled).toBe(true)
+    expect(document.querySelector<HTMLButtonElement>('[aria-label="Redo"]')?.disabled).toBe(true)
+    await act(async () => harness.sendMenuAction('undo'))
+    await act(async () => harness.sendMenuAction('save'))
+    const saved = parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents)
+    expect(saved).toMatchObject({
+      title: 'Edit before audio replacement',
+      audioPath: '/music/b.mp3',
+    })
+
+    await clickButton('Workflow')
+    await clickButton('Choose export')
+    await clickButton('Karaoke video')
+    expect(harness.exportVideo).toHaveBeenCalledOnce()
+    const request = harness.exportVideo.mock.calls[0][0]
+    expect(request.audioPath).toBe('/music/b.mp3')
+    expect(parseProject(request.projectJson).audioPath).toBe('/music/b.mp3')
+  })
+
+  it('does not let a stale relative-audio restore replace the newer export capability', async () => {
+    vi.stubGlobal('AudioContext', class {
+      async close() {}
+      async decodeAudioData() {
+        return { getChannelData: () => new Float32Array([0]) }
+      }
+    })
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      arrayBuffer: async () => new ArrayBuffer(0),
+    })))
+    const audioA = deferred<StudioMediaRestoreResult<StudioAudioImportResult>>()
+    const audioB = deferred<StudioMediaRestoreResult<StudioAudioImportResult>>()
+    const projectA = createDemoProject()
+    projectA.title = 'Audio A'
+    projectA.audioPath = '../audio/a.mp3'
+    const projectB = createDemoProject()
+    projectB.title = 'Audio B'
+    projectB.audioPath = '../audio/b.mp3'
+    harness.openProject
+      .mockResolvedValueOnce({ requestId: 'audio-a-open', path: '/projects/a/song.oks', contents: serializeProject(projectA) })
+      .mockResolvedValueOnce({ requestId: 'audio-b-open', path: '/projects/b/song.oks', contents: serializeProject(projectB) })
+    harness.resolveProjectAudio.mockImplementation((projectPath: string) => (
+      projectPath.includes('/a/') ? audioA.promise : audioB.promise
+    ))
+
+    await act(async () => {
+      harness.sendMenuAction('open')
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
+    })
+    await act(async () => {
+      harness.sendMenuAction('open')
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
+    })
+    await act(async () => {
+      audioB.resolve({
+        status: 'success',
+        media: {
+          path: '/projects/audio/b.mp3',
+          name: 'b.mp3',
+          url: 'studio-media://asset/audio-b/b.mp3',
+        },
+      })
+      await audioB.promise
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
+    })
+    await act(async () => {
+      audioA.resolve({
+        status: 'stale',
+      })
+      await audioA.promise
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
+    })
+
+    await clickButton('Workflow')
+    await clickButton('Choose export')
+    await clickButton('Karaoke video')
+
+    const request = harness.exportVideo.mock.calls[0][0]
+    expect(request.audioPath).toBe('/projects/audio/b.mp3')
+    expect(parseProject(request.projectJson)).toMatchObject({
+      title: 'Audio B',
+      audioPath: '../audio/b.mp3',
+    })
+  })
+
+  it('blocks MP4 in the UI and export handler when the linked background is missing', async () => {
+    vi.stubGlobal('AudioContext', class {
+      async close() {}
+      async decodeAudioData() {
+        return { getChannelData: () => new Float32Array([0]) }
+      }
+    })
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      arrayBuffer: async () => new ArrayBuffer(0),
+    })))
+    const opened = createDemoProject()
+    opened.audioPath = '/music/backing.mp3'
+    opened.stageStyle.background.mode = 'image'
+    opened.stageStyle.background.imagePath = '/images/missing.png'
+    harness.openProject.mockResolvedValueOnce({
+      requestId: 'missing-background-open',
+      path: '/projects/missing-background.oks',
+      contents: serializeProject(opened),
+    })
+    harness.resolveProjectAudio.mockResolvedValueOnce({
+      status: 'success',
+      media: {
+        path: '/music/backing.mp3',
+        name: 'backing.mp3',
+        url: 'studio-media://audio/backing',
+      },
+    })
+    harness.resolveProjectBackground.mockResolvedValueOnce({ status: 'missing' })
+
+    await clickButton('Workflow')
+    await clickButton('Open .oks')
+    await clickButton('Workflow')
+    await clickButton('Choose export')
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!
+    const video = [...dialog.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.includes('Karaoke video'))!
+    expect(video.disabled).toBe(true)
+    expect(video.textContent).toContain('Linked image is missing or unreadable')
+    expect(harness.exportVideo).not.toHaveBeenCalled()
+
+    await act(async () => {
+      video.disabled = false
+      video.click()
+      await Promise.resolve()
+    })
+    expect(harness.exportVideo).not.toHaveBeenCalled()
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(
+      'Linked image is missing or unreadable',
+    )
+  })
+
+  it('removes stale Preview readiness when main revokes a changed background at preflight', async () => {
+    vi.stubGlobal('AudioContext', class {
+      async close() {}
+      async decodeAudioData() {
+        return { getChannelData: () => new Float32Array([0]) }
+      }
+    })
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      arrayBuffer: async () => new ArrayBuffer(0),
+    })))
+    const opened = createDemoProject()
+    opened.audioPath = '/music/backing.mp3'
+    opened.stageStyle.background.mode = 'image'
+    opened.stageStyle.background.imagePath = '/images/stage.png'
+    harness.openProject.mockResolvedValueOnce({
+      requestId: 'background-invalidation-open',
+      path: '/projects/background-invalidation.oks',
+      contents: serializeProject(opened),
+    })
+    harness.resolveProjectAudio.mockResolvedValueOnce({
+      status: 'success',
+      media: {
+        path: '/music/backing.mp3',
+        name: 'backing.mp3',
+        url: 'studio-media://audio/backing',
+      },
+    })
+    harness.resolveProjectBackground.mockResolvedValueOnce({
+      status: 'success',
+      media: {
+        path: '/images/stage.png',
+        name: 'stage.png',
+        url: 'studio-media://background/stage',
+      },
+    })
+    await clickButton('Workflow')
+    await clickButton('Open .oks')
+    expect(document.querySelector<HTMLElement>('.karaoke-stage')?.style.backgroundImage)
+      .toContain('studio-media://background/stage')
+
+    await act(async () => harness.sendLinkedAssetInvalidated({
+      kind: 'background',
+      path: '/images/stage.png',
+      message: 'Linked image changed and could not be decoded.',
+    }))
+    expect(document.querySelector<HTMLElement>('.karaoke-stage')?.style.backgroundImage)
+      .not.toContain('studio-media://background/stage')
+    await clickButton('Workflow')
+    await clickButton('Choose export')
+    const video = [...document.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.includes('Karaoke video'))!
+    expect(video.disabled).toBe(true)
+    expect(video.textContent).toContain('Linked image changed and could not be decoded')
+  })
+
   it('confirms cancellation from both the cancel action and the export-dialog close action', async () => {
     const videoExport = deferred<StudioVideoExportResult | null>()
     harness.exportVideo.mockImplementationOnce(() => videoExport.promise)
@@ -1043,6 +1164,25 @@ describe('mounted first-time workflow', () => {
       await videoExport.promise.catch(() => undefined)
       await new Promise((resolve) => window.setTimeout(resolve, 0))
     })
+  })
+
+  it('reports the requested and effective font after a successful fallback export', async () => {
+    harness.exportVideo.mockResolvedValueOnce({
+      path: '/exports/fallback.mp4',
+      durationMs: 2_000,
+      frameCount: 60,
+      resolution: '720p',
+      width: 1280,
+      height: 720,
+      fps: 30,
+      fontFallbacks: [{ requested: 'Missing Face Bold', effective: 'System UI' }],
+    })
+    await prepareVideoExportProject()
+    await clickButton('Karaoke video')
+
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(
+      'requested Missing Face Bold, rendered with System UI',
+    )
   })
 
   it('keeps the progress surface open until cancellation is accepted', async () => {
@@ -1114,6 +1254,7 @@ describe('mounted first-time workflow', () => {
 
     await clickButton('Workflow')
     await clickButton('New project')
+    expect(harness.resetProjectScope).toHaveBeenCalledOnce()
     expect(document.querySelector('.topbar__document')?.textContent).toContain('Untitled Song')
 
     await act(async () => {
@@ -1130,6 +1271,67 @@ describe('mounted first-time workflow', () => {
       path: undefined,
       suggestedName: 'untitled-song.oks',
     }))
+  })
+
+  it('keeps the current project until main acknowledges the New project revocation', async () => {
+    const reset = deferred<boolean>()
+    harness.resetProjectScope.mockImplementationOnce(() => reset.promise)
+    await replaceProjectTitle('Wait for scope reset')
+    await clickButton('Workflow')
+
+    await act(async () => {
+      buttonContaining('New project').click()
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
+    })
+
+    expect(harness.resetProjectScope).toHaveBeenCalledOnce()
+    expect(document.querySelector('.topbar__document')?.textContent).toContain(
+      'Wait for scope reset',
+    )
+
+    await act(async () => {
+      reset.resolve(true)
+      await reset.promise
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
+    })
+
+    expect(document.querySelector('.topbar__document')?.textContent).toContain('Untitled Song')
+  })
+
+  it.each([
+    {
+      label: 'main declines the reset',
+      reset: () => Promise.resolve(false),
+      message: 'The current project could not be cleared. Keep editing and try again.',
+    },
+    {
+      label: 'the reset IPC fails',
+      reset: () => Promise.reject(new Error('Project scope reset failed')),
+      message: 'Project scope reset failed',
+    },
+  ])('preserves the current project when $label', async ({ reset, message }) => {
+    harness.resetProjectScope.mockImplementationOnce(reset)
+    await replaceProjectTitle('Preserve this project')
+
+    await clickButton('Workflow')
+    await clickButton('New project')
+
+    expect(harness.resetProjectScope).toHaveBeenCalledOnce()
+    expect(document.querySelector('.topbar__document')?.textContent).toContain(
+      'Preserve this project',
+    )
+    expect(document.body.textContent).toContain(message)
+  })
+
+  it('does not request a project-scope reset when New project discard is declined', async () => {
+    await replaceProjectTitle('Do not discard')
+    vi.mocked(window.confirm).mockReturnValueOnce(false)
+
+    await clickButton('Workflow')
+    await clickButton('New project')
+
+    expect(harness.resetProjectScope).not.toHaveBeenCalled()
+    expect(document.querySelector('.topbar__document')?.textContent).toContain('Do not discard')
   })
 
   it('allows only the newest concurrent save completion to choose the active project path', async () => {
@@ -1167,6 +1369,7 @@ describe('mounted first-time workflow', () => {
     const previousProjectSave = deferred<{ path: string }>()
     harness.saveProject.mockImplementationOnce(() => previousProjectSave.promise)
     harness.openProject.mockResolvedValueOnce({
+      requestId: 'opened-project-b',
       path: '/opened/project-b.oks',
       contents: serializeProject({ ...createDemoProject(), title: 'Opened Project B' }),
     })

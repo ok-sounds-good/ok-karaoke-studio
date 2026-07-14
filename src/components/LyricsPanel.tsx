@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { Captions, Check, Edit3, Mic2, TimerReset } from 'lucide-react'
-import type { LyricWord, VocalTrack } from '../lib/model'
+import { DEFAULT_STAGE_STYLE, type LyricWord, type VocalTrack } from '../lib/model'
 import { formatTime } from '../lib/model'
 import { flattenTrack, getActiveLine, motionAwareScrollBehavior } from '../utils'
 import { Button } from './ui'
@@ -26,6 +26,9 @@ export function LyricsPanel({
   onSelectWord,
   onEditLyrics,
 }: LyricsPanelProps) {
+  const sungColor = (track: VocalTrack) => (
+    track.vocalStyle.sungColor ?? DEFAULT_STAGE_STYLE.lyrics.sungColor
+  )
   const listRef = useRef<HTMLDivElement>(null)
   const activeTrack = tracks.find((track) => track.id === activeTrackId) ?? tracks[0]
   const activeLine = activeTrack ? getActiveLine(activeTrack, lyricMs) : null
@@ -64,7 +67,7 @@ export function LyricsPanel({
             role="tab"
             aria-selected={track.id === activeTrack.id}
           >
-            <span style={{ background: track.color }}><Mic2 size={12} /></span>
+            <span style={{ background: sungColor(track) }}><Mic2 size={12} /></span>
             <b>{index + 1}</b>
             {track.name}
           </button>
@@ -77,7 +80,7 @@ export function LyricsPanel({
           <span>of {words.length} words timed</span>
         </div>
         <span className="lyrics-progress__bar">
-          <i style={{ width: `${words.length ? (timedCount / words.length) * 100 : 0}%`, background: activeTrack.color }} />
+          <i style={{ width: `${words.length ? (timedCount / words.length) * 100 : 0}%`, background: sungColor(activeTrack) }} />
         </span>
       </div>
 

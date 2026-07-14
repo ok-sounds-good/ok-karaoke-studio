@@ -1,5 +1,7 @@
-import { defineConfig } from 'vitest/config'
+import { configDefaults, defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
+
+export const TEST_EXCLUDE = [...configDefaults.exclude, '**/.worktrees/**']
 
 export default defineConfig({
   plugins: [react()],
@@ -11,5 +13,6 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
+    exclude: TEST_EXCLUDE,
   },
 })

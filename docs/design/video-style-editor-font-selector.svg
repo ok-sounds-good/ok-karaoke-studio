@@ -1,0 +1,196 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">Installed font selector at 1280 by 720</title>
+  <desc id="desc">The Video style editor expands to 520 pixels for a full-pane font browser while preserving a 448 by 252 pixel contained Live Preview and the complete transport.</desc>
+  <defs>
+    <linearGradient id="stage-bg-font" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#173126"/>
+      <stop offset="1" stop-color="#07100d"/>
+    </linearGradient>
+    <style>
+      text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #302b38; }
+      .heading { font-size: 16px; font-weight: 750; }
+      .label { font-size: 11px; font-weight: 700; }
+      .small { font-size: 9px; fill: #62576e; }
+      .tiny { font-size: 7px; fill: #72677c; font-weight: 650; letter-spacing: .06em; }
+      .line { stroke: #ebe4f2; stroke-width: 1; }
+      .field { fill: #ffffff; stroke: #d9cce9; }
+      .button { fill: #70469e; }
+      .button-text { fill: #ffffff; font-size: 9px; font-weight: 750; }
+      .ghost { fill: #ffffff; stroke: #d9cce9; }
+      .list-text { font-size: 10px; fill: #504758; }
+      .stage-text { fill: #f7f8ee; font-size: 15px; font-weight: 750; }
+      .stage-muted { fill: #7b817d; font-size: 15px; font-weight: 750; }
+      .stage-small { fill: #9aa69f; font-size: 6px; font-weight: 650; }
+    </style>
+  </defs>
+
+  <rect width="1280" height="720" fill="#f8f6fb"/>
+
+  <!-- Same literal minimum chrome -->
+  <rect x="0" y="0" width="1280" height="58" fill="#ffffff"/>
+  <line x1="0" y1="58" x2="1280" y2="58" class="line"/>
+  <rect x="16" y="14" width="30" height="30" rx="9" fill="#aa8dde" stroke="#d8c9e9"/>
+  <circle cx="31" cy="29" r="5" fill="#2f2142"/>
+  <text x="56" y="25" class="label">OKAY KARAOKE STUDIO</text>
+  <text x="56" y="39" class="tiny">WORD-LEVEL VIDEO EDITOR</text>
+  <circle cx="494" cy="29" r="3" fill="#ff8a2b"/>
+  <text x="505" y="33" class="small">Midnight Signals — Demo Ensemble</text>
+  <rect x="1007" y="14" width="62" height="30" rx="8" class="ghost"/>
+  <text x="1021" y="33" class="small">Save</text>
+  <rect x="1077" y="14" width="82" height="30" rx="8" class="ghost"/>
+  <text x="1091" y="33" class="small">Export data</text>
+  <rect x="1167" y="14" width="97" height="30" rx="8" fill="#ff8a2b" stroke="#e66f12"/>
+  <text x="1183" y="33" class="label" style="fill:#3c200e">Export video</text>
+
+  <rect x="0" y="58" width="270" height="592" fill="#fcfbfd"/>
+  <line x1="270" y1="58" x2="270" y2="650" class="line"/>
+  <rect x="0" y="58" width="270" height="56" fill="#f6f1fa"/>
+  <text x="16" y="78" class="tiny">DOCUMENT</text>
+  <text x="16" y="99" class="heading">Project</text>
+  <rect x="181" y="70" width="73" height="32" rx="9" class="button"/>
+  <path d="M193 80h12M193 86h12M193 92h12M197 77v6M201 83v6M198 89v6" stroke="#fff" stroke-width="1.5"/>
+  <text x="212" y="90" class="button-text">Style</text>
+  <circle cx="248" cy="74" r="3" fill="#ff8a2b"/>
+  <text x="16" y="137" class="tiny">SONG DETAILS</text>
+  <text x="16" y="157" class="small">Title</text>
+  <rect x="16" y="163" width="238" height="30" rx="8" class="field"/>
+  <text x="27" y="182" class="small">Midnight Signals</text>
+  <text x="16" y="213" class="small">Artist</text>
+  <rect x="16" y="219" width="238" height="30" rx="8" class="field"/>
+  <text x="27" y="238" class="small">Demo Ensemble</text>
+  <text x="16" y="277" class="small">Global offset</text>
+  <rect x="158" y="259" width="96" height="31" rx="8" class="field"/>
+  <text x="190" y="279" class="small">0</text>
+  <text x="231" y="279" class="tiny">ms</text>
+  <line x1="16" y1="311" x2="254" y2="311" class="line"/>
+  <text x="16" y="338" class="tiny">VOCAL TRACK</text>
+  <rect x="16" y="348" width="238" height="94" rx="12" fill="#f3edf9" stroke="#9b78cf" stroke-width="1.5"/>
+  <rect x="27" y="360" width="36" height="36" rx="10" fill="#22d3ee"/>
+  <text x="75" y="375" class="label">Lead Vocal</text>
+  <text x="75" y="394" class="tiny">327/327 timed</text>
+  <rect x="75" y="400" width="165" height="34" rx="8" fill="#ffffff" stroke="#d9cce9"/>
+  <rect x="82" y="407" width="20" height="20" rx="5" fill="#22d3ee" stroke="#504758"/>
+  <text x="110" y="421" class="small">Sung</text>
+  <text x="156" y="421" class="tiny">#22D3EE</text>
+
+  <rect x="270" y="58" width="1010" height="592" fill="#f8f6fb"/>
+
+  <!-- Expanded full-pane font selector: 520 px -->
+  <rect x="278" y="66" width="520" height="576" rx="13" fill="#ffffff" stroke="#d9cce9"/>
+  <rect x="292" y="78" width="61" height="28" rx="8" class="ghost"/>
+  <path d="M305 92h10M305 92l4-4M305 92l4 4" fill="none" stroke="#70469e" stroke-width="1.4"/>
+  <text x="319" y="96" class="small" style="fill:#70469e">Back</text>
+  <text x="366" y="85" class="tiny">PROJECT LYRICS</text>
+  <text x="366" y="105" class="heading">Choose font</text>
+  <text x="774" y="96" class="tiny" text-anchor="end">DRAFT</text>
+  <circle cx="785" cy="93" r="3" fill="#ff8a2b"/>
+  <line x1="278" y1="118" x2="798" y2="118" class="line"/>
+
+  <text x="294" y="139" class="tiny">SEARCH INSTALLED FONTS</text>
+  <rect x="294" y="146" width="488" height="32" rx="8" class="field"/>
+  <circle cx="309" cy="162" r="6" fill="none" stroke="#72677c" stroke-width="1.3"/>
+  <path d="M313 166l5 5" stroke="#72677c" stroke-width="1.3"/>
+  <text x="326" y="166" class="small">Search typefaces</text>
+
+  <text x="294" y="198" class="tiny">TYPEFACE</text>
+  <text x="552" y="198" class="tiny">STYLE</text>
+  <text x="702" y="198" class="tiny">SIZE</text>
+
+  <rect x="294" y="205" width="250" height="216" rx="9" class="field"/>
+  <rect x="301" y="212" width="236" height="32" rx="7" fill="#fff0e3" stroke="#f2b786"/>
+  <circle cx="313" cy="228" r="4" fill="#ff8a2b"/>
+  <text x="325" y="232" class="label" style="fill:#98400a">Avenir Next (missing)</text>
+  <text x="313" y="264" class="list-text">Baskerville</text>
+  <text x="313" y="296" class="list-text">Charter</text>
+  <text x="313" y="328" class="list-text">Georgia</text>
+  <text x="313" y="360" class="list-text">Helvetica Neue</text>
+  <text x="313" y="392" class="list-text">System UI (fallback)</text>
+  <line x1="529" y1="249" x2="529" y2="405" stroke="#ebe4f2" stroke-width="4" stroke-linecap="round"/>
+  <line x1="529" y1="249" x2="529" y2="308" stroke="#9b78cf" stroke-width="4" stroke-linecap="round"/>
+
+  <rect x="552" y="205" width="142" height="216" rx="9" class="field"/>
+  <text x="564" y="232" class="list-text">Regular</text>
+  <text x="564" y="264" class="list-text">Medium</text>
+  <rect x="559" y="278" width="128" height="32" rx="7" fill="#f1eafa"/>
+  <text x="570" y="298" class="label" style="fill:#70469e">Demi Bold</text>
+  <text x="564" y="328" class="list-text">Bold</text>
+  <text x="564" y="360" class="list-text">Heavy</text>
+
+  <rect x="702" y="205" width="80" height="40" rx="8" class="field"/>
+  <text x="718" y="230" class="label">82</text>
+  <text x="759" y="230" class="tiny">px</text>
+  <rect x="702" y="253" width="80" height="31" rx="8" class="ghost"/>
+  <text x="721" y="273" class="small">−  1  +</text>
+  <text x="702" y="303" class="tiny">1080P STAGE</text>
+  <text x="702" y="321" class="small">Preview scales</text>
+  <text x="702" y="337" class="small">uniformly.</text>
+
+  <text x="294" y="445" class="tiny">SAMPLE</text>
+  <rect x="294" y="452" width="488" height="82" rx="10" fill="#faf8fc" stroke="#ebe4f2"/>
+  <text x="538" y="500" text-anchor="middle" style="font-family:system-ui,-apple-system,sans-serif;font-size:25px;font-weight:600;fill:#302b38">This is Avenir Next</text>
+
+  <rect x="294" y="545" width="488" height="31" rx="8" fill="#fff0e3" stroke="#f2b786"/>
+  <circle cx="308" cy="561" r="4" fill="#ff8a2b"/>
+  <text x="319" y="565" class="small">Requested: Avenir Next Demi Bold (missing) · Using: System UI</text>
+
+  <line x1="278" y1="583" x2="798" y2="583" class="line"/>
+  <text x="294" y="613" class="tiny">Arrow keys select · one Tab stop per list · typeahead enabled</text>
+  <rect x="641" y="597" width="57" height="32" rx="9" class="ghost"/>
+  <text x="654" y="617" class="small">Cancel</text>
+  <rect x="706" y="597" width="76" height="32" rx="9" class="button"/>
+  <text x="715" y="617" class="button-text">Apply &amp; close</text>
+
+  <!-- Narrower but still useful contained preview: 448 x 252 -->
+  <rect x="806" y="66" width="466" height="576" rx="13" fill="#ffffff" stroke="#d9cce9"/>
+  <text x="822" y="87" class="tiny">STAGE MONITOR</text>
+  <text x="822" y="108" class="heading">Live Preview</text>
+  <rect x="815" y="126" width="448" height="252" rx="10" fill="url(#stage-bg-font)" stroke="#31443a" stroke-width="2"/>
+  <rect x="846" y="154" width="386" height="196" rx="3" fill="none" stroke="#31443a"/>
+  <text x="856" y="169" class="stage-small">OKAY / STUDIO</text>
+  <text x="1222" y="169" class="stage-small" text-anchor="end">00:38</text>
+  <text x="1039" y="238" class="stage-text" text-anchor="middle" style="font-family:system-ui,-apple-system,sans-serif">Count the lights across the skyline</text>
+  <text x="1039" y="268" class="stage-muted" text-anchor="middle" style="font-family:system-ui,-apple-system,sans-serif">Every voice is ready now</text>
+  <text x="856" y="340" class="stage-small">DEMO ENSEMBLE · MIDNIGHT SIGNALS</text>
+
+  <rect x="822" y="398" width="434" height="53" rx="9" fill="#faf8fc" stroke="#ebe4f2"/>
+  <circle cx="838" cy="415" r="4" fill="#9b78cf"/>
+  <text x="850" y="419" class="small">448 × 252 contained 16:9 verification surface</text>
+  <text x="838" y="438" class="tiny">Selected font is loaded before Preview and export.</text>
+  <rect x="822" y="463" width="434" height="108" rx="9" fill="#fff8f1" stroke="#f2d2b9"/>
+  <text x="838" y="484" class="tiny">MISSING-FONT RECOVERY STATE</text>
+  <text x="838" y="505" class="small">Requested: Avenir Next Demi Bold</text>
+  <text x="838" y="523" class="small">Previewing/exporting with: System UI</text>
+  <rect x="1062" y="532" width="72" height="32" rx="8" class="ghost"/>
+  <text x="1082" y="552" class="small">Retry</text>
+  <rect x="1142" y="532" width="98" height="32" rx="8" class="ghost"/>
+  <text x="1162" y="552" class="small">Replace font</text>
+
+  <!-- Complete transport retained -->
+  <rect x="0" y="650" width="1280" height="70" fill="#ffffff"/>
+  <line x1="0" y1="650" x2="1280" y2="650" class="line"/>
+  <rect x="16" y="658" width="238" height="54" rx="11" fill="#f7f5f8" stroke="#d9cce9"/>
+  <rect x="24" y="667" width="36" height="36" rx="9" fill="#e7e1eb"/>
+  <path d="M39 674l-5 11h6l-2 10 8-13h-6l4-8z" fill="#968c9d"/>
+  <text x="70" y="680" class="label" style="fill:#968c9d">Start sync</text>
+  <text x="70" y="697" class="tiny">Close Video style to enable</text>
+  <rect x="209" y="674" width="36" height="21" rx="5" fill="#eee9f0" stroke="#d9cce9"/>
+  <text x="217" y="688" class="tiny">Space</text>
+  <g transform="translate(382 660)">
+    <circle cx="17" cy="25" r="15" fill="#faf8fc"/><text x="13" y="29" class="tiny">↶5</text>
+    <circle cx="57" cy="25" r="15" fill="#faf8fc"/><rect x="52" y="20" width="10" height="10" rx="1" fill="#72677c"/>
+    <circle cx="102" cy="25" r="24" fill="#302b38"/><path d="M97 16l15 9-15 9z" fill="#fff"/>
+    <circle cx="147" cy="25" r="15" fill="#faf8fc"/><text x="143" y="29" class="tiny">5↷</text>
+    <text x="180" y="29" class="label">00:38.214</text>
+    <text x="244" y="29" class="small">/ 04:31.000</text>
+  </g>
+  <circle cx="896" cy="685" r="4" fill="#9b78cf"/>
+  <text x="907" y="689" class="tiny">Audio linked</text>
+  <text x="984" y="680" class="tiny">SPEED</text>
+  <rect x="978" y="687" width="55" height="25" rx="7" class="field"/>
+  <text x="992" y="703" class="small">1.0×</text>
+  <text x="1050" y="690" class="small">Volume</text>
+  <path d="M1102 679l8-5v22l-8-5h-6v-12z" fill="#72677c"/>
+  <line x1="1120" y1="685" x2="1250" y2="685" stroke="#d9cce9" stroke-width="4" stroke-linecap="round"/>
+  <line x1="1120" y1="685" x2="1207" y2="685" stroke="#9b78cf" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="1207" cy="685" r="7" fill="#70469e"/>
+</svg>

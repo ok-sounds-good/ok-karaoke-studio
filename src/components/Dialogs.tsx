@@ -200,6 +200,7 @@ interface ExportDialogProps {
   onCancelVideo: () => Promise<boolean>
   onExportProject: () => void
   videoAvailable: boolean
+  videoUnavailableReason: string | null
   videoProgress: StudioVideoExportProgress | null
 }
 
@@ -230,6 +231,7 @@ export function ExportDialog({
   onCancelVideo,
   onExportProject,
   videoAvailable,
+  videoUnavailableReason,
   videoProgress,
 }: ExportDialogProps) {
   const [resolution, setResolution] = useState<StudioVideoResolution>('720p')
@@ -249,7 +251,7 @@ export function ExportDialog({
           ? 'Add lyrics to enable karaoke video export'
           : videoAvailable
             ? `${resolutionOption?.dimensions} · ${fps} fps MP4 · linked audio`
-            : 'Attach audio in the desktop app to enable'
+            : videoUnavailableReason ?? 'Video export is not ready'
 
   const handleClose = () => {
     if (cancellationPending) return

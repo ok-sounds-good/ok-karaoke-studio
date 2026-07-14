@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700" role="img" aria-labelledby="title desc">
+  <title id="title">Video style editor entry-point proposals</title>
+  <desc id="desc">Three mockups compare a Project header Style button, a Project settings row near Global offset, and all style controls inline in the sidebar.</desc>
+  <defs>
+    <style>
+      text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #382f40; }
+      .title { font-size: 20px; font-weight: 700; }
+      .label { font-size: 13px; font-weight: 700; }
+      .small { font-size: 10px; fill: #776b82; }
+      .tiny { font-size: 8px; fill: #776b82; }
+      .panel { fill: #fbf9fc; stroke: #ded1ec; stroke-width: 2; }
+      .header { fill: #f6f1fa; }
+      .field { fill: #ffffff; stroke: #ded1ec; }
+      .button { fill: #70469e; }
+      .button-text { fill: #ffffff; font-size: 10px; font-weight: 700; }
+      .stage { fill: #21182d; stroke: #6f5a86; stroke-width: 2; }
+      .stage-text { fill: #f8f6fb; font-size: 10px; font-weight: 600; }
+      .accent { fill: #22d3ee; stroke: #4e4158; }
+      .warning { fill: #fff2e8; stroke: #e1a271; }
+    </style>
+  </defs>
+  <rect width="1200" height="700" fill="#f8f6fb"/>
+  <text x="30" y="38" class="title">Entry-point comparison</text>
+
+  <!-- Proposal A -->
+  <g transform="translate(30 65)">
+    <text x="0" y="0" class="label">A · Project header action</text>
+    <rect x="0" y="18" width="360" height="520" rx="16" class="panel"/>
+    <rect x="0" y="18" width="360" height="54" rx="16" class="header"/>
+    <rect x="0" y="56" width="360" height="16" class="header"/>
+    <text x="14" y="42" class="tiny">DOCUMENT</text>
+    <text x="14" y="57" class="label">Project</text>
+    <rect x="270" y="31" width="76" height="30" rx="8" class="button"/>
+    <path d="M280 40h12M280 46h12M280 52h12M284 37v6M288 43v6M285 49v6" stroke="#fff" stroke-width="1.5"/>
+    <text x="300" y="50" class="button-text">Style</text>
+    <rect x="0" y="72" width="126" height="466" fill="#fbf9fc"/>
+    <text x="14" y="98" class="tiny">SONG DETAILS</text>
+    <rect x="14" y="108" width="98" height="26" rx="6" class="field"/>
+    <rect x="14" y="142" width="98" height="26" rx="6" class="field"/>
+    <text x="14" y="190" class="tiny">GLOBAL OFFSET</text>
+    <rect x="63" y="175" width="49" height="25" rx="6" class="field"/>
+    <text x="14" y="228" class="tiny">VOCAL TRACK</text>
+    <rect x="14" y="238" width="98" height="62" rx="8" fill="#f3ecf8" stroke="#b894d2"/>
+    <text x="24" y="258" class="small">Lead Vocal</text>
+    <rect x="20" y="266" width="86" height="27" rx="7" class="field"/>
+    <rect x="25" y="271" width="17" height="17" rx="4" class="accent"/>
+    <text x="47" y="281" class="tiny">Sung #22D3EE</text>
+    <rect x="126" y="72" width="234" height="466" fill="#f8f6fb"/>
+    <rect x="138" y="86" width="92" height="438" rx="10" fill="#ffffff" stroke="#ded1ec"/>
+    <text x="150" y="111" class="label">Video style</text>
+    <rect x="150" y="129" width="68" height="24" rx="6" fill="#eee6f5"/>
+    <text x="159" y="145" class="small">Background</text>
+    <rect x="150" y="165" width="68" height="22" rx="6" class="field"/>
+    <rect x="150" y="197" width="29" height="22" rx="5" fill="#70469e"/>
+    <rect x="188" y="197" width="29" height="22" rx="5" fill="#d77b35"/>
+    <rect x="242" y="86" width="106" height="438" rx="10" class="stage"/>
+    <rect x="250" y="96" width="90" height="418" rx="7" fill="none" stroke="#7f6d90"/>
+    <text x="258" y="115" class="tiny" style="fill:#c8b7d5">OKAY / STUDIO</text>
+    <text x="318" y="115" class="tiny" style="fill:#c8b7d5">00:38</text>
+    <text x="260" y="292" class="stage-text">This is Avenir</text>
+    <text x="258" y="498" class="tiny" style="fill:#c8b7d5">Artist · Song</text>
+    <rect x="0" y="552" width="360" height="56" rx="10" fill="#eef8ed" stroke="#a4c59f"/>
+    <text x="14" y="575" class="small">Persistent and project-scoped</text>
+    <text x="14" y="594" class="tiny">Enough room for fonts; stage stays visible.</text>
+  </g>
+
+  <!-- Proposal B -->
+  <g transform="translate(420 65)">
+    <text x="0" y="0" class="label">B · Settings row</text>
+    <rect x="0" y="18" width="360" height="520" rx="16" class="panel"/>
+    <rect x="0" y="18" width="360" height="54" rx="16" class="header"/>
+    <rect x="0" y="56" width="360" height="16" class="header"/>
+    <text x="14" y="42" class="tiny">DOCUMENT</text>
+    <text x="14" y="57" class="label">Project</text>
+    <rect x="0" y="72" width="126" height="466" fill="#fbf9fc"/>
+    <text x="14" y="98" class="tiny">SONG DETAILS</text>
+    <rect x="14" y="108" width="98" height="26" rx="6" class="field"/>
+    <rect x="14" y="142" width="98" height="26" rx="6" class="field"/>
+    <text x="14" y="187" class="tiny">GLOBAL OFFSET</text>
+    <rect x="63" y="173" width="49" height="25" rx="6" class="field"/>
+    <rect x="14" y="208" width="98" height="29" rx="7" class="button"/>
+    <text x="29" y="227" class="button-text">Project settings</text>
+    <text x="14" y="265" class="tiny">VOCAL TRACK</text>
+    <rect x="14" y="275" width="98" height="62" rx="8" fill="#f3ecf8" stroke="#b894d2"/>
+    <text x="24" y="295" class="small">Lead Vocal</text>
+    <rect x="77" y="302" width="22" height="22" rx="5" class="accent"/>
+    <rect x="126" y="72" width="234" height="466" fill="#f8f6fb"/>
+    <rect x="138" y="86" width="92" height="438" rx="10" fill="#ffffff" stroke="#ded1ec"/>
+    <rect x="242" y="86" width="106" height="438" rx="10" class="stage"/>
+    <text x="150" y="111" class="label">Project settings</text>
+    <rect x="150" y="129" width="68" height="24" rx="6" fill="#eee6f5"/>
+    <text x="159" y="145" class="small">Background</text>
+    <text x="260" y="292" class="stage-text">Live Preview</text>
+    <rect x="0" y="552" width="360" height="56" rx="10" class="warning"/>
+    <text x="14" y="575" class="small">Discoverable label, mixed meaning</text>
+    <text x="14" y="594" class="tiny">Visual settings sit beside a timing field.</text>
+  </g>
+
+  <!-- Proposal C -->
+  <g transform="translate(810 65)">
+    <text x="0" y="0" class="label">C · Inline sidebar</text>
+    <rect x="0" y="18" width="360" height="520" rx="16" class="panel"/>
+    <rect x="0" y="18" width="360" height="54" rx="16" class="header"/>
+    <rect x="0" y="56" width="360" height="16" class="header"/>
+    <text x="14" y="42" class="tiny">DOCUMENT</text>
+    <text x="14" y="57" class="label">Project</text>
+    <rect x="0" y="72" width="126" height="466" fill="#fbf9fc"/>
+    <text x="14" y="96" class="tiny">SONG DETAILS</text>
+    <rect x="14" y="104" width="98" height="22" rx="5" class="field"/>
+    <rect x="14" y="132" width="98" height="22" rx="5" class="field"/>
+    <text x="14" y="178" class="tiny">VIDEO STYLE</text>
+    <text x="14" y="198" class="tiny">Background</text>
+    <rect x="14" y="204" width="98" height="22" rx="5" class="field"/>
+    <text x="14" y="246" class="tiny">Typeface</text>
+    <rect x="14" y="252" width="98" height="22" rx="5" class="field"/>
+    <text x="14" y="294" class="tiny">Unsung / Sung</text>
+    <rect x="14" y="301" width="42" height="22" rx="5" fill="#b1a9b9"/>
+    <rect x="70" y="301" width="42" height="22" rx="5" class="accent"/>
+    <text x="14" y="345" class="tiny">Stage frame</text>
+    <rect x="78" y="333" width="34" height="18" rx="9" fill="#70469e"/>
+    <text x="14" y="376" class="tiny">Title card</text>
+    <rect x="14" y="382" width="98" height="22" rx="5" class="field"/>
+    <text x="14" y="426" class="tiny">Vocal overrides</text>
+    <rect x="14" y="432" width="98" height="22" rx="5" class="field"/>
+    <path d="M119 191v250" stroke="#cdb8df" stroke-width="3"/>
+    <rect x="116" y="285" width="7" height="70" rx="3" fill="#9b78cf"/>
+    <rect x="126" y="72" width="234" height="466" fill="#f8f6fb"/>
+    <rect x="140" y="88" width="206" height="436" rx="10" class="stage"/>
+    <text x="199" y="292" class="stage-text">Live Preview</text>
+    <rect x="0" y="552" width="360" height="56" rx="10" class="warning"/>
+    <text x="14" y="575" class="small">Preview stays visible, controls do not fit</text>
+    <text x="14" y="594" class="tiny">Core project tools move below the fold.</text>
+  </g>
+</svg>

@@ -11,7 +11,10 @@ function isErrnoException(error, code) {
 }
 
 async function readUtf8FileWithinLimit(filePath, maxBytes, label) {
-  const handle = await fs.open(filePath, 'r')
+  const canonicalPath = path.resolve(filePath)
+  const pendingWrite = projectSaveQueues.get(canonicalPath)
+  if (pendingWrite) await pendingWrite.catch(() => {})
+  const handle = await fs.open(canonicalPath, 'r')
   try {
     const fileStats = await handle.stat()
     if (!fileStats.isFile()) throw new TypeError(`${label} must be a regular file`)
@@ -88,17 +91,18 @@ async function writeUtf8FileAtomically(filePath, contents) {
 }
 
 async function queueProjectWrite(filePath, contents) {
-  const previousWrite = projectSaveQueues.get(filePath) || Promise.resolve()
+  const canonicalPath = path.resolve(filePath)
+  const previousWrite = projectSaveQueues.get(canonicalPath) || Promise.resolve()
   const pendingWrite = previousWrite
     .catch(() => {})
-    .then(() => writeUtf8FileAtomically(filePath, contents))
-  projectSaveQueues.set(filePath, pendingWrite)
+    .then(() => writeUtf8FileAtomically(canonicalPath, contents))
+  projectSaveQueues.set(canonicalPath, pendingWrite)
 
   try {
     await pendingWrite
   } finally {
-    if (projectSaveQueues.get(filePath) === pendingWrite) {
-      projectSaveQueues.delete(filePath)
+    if (projectSaveQueues.get(canonicalPath) === pendingWrite) {
+      projectSaveQueues.delete(canonicalPath)
     }
   }
 }

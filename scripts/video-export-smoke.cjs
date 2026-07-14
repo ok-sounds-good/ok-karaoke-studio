@@ -5,7 +5,13 @@ const fs = require('node:fs/promises')
 const os = require('node:os')
 const path = require('node:path')
 const { app, BrowserWindow } = require('electron')
-const { exportKaraokeVideo, findFfmpeg } = require('../electron/video-export.cjs')
+const { detectFfmpeg } = require('../electron/ffmpeg-setup.cjs')
+const { exportKaraokeVideo } = require('../electron/video-export.cjs')
+const { createVideoExportSmokeProject } = require('./video-export-smoke-project.cjs')
+const {
+  validateExporterResult,
+  validateProbeReport,
+} = require('./video-export-smoke-validation.cjs')
 
 function silentWav(durationSeconds, sampleRate = 48_000) {
   const channels = 2
@@ -38,9 +44,19 @@ function probeExecutable(ffmpegPath) {
   return process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe'
 }
 
-function rationalValue(value) {
-  const [numerator, denominator = '1'] = String(value).split('/')
-  return Number(numerator) / Number(denominator)
+function probeRenderedVideo(ffmpegPath, videoPath, expected) {
+  const probe = spawnSync(probeExecutable(ffmpegPath), [
+    '-v', 'error',
+    '-count_frames',
+    '-show_entries', [
+      'format=duration,start_time',
+      'stream=codec_type,codec_name,width,height,pix_fmt,color_range,r_frame_rate,avg_frame_rate,start_time,duration,nb_read_frames',
+    ].join(':'),
+    '-of', 'json',
+    videoPath,
+  ], { encoding: 'utf8' })
+  if (probe.status !== 0) throw new Error(probe.stderr || 'FFprobe failed')
+  return validateProbeReport(JSON.parse(probe.stdout), expected)
 }
 
 function decodeRgbFrame(ffmpegPath, videoPath, frameIndex, width, height) {
@@ -156,31 +172,24 @@ app.whenReady().then(async () => {
     // One second of audio exercises FFmpeg's silence padding against a
     // two-second lyric/video timeline.
     await fs.writeFile(audioPath, silentWav(1))
-    const ffmpegPath = await findFfmpeg()
-    const project = {
-      title: 'Video export smoke test',
-      artist: 'Okay Karaoke Studio',
-      audioPath,
+    const ffmpeg = await detectFfmpeg()
+    if (!ffmpeg.exportCapable || !ffmpeg.path) {
+      throw new Error(
+        `FFmpeg must provide libx264 and AAC; missing: ${ffmpeg.missingEncoders.join(', ')}`,
+      )
+    }
+    const ffmpegPath = ffmpeg.path
+    const project = createVideoExportSmokeProject(audioPath)
+    const expected30 = {
+      outputPath,
       durationMs: 2_000,
-      offsetMs: 0,
-      tracks: [{
-        name: 'Lead Vocal',
-        color: '#d7fa4a',
-        muted: false,
-        solo: false,
-        lines: [{
-          text: 'Smoke test',
-          startMs: 500,
-          endMs: 1_500,
-          words: [
-            // These exact 30/60 fps boundaries make the first post-boundary
-            // frame visibly different, so a stale or one-frame-late capture
-            // fails the decoded-output assertions below.
-            { text: 'Smoke', startMs: 500, endMs: 700 },
-            { text: 'test', startMs: 700, endMs: 900 },
-          ],
-        }],
-      }],
+      durationSeconds: 2,
+      resolution: '240p',
+      width: 426,
+      height: 240,
+      fps: 30,
+      frameCount: 60,
+      fontFallbacks: [],
     }
     const result = await exportKaraokeVideo({
       BrowserWindow,
@@ -192,36 +201,12 @@ app.whenReady().then(async () => {
       resolution: '240p',
       fps: 30,
     })
-    const probe = spawnSync(probeExecutable(ffmpegPath), [
-      '-v', 'error',
-      '-show_entries', 'format=duration,start_time:stream=codec_name,width,height,r_frame_rate,avg_frame_rate,duration,start_time',
-      '-of', 'json',
-      outputPath,
-    ], { encoding: 'utf8' })
-    if (probe.status !== 0) throw new Error(probe.stderr || 'FFprobe failed')
-    const report = JSON.parse(probe.stdout)
-    const video = report.streams.find((stream) => stream.codec_name === 'h264')
-    const audio = report.streams.find((stream) => stream.codec_name === 'aac')
-    const duration = Number(report.format.duration)
-    const videoStartSeconds = Number(video?.start_time)
-    const audioStartSeconds = Number(audio?.start_time)
-    if (
-      !video ||
-      video.width !== 426 ||
-      video.height !== 240 ||
-      Math.abs(rationalValue(video.r_frame_rate) - 30) > 0.001 ||
-      !audio
-    ) {
-      throw new Error(`Unexpected video streams: ${probe.stdout}`)
-    }
-    if (Math.abs(videoStartSeconds - audioStartSeconds) > 0.001) {
-      throw new Error(
-        `Expected synchronized audio/video starts, received video=${videoStartSeconds}, audio=${audioStartSeconds}`,
-      )
-    }
-    if (Math.abs(duration - 2) > 0.05) {
-      throw new Error(`Expected a 2-second video, received ${duration} seconds`)
-    }
+    validateExporterResult(result, expected30)
+    const {
+      audioStartSeconds,
+      durationSeconds,
+      videoStartSeconds,
+    } = probeRenderedVideo(ffmpegPath, outputPath, expected30)
     const highlightTransitions30 = [
       assertHighlightStartsOnPlannedFrame({
         ffmpegPath,
@@ -244,6 +229,17 @@ app.whenReady().then(async () => {
     ]
 
     const output60Path = path.join(directory, 'smoke-60fps.mp4')
+    const expected60 = {
+      outputPath: output60Path,
+      durationMs: 2_000,
+      durationSeconds: 2,
+      resolution: '360p',
+      width: 640,
+      height: 360,
+      fps: 60,
+      frameCount: 120,
+      fontFallbacks: [],
+    }
     const result60 = await exportKaraokeVideo({
       BrowserWindow,
       projectJson: JSON.stringify(project),
@@ -254,27 +250,8 @@ app.whenReady().then(async () => {
       resolution: '360p',
       fps: 60,
     })
-    const probe60 = spawnSync(probeExecutable(ffmpegPath), [
-      '-v', 'error',
-      '-show_entries', 'format=duration,start_time:stream=codec_name,width,height,r_frame_rate,start_time',
-      '-of', 'json',
-      output60Path,
-    ], { encoding: 'utf8' })
-    if (probe60.status !== 0) throw new Error(probe60.stderr || '60 fps FFprobe failed')
-    const report60 = JSON.parse(probe60.stdout)
-    const video60 = report60.streams.find((stream) => stream.codec_name === 'h264')
-    const audio60 = report60.streams.find((stream) => stream.codec_name === 'aac')
-    if (
-      !video60 ||
-      video60.width !== 640 ||
-      video60.height !== 360 ||
-      Math.abs(rationalValue(video60.r_frame_rate) - 60) > 0.001 ||
-      !audio60 ||
-      Math.abs(Number(video60.start_time) - Number(audio60.start_time)) > 0.001 ||
-      Math.abs(Number(report60.format.duration) - 2) > 0.05
-    ) {
-      throw new Error(`Unexpected 60 fps video streams: ${probe60.stdout}`)
-    }
+    validateExporterResult(result60, expected60)
+    probeRenderedVideo(ffmpegPath, output60Path, expected60)
     const highlightTransitions60 = [
       assertHighlightStartsOnPlannedFrame({
         ffmpegPath,
@@ -295,6 +272,44 @@ app.whenReady().then(async () => {
         label: 'Second word',
       }),
     ]
+
+    const successfulEntries = await fs.readdir(directory)
+    const successfulPartials = successfulEntries.filter((name) => name.includes('.partial-'))
+    if (successfulPartials.length > 0) {
+      throw new Error(`Successful exports left partial outputs: ${JSON.stringify(successfulPartials)}`)
+    }
+
+    const corruptAudioPath = path.join(directory, 'corrupt-audio.wav')
+    const ordinaryFailurePath = path.join(directory, 'ordinary-failure.mp4')
+    const destinationSentinel = Buffer.from('existing caller destination\n')
+    await fs.writeFile(corruptAudioPath, Buffer.from('not a wav or any other media container'))
+    await fs.writeFile(ordinaryFailurePath, destinationSentinel)
+    let ordinaryFailureObserved = false
+    try {
+      await exportKaraokeVideo({
+        BrowserWindow,
+        projectJson: JSON.stringify(createVideoExportSmokeProject(corruptAudioPath)),
+        durationMs: 2_000,
+        audioPath: corruptAudioPath,
+        outputPath: ordinaryFailurePath,
+        ffmpegPath,
+        resolution: '240p',
+        fps: 30,
+      })
+    } catch (error) {
+      if (error?.name === 'AbortError') throw error
+      ordinaryFailureObserved = true
+    }
+    const ordinaryEntries = await fs.readdir(directory)
+    const ordinaryPartials = ordinaryEntries.filter((name) => (
+      name.startsWith('ordinary-failure.partial-')
+    ))
+    const ordinaryStats = await fs.stat(ordinaryFailurePath)
+    if (
+      !ordinaryFailureObserved || !ordinaryStats.isFile() || ordinaryStats.size === 0 ||
+      !destinationSentinel.equals(await fs.readFile(ordinaryFailurePath)) ||
+      ordinaryPartials.length !== 0
+    ) throw new Error('Ordinary FFmpeg failure did not preserve the destination atomically')
 
     const canceledPath = path.join(directory, 'canceled.mp4')
     const controller = new AbortController()
@@ -330,19 +345,33 @@ app.whenReady().then(async () => {
       () => true,
       () => false,
     )
-    const partialPattern = /^canceled\.partial-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.mp4$/iu
+    const partialPattern = new RegExp([
+      '^canceled\\.partial-[0-9a-f]{8}-[0-9a-f]{4}-',
+      '4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\.mp4$',
+    ].join(''), 'iu')
     const directoryEntries = await fs.readdir(directory)
     const partialCancellationFiles = directoryEntries
       .filter((fileName) => partialPattern.test(fileName))
+    const allPartialFiles = directoryEntries.filter((fileName) => fileName.includes('.partial-'))
     if (
       !cancellationObserved ||
       canceledDestinationExists ||
-      partialCancellationFiles.length !== 1
+      partialCancellationFiles.length !== 1 ||
+      allPartialFiles.length !== 1
     ) {
       throw new Error(
         `Canceled video export did not preserve exactly one partial output: ${JSON.stringify(directoryEntries)}`,
       )
     }
+    const partialCancellationPath = path.join(directory, partialCancellationFiles[0])
+    const partialStats = await fs.stat(partialCancellationPath)
+    if (!partialStats.isFile() || partialStats.size <= 0) {
+      throw new Error('Canceled video export partial is not a non-empty regular file')
+    }
+    const cancellationProbe = probeRenderedVideo(ffmpegPath, partialCancellationPath, {
+      ...expected30,
+      allowShorterDuration: true,
+    })
 
     console.log(JSON.stringify({
       ...result,
@@ -351,13 +380,16 @@ app.whenReady().then(async () => {
       resolution: '426x240',
       fps: 30,
       verified60FpsResolution: '640x360',
-      probedDurationSeconds: duration,
+      probedDurationSeconds: durationSeconds,
       videoStartSeconds,
       audioStartSeconds,
       paddedAudio: true,
       highlightTransitions30,
       highlightTransitions60,
+      ordinaryFailureAtomic: true,
       cancellationPartialPreserved: true,
+      cancellationPartialReadable: true,
+      cancellationFrameCount: cancellationProbe.frameCount,
     }))
   } finally {
     await fs.rm(directory, { recursive: true, force: true })

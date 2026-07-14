@@ -329,14 +329,6 @@ select:focus-visible {
     0 4px 14px rgba(76, 55, 101, .12);
 }
 
-.karaoke-stage__glow--one {
-  background: radial-gradient(circle, rgba(155, 120, 207, .38), transparent 65%);
-}
-
-.karaoke-stage__glow--two {
-  background: radial-gradient(circle, rgba(255, 138, 43, .22), transparent 65%);
-}
-
 .karaoke-stage__safe-area {
   border-color: rgba(235, 228, 242, .16);
 }
@@ -356,10 +348,6 @@ select:focus-visible {
 
 .title-card p {
   color: rgba(235, 228, 242, .72);
-}
-
-.title-card i {
-  background: var(--orange);
 }
 
 .stage-word {

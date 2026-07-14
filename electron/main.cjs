@@ -1,7 +1,6 @@
 'use strict'
 
-const { app, BrowserWindow, dialog, ipcMain, Menu, protocol, session, shell } = require('electron')
-const { randomUUID } = require('node:crypto')
+const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, protocol, session, shell } = require('electron')
 const { createReadStream } = require('node:fs')
 const fs = require('node:fs/promises')
 const path = require('node:path')
@@ -34,6 +33,38 @@ const {
   isCanonicalSavePath,
   showCanonicalSaveDialog,
 } = require('./save-paths.cjs')
+const {
+  IMAGE_FILTERS,
+  IMAGE_MIME_TYPES,
+  createLinkedImageValidator,
+  createLinkedAssetRegistry,
+} = require('./linked-assets.cjs')
+const { createNativeImageDecoder } = require('./native-image-decoder.cjs')
+const { createMediaRequestSequencer } = require('./media-request-sequencer.cjs')
+const { createProjectBackgroundResolver } = require('./background-restore.cjs')
+const { createProjectAudioResolver } = require('./audio-restore.cjs')
+const { createProjectOpenCoordinator } = require('./project-open.cjs')
+const { parseCurrentProject } = require('./project-schema.cjs')
+const { createVideoExportRequestAuthorizer } = require('./video-export-request.cjs')
+const {
+  createVideoExportBackgroundPreflight,
+} = require('./video-export-background-preflight.cjs')
+const {
+  createLocalFontPermissionPolicy,
+  fontAccessProbeScript,
+  fontAccessSmokeFailures,
+  isolatedFontSmokeProfile,
+  publicFontPermissionAudit,
+  publicFontSmokeEvidence,
+  publicFontSmokeFailure,
+} = require('./font-access.cjs')
+const { runFontRenderSmoke } = require('./font-render-smoke.cjs')
+const { focusSmokeWindow } = require('./smoke-window-focus.cjs')
+const {
+  CONTENT_SIZE: VISUAL_SMOKE_CONTENT_SIZE,
+  isolatedVisualSmokeProfile,
+  runVideoStyleVisualSmoke,
+} = require('./video-style-visual-smoke.cjs')
 
 const APP_NAME = 'Okay Karaoke Studio'
 const APP_SCHEME = 'studio-app'
@@ -43,21 +74,34 @@ const DEVELOPMENT_URL = process.env.VITE_DEV_SERVER_URL || 'http://127.0.0.1:517
 const DIST_INDEX = path.resolve(__dirname, '..', 'dist', 'index.html')
 const DIST_ROOT = path.dirname(DIST_INDEX)
 const PACKAGED_APP_URL = `${APP_SCHEME}://${APP_HOST}/index.html`
+const FONT_ACCESS_SMOKE = !app.isPackaged && process.argv.includes('--font-access-smoke')
+const VIDEO_STYLE_VISUAL_SMOKE = !app.isPackaged &&
+  process.argv.includes('--video-style-visual-smoke')
+const USES_BUILT_RENDERER = app.isPackaged || FONT_ACCESS_SMOKE || VIDEO_STYLE_VISUAL_SMOKE
 const MAX_PROJECT_FILE_BYTES = 32 * 1024 * 1024
 const MAX_LRC_FILE_BYTES = 8 * 1024 * 1024
 
 const CHANNELS = Object.freeze({
   openProject: 'studio:open-project',
+  settleProjectOpen: 'studio:settle-project-open',
+  resetProjectScope: 'studio:reset-project-scope',
   saveProject: 'studio:save-project',
   importAudio: 'studio:import-audio',
   resolveProjectAudio: 'studio:resolve-project-audio',
   releaseAudio: 'studio:release-audio',
+  chooseBackgroundImage: 'studio:choose-background-image',
+  resolveProjectBackground: 'studio:resolve-project-background',
+  releaseBackground: 'studio:release-background',
+  retainBackground: 'studio:retain-background',
   importLrc: 'studio:import-lrc',
   exportText: 'studio:export-text',
   exportVideo: 'studio:export-video',
   cancelVideoExport: 'studio:cancel-video-export',
   videoExportProgress: 'studio:video-export-progress',
+  linkedAssetInvalidated: 'studio:linked-asset-invalidated',
   menuAction: 'studio:menu-action',
+  windowCloseRequest: 'studio:window-close-request',
+  resolveWindowClose: 'studio:resolve-window-close',
 })
 
 const MENU_ACTIONS = new Set([
@@ -132,14 +176,75 @@ const LRC_FILTERS = [
 
 const VIDEO_FILTERS = [{ name: 'MPEG-4 Karaoke Video', extensions: ['mp4'] }]
 
-const mediaFiles = new Map()
-const mediaTokensByOwner = new Map()
-const mediaRequestSequences = new Map()
-const restorableProjectAudioByOwner = new Map()
-const writableProjectPaths = new Set()
+const linkedAssets = createLinkedAssetRegistry(AUDIO_EXTENSIONS)
+const linkedImages = createLinkedImageValidator(createNativeImageDecoder(nativeImage))
+const { readStaticImage, validateLinkedImage } = linkedImages
+const mediaRequests = createMediaRequestSequencer()
+const projectOpens = createProjectOpenCoordinator({ linkedAssets, mediaRequests })
+const authorizeVideoExportRequest = createVideoExportRequestAuthorizer({
+  linkedAssets,
+  audioExtensions: AUDIO_EXTENSIONS,
+  maxDurationMs: MAX_VIDEO_DURATION_MS,
+  maxProjectBytes: MAX_PROJECT_FILE_BYTES,
+  normalizeVideoSettings,
+  projectSourcePath: (ownerId) => projectOpens.projectSourcePath(ownerId),
+})
 
 let mainWindow = null
 let activeVideoExport = null
+let rendererLifecycleRequest = null
+let rendererLifecycleApproval = null
+const preflightVideoExportBackground = createVideoExportBackgroundPreflight({
+  linkedAssets,
+  validateLinkedImage,
+  notifyInvalidation: (ownerId, invalidation) => {
+    if (
+      mainWindow &&
+      !mainWindow.isDestroyed() &&
+      !mainWindow.webContents.isDestroyed() &&
+      mainWindow.webContents.id === ownerId
+    ) mainWindow.webContents.send(CHANNELS.linkedAssetInvalidated, invalidation)
+  },
+})
+const fontPermissions = createLocalFontPermissionPolicy({
+  getMainWindow: () => mainWindow,
+  recordDecisions: FONT_ACCESS_SMOKE || VIDEO_STYLE_VISUAL_SMOKE,
+  trustedOrigin: rendererOrigin(),
+})
+
+if (VIDEO_STYLE_VISUAL_SMOKE) {
+  app.commandLine.appendSwitch('force-device-scale-factor', '1')
+}
+
+if (FONT_ACCESS_SMOKE) {
+  try {
+    const profilePath = isolatedFontSmokeProfile(
+      process.env.OKS_FONT_SMOKE_USER_DATA,
+      app.getPath('userData'),
+      process.env.OKS_FONT_SMOKE_PROFILE_IDENTITY,
+    )
+    app.setPath('userData', profilePath)
+    app.setPath('sessionData', path.join(profilePath, 'session'))
+  } catch {
+    process.stderr.write('{"ok":false,"profileValid":false}\n')
+    process.exit(1)
+  }
+}
+
+if (VIDEO_STYLE_VISUAL_SMOKE) {
+  try {
+    const profilePath = isolatedVisualSmokeProfile(
+      process.env.OKS_VISUAL_SMOKE_USER_DATA,
+      app.getPath('userData'),
+      process.env.OKS_VISUAL_SMOKE_PROFILE_IDENTITY,
+    )
+    app.setPath('userData', profilePath)
+    app.setPath('sessionData', path.join(profilePath, 'session'))
+  } catch {
+    process.stderr.write('{"code":"VISUAL_PROFILE_INVALID","ok":false}\n')
+    process.exit(1)
+  }
+}
 
 app.setName(APP_NAME)
 
@@ -179,7 +284,7 @@ function textResponse(message, status, extraHeaders = {}) {
 }
 
 function rendererOrigin() {
-  return app.isPackaged
+  return USES_BUILT_RENDERER
     ? `${APP_SCHEME}://${APP_HOST}`
     : new URL(DEVELOPMENT_URL).origin
 }
@@ -326,7 +431,7 @@ function installMediaProtocol() {
     }
 
     const token = tokenFromMediaUrl(request.url)
-    const mediaFile = token ? mediaFiles.get(token) : null
+    const mediaFile = token ? linkedAssets.get(token) : null
     const hasActiveOwner = Boolean(
       mediaFile &&
       mainWindow &&
@@ -334,7 +439,7 @@ function installMediaProtocol() {
       !mainWindow.webContents.isDestroyed() &&
       mainWindow.webContents.id === mediaFile.ownerId,
     )
-    if (token && mediaFile && !hasActiveOwner) revokeMediaToken(token)
+    if (token && mediaFile && !hasActiveOwner) linkedAssets.revokeToken(token)
     const filePath = hasActiveOwner ? mediaFile.filePath : null
     if (!filePath) return textResponse('Media not found', 404, mediaResponseHeaders())
 
@@ -342,12 +447,12 @@ function installMediaProtocol() {
     try {
       fileStats = await fs.stat(filePath)
     } catch {
-      if (token) revokeMediaToken(token)
+      if (token) linkedAssets.revokeToken(token)
       return textResponse('Media not found', 404, mediaResponseHeaders())
     }
 
     if (!fileStats.isFile()) {
-      if (token) revokeMediaToken(token)
+      if (token) linkedAssets.revokeToken(token)
       return textResponse('Media not found', 404, mediaResponseHeaders())
     }
 
@@ -363,7 +468,9 @@ function installMediaProtocol() {
     const headers = {
       ...mediaResponseHeaders(),
       'Accept-Ranges': 'bytes',
-      'Content-Type': AUDIO_MIME_TYPES.get(extension) || 'application/octet-stream',
+      'Content-Type': mediaFile.kind === 'background'
+        ? IMAGE_MIME_TYPES.get(extension) || 'application/octet-stream'
+        : AUDIO_MIME_TYPES.get(extension) || 'application/octet-stream',
     }
 
     const start = range ? range.start : 0
@@ -415,53 +522,12 @@ function requireStringWithinBytes(value, fieldName, maxBytes) {
   return text
 }
 
-function revokeMediaToken(token) {
-  const mediaFile = mediaFiles.get(token)
-  if (!mediaFile) return
-  mediaFiles.delete(token)
-
-  const ownerTokens = mediaTokensByOwner.get(mediaFile.ownerId)
-  ownerTokens?.delete(token)
-  if (ownerTokens?.size === 0) mediaTokensByOwner.delete(mediaFile.ownerId)
+function beginMediaRequest(ownerId, kind) {
+  return mediaRequests.begin(ownerId, kind)
 }
 
-function revokeMediaForOwner(ownerId) {
-  const ownerTokens = mediaTokensByOwner.get(ownerId)
-  if (!ownerTokens) return
-  for (const token of [...ownerTokens]) revokeMediaToken(token)
-}
-
-function beginMediaRequest(ownerId) {
-  const sequence = (mediaRequestSequences.get(ownerId) || 0) + 1
-  mediaRequestSequences.set(ownerId, sequence)
-  return sequence
-}
-
-function mediaRequestIsCurrent(ownerId, sequence) {
-  return mediaRequestSequences.get(ownerId) === sequence
-}
-
-function authorizeProjectAudio(ownerId, projectPath, contents) {
-  let audioPath = null
-  try {
-    const project = JSON.parse(contents)
-    if (isRecord(project)) {
-      const rawAudioPath = typeof project.audioPath === 'string'
-        ? project.audioPath
-        : typeof project.audioFile === 'string'
-          ? project.audioFile
-          : null
-      if (rawAudioPath) {
-        const candidate = path.isAbsolute(rawAudioPath)
-          ? path.resolve(rawAudioPath)
-          : path.resolve(path.dirname(projectPath), rawAudioPath)
-        if (AUDIO_EXTENSIONS.has(path.extname(candidate).toLowerCase())) audioPath = candidate
-      }
-    }
-  } catch {
-    // The renderer performs full schema parsing and will report malformed data.
-  }
-  restorableProjectAudioByOwner.set(ownerId, { projectPath, audioPath })
+function mediaRequestIsCurrent(ownerId, kind, sequence) {
+  return mediaRequests.isCurrent(ownerId, kind, sequence)
 }
 
 function assertTrustedSender(event) {
@@ -499,49 +565,13 @@ function normalizeExportRequest(value) {
   }
 }
 
-function normalizeVideoExportRequest(value) {
-  if (!isRecord(value)) throw new TypeError('exportVideo requires an options object')
-  const videoSettings = normalizeVideoSettings({
-    resolution: value.resolution,
-    fps: value.fps,
-  })
-  const durationMs = value.durationMs
-  if (
-    !Number.isSafeInteger(durationMs) ||
-    durationMs < 1_000 ||
-    durationMs > MAX_VIDEO_DURATION_MS
-  ) {
-    throw new RangeError('durationMs must be an integer between one second and thirty minutes')
-  }
-  const audioPath = path.resolve(requireString(value.audioPath, 'audioPath'))
-  if (!AUDIO_EXTENSIONS.has(path.extname(audioPath).toLowerCase())) {
-    throw new TypeError('audioPath must reference a supported audio file')
-  }
-
-  return {
-    audioPath,
-    durationMs,
-    projectJson: requireStringWithinBytes(
-      value.projectJson,
-      'projectJson',
-      MAX_PROJECT_FILE_BYTES,
-    ),
-    resolution: videoSettings.resolution,
-    fps: videoSettings.fps,
-    suggestedName: optionalString(value.suggestedName, 'suggestedName'),
-  }
-}
-
-function makeMediaResult(filePath, ownerContents) {
+function makeMediaResult(filePath, ownerContents, kind) {
   if (!ownerContents || ownerContents.isDestroyed()) {
     throw new Error('Cannot create a media URL for a destroyed renderer')
   }
 
   const ownerId = ownerContents.id
-  revokeMediaForOwner(ownerId)
-  const token = randomUUID()
-  mediaFiles.set(token, { filePath, ownerId })
-  mediaTokensByOwner.set(ownerId, new Set([token]))
+  const token = linkedAssets.register(filePath, ownerId, kind)
 
   return {
     path: filePath,
@@ -549,6 +579,19 @@ function makeMediaResult(filePath, ownerContents) {
     url: `${MEDIA_SCHEME}://asset/${token}/${encodeURIComponent(path.basename(filePath))}`,
   }
 }
+
+const resolveProjectBackground = createProjectBackgroundResolver({
+  linkedAssets,
+  makeMediaResult,
+  requestSequencer: mediaRequests,
+  validateLinkedImage,
+})
+const resolveProjectAudio = createProjectAudioResolver({
+  linkedAssets,
+  makeMediaResult,
+  requestSequencer: mediaRequests,
+  statFile: fs.stat,
+})
 
 function beginVideoExport(ownerId) {
   let resolveFinished
@@ -572,6 +615,17 @@ function canceledVideoExportError() {
 function finishVideoExport(operation) {
   if (activeVideoExport === operation) activeVideoExport = null
   operation.resolveFinished()
+}
+
+function requestRendererLifecycle(action) {
+  if (action !== 'window' && action !== 'app') return
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
+  if (rendererLifecycleRequest) {
+    if (action === 'app') rendererLifecycleRequest = 'app'
+    return
+  }
+  rendererLifecycleRequest = action
+  mainWindow.webContents.send(CHANNELS.windowCloseRequest, action)
 }
 
 function abortActiveVideoExport() {
@@ -613,8 +667,23 @@ const videoExportLifecycleGuard = createVideoExportLifecycleGuard({
 })
 
 function registerIpcHandlers() {
+  ipcMain.handle(CHANNELS.resolveWindowClose, async (event, proceed) => {
+    assertTrustedSender(event)
+    if (typeof proceed !== 'boolean') throw new TypeError('resolveWindowClose requires a boolean')
+    const action = rendererLifecycleRequest
+    rendererLifecycleRequest = null
+    if (!action) return false
+    if (!proceed) return true
+    rendererLifecycleApproval = action
+    if (action === 'app') app.quit()
+    else if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close()
+    return true
+  })
+
   ipcMain.handle(CHANNELS.openProject, async (event) => {
     const owner = assertTrustedSender(event)
+    const ownerId = event.sender.id
+    const requestId = projectOpens.beginOpen(ownerId)
     const result = await dialog.showOpenDialog(owner, {
       title: 'Open Karaoke Project',
       buttonLabel: 'Open Project',
@@ -630,17 +699,37 @@ function registerIpcHandlers() {
       MAX_PROJECT_FILE_BYTES,
       'Project file',
     )
-    authorizeProjectAudio(event.sender.id, filePath, contents)
-    writableProjectPaths.add(filePath)
-    return { path: filePath, contents }
+    return projectOpens.stageOpen(ownerId, requestId, filePath, contents)
+  })
+
+  ipcMain.handle(CHANNELS.settleProjectOpen, async (event, value) => {
+    assertTrustedSender(event)
+    if (!isRecord(value)) throw new TypeError('settleProjectOpen requires an options object')
+    const requestId = requireString(value.requestId, 'requestId')
+    if (typeof value.accepted !== 'boolean') {
+      throw new TypeError('settleProjectOpen.accepted must be a boolean')
+    }
+    return projectOpens.settleOpen(event.sender.id, requestId, value.accepted)
+  })
+
+  ipcMain.handle(CHANNELS.resetProjectScope, async (event) => {
+    assertTrustedSender(event)
+    const ownerId = event.sender.id
+    projectOpens.resetProjectScope(ownerId)
+    mediaRequests.invalidateOwner(ownerId)
+    linkedAssets.revokeOwner(ownerId)
+    return true
   })
 
   ipcMain.handle(CHANNELS.saveProject, async (event, value) => {
     const owner = assertTrustedSender(event)
+    const ownerId = event.sender.id
+    const writeGrant = projectOpens.captureWriteGrant(ownerId)
     const request = normalizeProjectRequest(value)
+    parseCurrentProject(request.contents)
     const requestedPath = request.path ? path.resolve(request.path) : null
     const requestedPathIsWritable = requestedPath
-      ? writableProjectPaths.has(requestedPath)
+      ? projectOpens.canWrite(event.sender.id, requestedPath)
       : false
 
     let filePath = requestedPath &&
@@ -667,14 +756,14 @@ function registerIpcHandlers() {
     }
 
     await queueProjectWrite(filePath, request.contents)
-    writableProjectPaths.add(filePath)
+    projectOpens.grantWrite(ownerId, filePath, writeGrant)
     return { path: filePath }
   })
 
   ipcMain.handle(CHANNELS.importAudio, async (event) => {
     const owner = assertTrustedSender(event)
     const ownerId = event.sender.id
-    const requestSequence = beginMediaRequest(ownerId)
+    const requestSequence = beginMediaRequest(ownerId, 'audio')
     const result = await dialog.showOpenDialog(owner, {
       title: 'Import Audio',
       buttonLabel: 'Import Audio',
@@ -690,34 +779,64 @@ function registerIpcHandlers() {
     if (!fileStats.isFile() || !AUDIO_EXTENSIONS.has(extension)) {
       throw new TypeError('The selected file is not a supported audio file')
     }
-    if (!mediaRequestIsCurrent(ownerId, requestSequence)) return null
+    if (!mediaRequestIsCurrent(ownerId, 'audio', requestSequence)) return null
 
-    return makeMediaResult(filePath, event.sender)
+    return makeMediaResult(filePath, event.sender, 'audio')
   })
 
   ipcMain.handle(CHANNELS.resolveProjectAudio, async (event, value) => {
     assertTrustedSender(event)
     if (!isRecord(value)) throw new TypeError('resolveProjectAudio requires an options object')
-    const ownerId = event.sender.id
-    const requestSequence = beginMediaRequest(ownerId)
     const projectPath = path.resolve(requireString(value.projectPath, 'projectPath'))
-    const authorization = restorableProjectAudioByOwner.get(ownerId)
-    if (authorization?.projectPath !== projectPath) return null
-    restorableProjectAudioByOwner.delete(ownerId)
-    if (!authorization.audioPath) return null
-    try {
-      const fileStats = await fs.stat(authorization.audioPath)
-      if (!fileStats.isFile() || !mediaRequestIsCurrent(ownerId, requestSequence)) return null
-      return makeMediaResult(authorization.audioPath, event.sender)
-    } catch {
-      return null
-    }
+    return resolveProjectAudio({ ownerContents: event.sender, projectPath })
   })
 
   ipcMain.handle(CHANNELS.releaseAudio, async (event) => {
     assertTrustedSender(event)
-    beginMediaRequest(event.sender.id)
-    revokeMediaForOwner(event.sender.id)
+    beginMediaRequest(event.sender.id, 'audio')
+    linkedAssets.revokeOwner(event.sender.id, 'audio')
+  })
+
+  ipcMain.handle(CHANNELS.chooseBackgroundImage, async (event) => {
+    const owner = assertTrustedSender(event)
+    const ownerId = event.sender.id
+    const requestSequence = beginMediaRequest(ownerId, 'background')
+    const result = await dialog.showOpenDialog(owner, {
+      title: 'Choose Video Background',
+      buttonLabel: 'Choose Image',
+      properties: ['openFile'],
+      filters: IMAGE_FILTERS,
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    const filePath = await validateLinkedImage(result.filePaths[0])
+    if (!mediaRequestIsCurrent(ownerId, 'background', requestSequence)) return null
+    return makeMediaResult(filePath, event.sender, 'background')
+  })
+
+  ipcMain.handle(CHANNELS.resolveProjectBackground, async (event, value) => {
+    assertTrustedSender(event)
+    if (!isRecord(value)) throw new TypeError('resolveProjectBackground requires an options object')
+    const projectPath = path.resolve(requireString(value.projectPath, 'projectPath'))
+    return resolveProjectBackground({ ownerContents: event.sender, projectPath })
+  })
+
+  ipcMain.handle(CHANNELS.releaseBackground, async (event) => {
+    assertTrustedSender(event)
+    beginMediaRequest(event.sender.id, 'background')
+    linkedAssets.revokeOwner(event.sender.id, 'background')
+  })
+
+  ipcMain.handle(CHANNELS.retainBackground, async (event, value) => {
+    assertTrustedSender(event)
+    beginMediaRequest(event.sender.id, 'background')
+    if (value === null) {
+      linkedAssets.deactivateOwner(event.sender.id, 'background')
+      return true
+    }
+    const token = typeof value === 'string' ? tokenFromMediaUrl(value) : null
+    if (token && linkedAssets.retainOwnerToken(event.sender.id, 'background', token)) return true
+    linkedAssets.deactivateOwner(event.sender.id, 'background')
+    return false
   })
 
   ipcMain.handle(CHANNELS.importLrc, async (event) => {
@@ -762,7 +881,7 @@ function registerIpcHandlers() {
   ipcMain.handle(CHANNELS.exportVideo, async (event, value) => {
     const owner = assertTrustedSender(event)
     if (activeVideoExport) throw new Error('Another karaoke video export is already running')
-    const request = normalizeVideoExportRequest(value)
+    const request = authorizeVideoExportRequest(event.sender.id, value)
     const operation = beginVideoExport(event.sender.id)
     const abortWhenOwnerCloses = () => {
       if (operation.commitState.tryBeginCancellation()) operation.controller.abort()
@@ -770,14 +889,7 @@ function registerIpcHandlers() {
     event.sender.once('destroyed', abortWhenOwnerCloses)
 
     try {
-      const ffmpegPath = await ensureFfmpegForExport({
-        openExternal: openExternalUrl,
-        showMessageBox: (options) => dialog.showMessageBox(owner, options),
-        signal: operation.controller.signal,
-      })
-      if (!ffmpegPath) return null
-      if (operation.controller.signal.aborted) throw canceledVideoExportError()
-
+      await preflightVideoExportBackground(event.sender.id, request.backgroundPath)
       const defaultName = ensureExportExtension(
         safeFileName(request.suggestedName, 'karaoke-video.mp4'),
         'mp4',
@@ -807,7 +919,12 @@ function registerIpcHandlers() {
         durationMs: request.durationMs,
         audioPath: request.audioPath,
         outputPath: path.resolve(selectedOutputPath),
-        ffmpegPath,
+        readLinkedImage: readStaticImage,
+        resolveFfmpegPath: async () => ensureFfmpegForExport({
+          openExternal: openExternalUrl,
+          showMessageBox: (options) => dialog.showMessageBox(owner, options),
+          signal: operation.controller.signal,
+        }),
         resolution: request.resolution,
         fps: request.fps,
         onProgress: sendProgress,
@@ -934,7 +1051,7 @@ function isAllowedAppNavigation(rawUrl) {
   try {
     const url = new URL(rawUrl)
 
-    if (!app.isPackaged) {
+    if (!USES_BUILT_RENDERER) {
       return url.origin === new URL(DEVELOPMENT_URL).origin
     }
 
@@ -985,7 +1102,7 @@ function secureWebContents(contents) {
       noLink: true,
       title: 'Unsaved karaoke project',
       message: 'Discard the unsaved changes?',
-      detail: 'Your latest lyric and timing edits have not been saved.',
+      detail: 'Your latest project changes have not been saved.',
     }
     const choice = owner
       ? dialog.showMessageBoxSync(owner, options)
@@ -996,15 +1113,16 @@ function secureWebContents(contents) {
   })
   contents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
     if (isMainFrame && !isInPlace) {
-      beginMediaRequest(ownerId)
-      revokeMediaForOwner(ownerId)
+      projectOpens.releaseOwner(ownerId)
+      mediaRequests.invalidateOwner(ownerId)
+      linkedAssets.revokeOwner(ownerId)
     }
   })
   contents.once('destroyed', () => {
-    beginMediaRequest(ownerId)
-    revokeMediaForOwner(ownerId)
-    restorableProjectAudioByOwner.delete(ownerId)
-    mediaRequestSequences.delete(ownerId)
+    projectOpens.releaseOwner(ownerId)
+    mediaRequests.invalidateOwner(ownerId)
+    linkedAssets.releaseOwner(ownerId)
+    mediaRequests.releaseOwner(ownerId)
   })
 }
 
@@ -1013,10 +1131,10 @@ async function createMainWindow() {
 
   const window = new BrowserWindow({
     title: APP_NAME,
-    width: 1440,
-    height: 900,
-    minWidth: 1080,
-    minHeight: 680,
+    width: VIDEO_STYLE_VISUAL_SMOKE ? VISUAL_SMOKE_CONTENT_SIZE.width : 1440,
+    height: VIDEO_STYLE_VISUAL_SMOKE ? VISUAL_SMOKE_CONTENT_SIZE.height : 900,
+    minWidth: 1280,
+    minHeight: 720,
     show: false,
     backgroundColor: '#f8f6fb',
     useContentSize: true,
@@ -1036,18 +1154,27 @@ async function createMainWindow() {
   secureWebContents(window.webContents)
 
   window.once('ready-to-show', () => {
-    if (!window.isDestroyed()) window.show()
+    if (!window.isDestroyed()) {
+      window.show()
+      if (FONT_ACCESS_SMOKE || VIDEO_STYLE_VISUAL_SMOKE) window.focus()
+    }
   })
   window.on('close', (event) => {
-    if (!activeVideoExport) return
+    if (rendererLifecycleApproval === 'window' || rendererLifecycleApproval === 'app') {
+      rendererLifecycleApproval = null
+      return
+    }
     event.preventDefault()
-    void videoExportLifecycleGuard.requestWindowClose()
+    if (activeVideoExport) void videoExportLifecycleGuard.requestWindowClose()
+    else requestRendererLifecycle('window')
   })
   window.on('closed', () => {
+    rendererLifecycleRequest = null
+    rendererLifecycleApproval = null
     if (mainWindow === window) mainWindow = null
   })
 
-  if (app.isPackaged) {
+  if (USES_BUILT_RENDERER) {
     await window.loadURL(PACKAGED_APP_URL)
   } else {
     await window.loadURL(DEVELOPMENT_URL)
@@ -1072,42 +1199,130 @@ function focusMainWindow() {
   mainWindow.focus()
 }
 
-const hasSingleInstanceLock = app.requestSingleInstanceLock()
+function installLocalFontPermissions() {
+  session.defaultSession.setPermissionCheckHandler(
+    (webContents, permission, requestingOrigin, details) => (
+      fontPermissions.check(webContents, permission, requestingOrigin, details)
+    ),
+  )
+  session.defaultSession.setPermissionRequestHandler(
+    (webContents, permission, callback, details) => callback(
+      fontPermissions.request(webContents, permission, details),
+    ),
+  )
+}
 
-if (!hasSingleInstanceLock) {
-  app.quit()
-} else {
-  app.on('second-instance', focusMainWindow)
-  app.on('before-quit', (event) => {
-    if (!activeVideoExport) return
-    event.preventDefault()
-    void videoExportLifecycleGuard.requestAppQuit()
-  })
-
-  app.whenReady().then(async () => {
-    if (app.isPackaged) installApplicationProtocol()
-    installMediaProtocol()
-    registerIpcHandlers()
+async function initializeDesktop() {
+  if (USES_BUILT_RENDERER) installApplicationProtocol()
+  installMediaProtocol()
+  registerIpcHandlers()
+  installLocalFontPermissions()
+  if (!FONT_ACCESS_SMOKE && !VIDEO_STYLE_VISUAL_SMOKE) {
     installApplicationMenu()
-
     app.setAboutPanelOptions({
       applicationName: APP_NAME,
       applicationVersion: app.getVersion(),
     })
+  }
+  return createMainWindow()
+}
 
-    session.defaultSession.setPermissionCheckHandler(() => false)
-    session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false))
+async function runFontAccessSmoke(window) {
+  await focusSmokeWindow({ app, window })
+  let timeoutId
+  const evidence = await Promise.race([
+    window.webContents.executeJavaScript(fontAccessProbeScript(), true),
+    new Promise((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error('Font access smoke timed out')), 20_000)
+    }),
+  ]).finally(() => clearTimeout(timeoutId))
+  const privateFont = evidence.privateFont
+  const publicEvidence = publicFontSmokeEvidence(evidence)
+  const failures = fontAccessSmokeFailures({
+    audit: fontPermissions.audit,
+    evidence,
+    expectedHref: PACKAGED_APP_URL,
+    expectedOrigin: `${APP_SCHEME}://${APP_HOST}`,
+  })
+  let render = null
+  if (failures.length === 0) {
+    render = await runFontRenderSmoke(BrowserWindow, privateFont)
+  }
+  const result = {
+    audit: publicFontPermissionAudit(fontPermissions.audit),
+    evidence: publicEvidence,
+    render,
+    ok: failures.length === 0 && render?.localFontLoaded === true,
+  }
+  if (failures.length) throw Object.assign(new Error(failures.join('; ')), { result })
+  process.stdout.write(`${JSON.stringify(result)}\n`)
+}
 
-    await createMainWindow()
+function failFontAccessSmoke(error) {
+  const result = error?.result || {
+    audit: publicFontPermissionAudit(fontPermissions.audit),
+    error: publicFontSmokeFailure(error),
+    ok: false,
+  }
+  process.stderr.write(`${JSON.stringify(result)}\n`)
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.destroy()
+  app.exit(1)
+}
+
+if (FONT_ACCESS_SMOKE) {
+  app.whenReady().then(async () => {
+    const window = await initializeDesktop()
+    await runFontAccessSmoke(window)
+    if (!window.isDestroyed()) window.destroy()
+    app.exit(0)
+  }).catch(failFontAccessSmoke)
+} else if (VIDEO_STYLE_VISUAL_SMOKE) {
+  app.whenReady().then(async () => {
+    const window = await initializeDesktop()
+    await focusSmokeWindow({
+      app,
+      window,
+      errorCode: 'VISUAL_SMOKE_FOCUS_FAILED',
+    })
+    const result = await runVideoStyleVisualSmoke(
+      window,
+      process.env.OKS_VISUAL_SMOKE_OUTPUT,
+    )
+    process.stdout.write(`${JSON.stringify({
+      captureCount: result.captures.length,
+      ok: true,
+    })}\n`)
+    if (!window.isDestroyed()) window.destroy()
+    app.exit(0)
   }).catch((error) => {
-    console.error('Failed to start Okay Karaoke Studio:', error)
-    dialog.showErrorBox('Unable to start Okay Karaoke Studio', String(error?.message || error))
+    process.stderr.write(`${JSON.stringify({
+      code: typeof error?.code === 'string' ? error.code : 'VISUAL_SMOKE_FAILED',
+      ok: false,
+    })}\n`)
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.destroy()
+    app.exit(1)
+  })
+} else {
+  const hasSingleInstanceLock = app.requestSingleInstanceLock()
+  if (!hasSingleInstanceLock) {
     app.quit()
-  })
-
-  app.on('activate', focusMainWindow)
-
-  app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') app.quit()
-  })
+  } else {
+    app.on('second-instance', focusMainWindow)
+    app.on('before-quit', (event) => {
+      if (rendererLifecycleApproval === 'app') return
+      if (!mainWindow || mainWindow.isDestroyed()) return
+      event.preventDefault()
+      if (activeVideoExport) void videoExportLifecycleGuard.requestAppQuit()
+      else requestRendererLifecycle('app')
+    })
+    app.whenReady().then(initializeDesktop).catch((error) => {
+      console.error('Failed to start Okay Karaoke Studio:', error)
+      dialog.showErrorBox('Unable to start Okay Karaoke Studio', String(error?.message || error))
+      app.quit()
+    })
+    app.on('activate', focusMainWindow)
+    app.on('window-all-closed', () => {
+      if (process.platform !== 'darwin') app.quit()
+    })
+  }
 }

@@ -13,7 +13,7 @@ import {
   importLrc,
   MAX_PROJECT_DURATION_MS,
   MAX_PROJECT_WORDS,
-  migrateProject,
+  decodeCurrentProject,
   parseLyrics,
   parseProject,
   planLyricDisplayLines,
@@ -28,11 +28,11 @@ describe('karaoke project model', () => {
   it('creates a valid seeded project with integer word timings', () => {
     const project = createDemoProject()
 
-    expect(project.schemaVersion).toBe(3)
+    expect(project.schemaVersion).toBe(4)
     expect(project.lyricDisplay).toEqual({ lineCount: 3, advanceMode: 'clear' })
     expect(project.title).toBe('Neon Afterglow')
-    expect(project.tracks[0].color).toBe('#22d3ee')
-    expect(createVocalTrack({ id: 'default-color' }).color).toBe('#22d3ee')
+    expect(project.stageStyle.lyrics.sungColor).toBe('#FF8A2B')
+    expect(createVocalTrack({ id: 'default-style' }).vocalStyle.sungColor).toBeNull()
     expect(project.tracks[0].lines.length).toBeGreaterThan(3)
     expect(
       project.tracks[0].lines.flatMap((line) => line.words).every(
@@ -357,6 +357,32 @@ describe('lyric display planning', () => {
       track.lines[1].id,
     ))).toEqual(['Beta', 'Gamma'])
   })
+
+  it.each(['clear', 'scroll'] as const)(
+    'keeps untimed neighbors out of normal %s windows while focus may reveal them',
+    (advanceMode) => {
+      const untimedBefore = createLyricLine('Untimed before', { id: 'untimed-before' })
+      const timedOne = timedLine('Timed one', 5_000, 6_000)
+      const untimedAfter = createLyricLine('Untimed after', { id: 'untimed-after' })
+      const timedTwo = timedLine('Timed two', 7_000, 8_000)
+      const track = createVocalTrack({
+        id: 'partial',
+        lines: [untimedBefore, timedOne, untimedAfter, timedTwo],
+      })
+      const settings = { lineCount: 2, advanceMode }
+
+      expect(lineTexts(planLyricDisplayLines(track, 2_000, settings))).toEqual([
+        'Timed one',
+        'Timed two',
+      ])
+      expect(lineTexts(planLyricDisplayLines(
+        track,
+        2_000,
+        settings,
+        'untimed-before',
+      ))).toContain('Untimed before')
+    },
+  )
 })
 
 describe('timing helpers', () => {
@@ -530,7 +556,7 @@ describe('ASS export', () => {
 
     expect(output).toContain('[V4+ Styles]')
     expect(output).toContain('[Events]')
-    expect(output).toContain('Style: Lead Vocal,Arial,72,&H00EED322')
+    expect(output).toContain('Style: Lead Vocal,System UI,82,&H002B8AFF')
     expect(output).toMatch(/Dialogue: 0,0:00:02\.00,0:00:05\.40,Lead Vocal/)
     expect(output).toContain('{\\kf')
   })
@@ -631,7 +657,7 @@ describe('project serialization and migration', () => {
     expect(parseProject(serializeProject(project))).toEqual(project)
   })
 
-  it('migrates version 1 second timings and legacy field names', () => {
+  it('rejects pre-v4 project shapes instead of guessing at pre-release migrations', () => {
     const legacy = {
       version: 1,
       id: 'legacy-project',
@@ -660,43 +686,23 @@ describe('project serialization and migration', () => {
       ],
     }
 
-    const migrated = migrateProject(legacy)
-    expect(migrated).toMatchObject({
-      schemaVersion: 3,
-      title: 'Old Song',
-      artist: 'Old Singer',
-      audioPath: '/music/song.mp3',
-      durationMs: 12_500,
-      offsetMs: -250,
-      lyricDisplay: { lineCount: 3, advanceMode: 'clear' },
-    })
-    expect(migrated.tracks[0].lines[0].words[1].startMs).toBe(2_000)
-    expect(validateProject(migrated).filter((issue) => issue.severity === 'error')).toEqual([])
+    expect(() => decodeCurrentProject(legacy)).toThrow('opens schema version 4 only')
   })
 
-  it('migrates strict version 2 projects to default lyric display settings', () => {
+  it('rejects schema v1, v2, and v3 explicitly', () => {
     const current = createDemoProject()
-    const { lyricDisplay: _lyricDisplay, ...versionTwoFields } = current
-    const versionTwo = { ...versionTwoFields, schemaVersion: 2 }
-
-    const migrated = migrateProject(versionTwo)
-
-    expect(migrated.schemaVersion).toBe(3)
-    expect(migrated.lyricDisplay).toEqual({ lineCount: 3, advanceMode: 'clear' })
-    expect(migrated.tracks).toEqual(current.tracks)
-  })
-
-  it('rejects compact legacy lyrics before allocating over the word cap', () => {
-    const tooManyWords = Array.from({ length: MAX_PROJECT_WORDS + 1 }, () => 'x').join(' ')
-    expect(() => migrateProject({
-      version: 1,
-      vocalTracks: [{ lyrics: [{ text: tooManyWords }] }],
-    })).toThrow('word limit')
+    for (const schemaVersion of [1, 2, 3]) {
+      expect(() => decodeCurrentProject({ ...current, schemaVersion })).toThrow(
+        `Unsupported project schema version ${schemaVersion}`,
+      )
+    }
   })
 
   it('rejects malformed, future, and invalid project JSON', () => {
     expect(() => parseProject('{oops')).toThrow('Invalid project JSON')
-    expect(() => parseProject('{"schemaVersion":99}')).toThrow('newer than supported')
+    expect(() => parseProject('{"schemaVersion":99}')).toThrow(
+      'Unsupported project schema version 99',
+    )
     expect(() => parseProject('{"schemaVersion":"2"}')).toThrow(
       'Unsupported project schema version',
     )
@@ -712,7 +718,7 @@ describe('project serialization and migration', () => {
     }
     delete missingDisplay.lyricDisplay
     expect(() => parseProject(JSON.stringify(missingDisplay))).toThrow(
-      'project.lyricDisplay must be an object',
+      'project.lyricDisplay is required',
     )
     const invalidDisplay = {
       ...createDemoProject(),
@@ -720,6 +726,13 @@ describe('project serialization and migration', () => {
     }
     expect(() => parseProject(JSON.stringify(invalidDisplay))).toThrow(
       'Lyric display line count must be an integer from 1 to 5',
+    )
+
+    const legacyColor = createDemoProject() as unknown as Record<string, unknown>
+    const [legacyTrack] = legacyColor.tracks as Array<Record<string, unknown>>
+    legacyTrack.color = '#22D3EE'
+    expect(() => parseProject(JSON.stringify(legacyColor))).toThrow(
+      'schema v4 uses vocalStyle.sungColor only',
     )
 
     const invalid = createDemoProject() as KaraokeProject

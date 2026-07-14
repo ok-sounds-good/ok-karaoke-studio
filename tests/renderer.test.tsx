@@ -107,7 +107,7 @@ describe('offset-aware renderer state', () => {
       />,
     )
 
-    expect(markup).toContain('karaoke-stage__time">00:01.500')
+    expect(markup).toMatch(/karaoke-stage__time[^>]*>00:01\.500/)
     expect(markup).toContain('--word-progress:0%')
   })
 

@@ -1,7 +1,7 @@
 import { memo, useMemo } from 'react'
 import { FileAudio2, Import, Mic2, Music2, SlidersHorizontal, UsersRound } from 'lucide-react'
 import type { KaraokeProject, VocalTrack } from '../lib/model'
-import { formatTime } from '../lib/model'
+import { formatTime, resolveVocalStyle } from '../lib/model'
 import { effectiveDuration, flattenProject, flattenTrack } from '../utils'
 import { Button } from './ui'
 
@@ -10,7 +10,11 @@ interface InspectorPanelProps {
   activeTrackId: string
   onSelectTrack: (trackId: string) => void
   onUpdateProject: (patch: Partial<Pick<KaraokeProject, 'title' | 'artist' | 'offsetMs'>>) => void
-  onUpdateTrack: (trackId: string, patch: Partial<Pick<VocalTrack, 'name' | 'color' | 'muted' | 'solo'>>) => void
+  styleOpen: boolean
+  styleDisabled?: boolean
+  onOpenStyle: () => void
+  onUpdateTrack: (trackId: string, patch: Partial<Pick<VocalTrack, 'name' | 'muted' | 'solo'>>) => void
+  onEditSungColor: (trackId: string) => void
   onImportAudio: () => void
   onImportLrc: () => void
 }
@@ -20,7 +24,11 @@ export const InspectorPanel = memo(function InspectorPanel({
   activeTrackId,
   onSelectTrack,
   onUpdateProject,
+  styleOpen,
+  styleDisabled,
+  onOpenStyle,
   onUpdateTrack,
+  onEditSungColor,
   onImportAudio,
   onImportLrc,
 }: InspectorPanelProps) {
@@ -43,6 +51,17 @@ export const InspectorPanel = memo(function InspectorPanel({
             <h2>Project</h2>
           </div>
         </div>
+        <Button
+          className="project-style-button"
+          size="sm"
+          variant={styleOpen ? 'primary' : 'secondary'}
+          aria-pressed={styleOpen}
+          disabled={styleDisabled}
+          title={styleDisabled ? 'Finish the current TimeBoard gesture first' : 'Edit video style'}
+          onClick={onOpenStyle}
+        >
+          <SlidersHorizontal size={13} /> Style
+        </Button>
       </header>
 
       <div className="inspector__scroll">
@@ -104,6 +123,7 @@ export const InspectorPanel = memo(function InspectorPanel({
           <div className="vocal-track-list">
             {project.tracks.map((track, index) => {
               const { total, complete } = trackStats.get(track.id) ?? { total: 0, complete: 0 }
+              const effectiveStyle = resolveVocalStyle(project.stageStyle.lyrics, track.vocalStyle)
               return (
                 <article
                   key={track.id}
@@ -111,7 +131,7 @@ export const InspectorPanel = memo(function InspectorPanel({
                   onClick={() => onSelectTrack(track.id)}
                 >
                   <div className="vocal-track-card__top">
-                    <span className="vocal-track-card__number" style={{ background: track.color }}>
+                    <span className="vocal-track-card__number" style={{ background: effectiveStyle.sungColor }}>
                       <Mic2 size={13} />
                     </span>
                     <input
@@ -120,15 +140,19 @@ export const InspectorPanel = memo(function InspectorPanel({
                       onClick={(event) => event.stopPropagation()}
                       onChange={(event) => onUpdateTrack(track.id, { name: event.target.value })}
                     />
-                    <input
-                      className="track-color"
-                      aria-label={`Track ${index + 1} color`}
-                      title={`Choose color for ${track.name}`}
-                      type="color"
-                      value={track.color}
-                      onClick={(event) => event.stopPropagation()}
-                      onChange={(event) => onUpdateTrack(track.id, { color: event.target.value })}
-                    />
+                    <button
+                      className="track-sung-color"
+                      aria-label={`Edit Track ${index + 1} Sung color`}
+                      title={`Edit sung color for ${track.name}`}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        onEditSungColor(track.id)
+                      }}
+                    >
+                      <span>Sung</span>
+                      <i style={{ background: effectiveStyle.sungColor }} />
+                      <code>{effectiveStyle.sungColor.toUpperCase()}</code>
+                    </button>
                   </div>
                   <div className="vocal-track-card__status">
                     <span>{complete}/{total} timed</span>

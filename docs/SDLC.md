@@ -38,7 +38,10 @@ A change is done when:
 - `bun run test:video` passes when video rendering, audio muxing, frame planning,
   or media-process code changes.
 - User-visible behavior is checked manually; visual changes include before/after
-  evidence in the pull request.
+  evidence in the pull request. For Video Style Editor changes, the protected
+  macOS and Windows jobs also capture ordered 1280 x 720 production-window
+  evidence; inspect those short-lived artifacts rather than treating a passing
+  geometry assertion as a design review.
 - During the clean-slate pre-v1 MVP, project-schema changes include exhaustive
   current-format round-trip coverage and clear rejection of unsupported earlier
   artifacts. Migration coverage becomes required once the product promises

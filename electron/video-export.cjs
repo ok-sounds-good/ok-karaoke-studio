@@ -6,6 +6,21 @@ const fs = require('node:fs/promises')
 const path = require('node:path')
 const { randomUUID } = require('node:crypto')
 const { ffmpegExecutableCandidates } = require('./ffmpeg-setup.cjs')
+const { decodeCurrentProject } = require('./project-schema.cjs')
+const SYNC_AID_GEOMETRY = require('./sync-aid-geometry.json')
+const STAGE_LAYOUT = require('./stage-layout.json')
+const {
+  adjustedLineRange,
+  frameStateAt: styleFrameStateAt,
+  normalizeVocalStyle,
+  resolveVocalStyle,
+  visibleTracks: styledVisibleTracks,
+} = require('./video-style-domain.cjs')
+const {
+  assetInvocation,
+  frameInvocation,
+  renderDocument: renderStyleDocument,
+} = require('./video-style-document.cjs')
 
 const VIDEO_RESOLUTION_PRESETS = Object.freeze({
   '240p': Object.freeze({ width: 426, height: 240 }),
@@ -25,9 +40,6 @@ const MAX_VIDEO_FRAMES = Math.ceil(MAX_VIDEO_DURATION_MS * Math.max(...VIDEO_FRA
 const MAX_TRACKS = 2
 const MAX_LINES = 20_000
 const MAX_WORDS = 150_000
-const MIN_LYRIC_DISPLAY_LINES = 1
-const MAX_LYRIC_DISPLAY_LINES = 5
-const DEFAULT_LYRIC_DISPLAY = Object.freeze({ lineCount: 3, advanceMode: 'clear' })
 
 function normalizeVideoSettings(value = {}) {
   if (!isRecord(value)) throw new TypeError('Video settings must be an object')
@@ -72,49 +84,23 @@ function validateTimingPair(startMs, endMs, label) {
   }
 }
 
-function normalizeLyricDisplay(value) {
-  if (value === undefined) return { ...DEFAULT_LYRIC_DISPLAY }
-  if (!isRecord(value)) throw new TypeError('lyricDisplay must be an object')
-  if (!Number.isSafeInteger(value.lineCount)) {
-    throw new TypeError('lyricDisplay.lineCount must be an integer')
-  }
-  if (value.lineCount < MIN_LYRIC_DISPLAY_LINES || value.lineCount > MAX_LYRIC_DISPLAY_LINES) {
-    throw new RangeError(
-      `lyricDisplay.lineCount must be between ${MIN_LYRIC_DISPLAY_LINES} and ${MAX_LYRIC_DISPLAY_LINES}`,
-    )
-  }
-  if (value.advanceMode !== 'clear' && value.advanceMode !== 'scroll') {
-    throw new TypeError('lyricDisplay.advanceMode must be clear or scroll')
-  }
-  return { lineCount: value.lineCount, advanceMode: value.advanceMode }
-}
-
 function normalizeProjectForVideo(value) {
-  if (!isRecord(value)) throw new TypeError('Video export requires a project object')
-  if (!Array.isArray(value.tracks) || value.tracks.length === 0 || value.tracks.length > MAX_TRACKS) {
+  const project = decodeCurrentProject(value)
+  if (project.tracks.length === 0 || project.tracks.length > MAX_TRACKS) {
     throw new TypeError(`Video export supports between 1 and ${MAX_TRACKS} vocal tracks`)
   }
 
   let lineCount = 0
   let wordCount = 0
-  const tracks = value.tracks.map((rawTrack, trackIndex) => {
-    if (!isRecord(rawTrack) || !Array.isArray(rawTrack.lines)) {
-      throw new TypeError(`tracks[${trackIndex}] is invalid`)
-    }
+  const tracks = project.tracks.map((rawTrack, trackIndex) => {
     lineCount += rawTrack.lines.length
     if (lineCount > MAX_LINES) throw new RangeError(`Video export supports at most ${MAX_LINES} lyric lines`)
 
     const lines = rawTrack.lines.map((rawLine, lineIndex) => {
-      if (!isRecord(rawLine) || !Array.isArray(rawLine.words)) {
-        throw new TypeError(`tracks[${trackIndex}].lines[${lineIndex}] is invalid`)
-      }
       wordCount += rawLine.words.length
       if (wordCount > MAX_WORDS) throw new RangeError(`Video export supports at most ${MAX_WORDS} words`)
 
       const words = rawLine.words.map((rawWord, wordIndex) => {
-        if (!isRecord(rawWord)) {
-          throw new TypeError(`tracks[${trackIndex}].lines[${lineIndex}].words[${wordIndex}] is invalid`)
-        }
         const startMs = normalizeTiming(
           rawWord.startMs,
           `tracks[${trackIndex}].lines[${lineIndex}].words[${wordIndex}].startMs`,
@@ -145,6 +131,7 @@ function normalizeProjectForVideo(value) {
       )
       validateTimingPair(startMs, endMs, `tracks[${trackIndex}].lines[${lineIndex}]`)
       return {
+        id: limitedText(rawLine.id, `line-${trackIndex}-${lineIndex}`, 300),
         text: limitedText(rawLine.text, words.map((word) => word.text).join(' '), 2_000),
         startMs,
         endMs,
@@ -153,32 +140,32 @@ function normalizeProjectForVideo(value) {
     })
 
     return {
+      id: limitedText(rawTrack.id, `track-${trackIndex}`, 300),
       name: limitedText(rawTrack.name, `Vocal ${trackIndex + 1}`, 120),
-      color: /^#[0-9a-f]{6}$/iu.test(rawTrack.color) ? rawTrack.color : '#d7fa4a',
+      vocalStyle: normalizeVocalStyle(rawTrack.vocalStyle, `tracks[${trackIndex}].vocalStyle`),
       muted: rawTrack.muted === true,
       solo: rawTrack.solo === true,
       lines,
     }
   })
 
-  const durationMs = value.durationMs === null || value.durationMs === undefined
-    ? 0
-    : finiteInteger(value.durationMs, Number.NaN)
+  const durationMs = project.durationMs ?? 0
   if (!Number.isSafeInteger(durationMs) || durationMs < 0 || durationMs > MAX_VIDEO_DURATION_MS) {
     throw new RangeError('Project duration must be between zero and thirty minutes')
   }
-  const offsetMs = finiteInteger(value.offsetMs, Number.NaN)
+  const offsetMs = project.offsetMs
   if (!Number.isSafeInteger(offsetMs) || Math.abs(offsetMs) > MAX_VIDEO_DURATION_MS) {
     throw new RangeError('Project offset must be within thirty minutes')
   }
 
   return {
-    title: limitedText(value.title, 'Untitled song', 300),
-    artist: limitedText(value.artist, 'Unknown artist', 300),
-    audioPath: limitedText(value.audioPath, '', 8_192),
+    title: limitedText(project.title, 'Untitled song', 300),
+    artist: limitedText(project.artist, 'Unknown artist', 300),
+    audioPath: limitedText(project.audioPath, '', 8_192),
     durationMs,
     offsetMs,
-    lyricDisplay: normalizeLyricDisplay(value.lyricDisplay),
+    lyricDisplay: { ...project.lyricDisplay },
+    stageStyle: project.stageStyle,
     tracks,
   }
 }
@@ -197,30 +184,8 @@ function parseProjectForVideo(json) {
   return normalizeProjectForVideo(parsed)
 }
 
-function rawLineRange(line) {
-  const timedWords = line.words.filter((word) => word.startMs !== null && word.endMs !== null)
-  const startMs = line.startMs ?? timedWords[0]?.startMs ?? null
-  const endMs = line.endMs ?? timedWords.at(-1)?.endMs ?? null
-  if (startMs === null || endMs === null || endMs <= startMs) return null
-  return { startMs, endMs }
-}
-
-function adjustedLineRange(line, offsetMs) {
-  const range = rawLineRange(line)
-  if (!range) return null
-  const startMs = Math.max(0, range.startMs + offsetMs)
-  const endMs = range.endMs + offsetMs
-  if (endMs <= startMs) return null
-  return { startMs, endMs }
-}
-
-function visibleTracks(project) {
-  const hasSolo = project.tracks.some((track) => track.solo && !track.muted)
-  return project.tracks.filter((track) => !track.muted && (!hasSolo || track.solo))
-}
-
 function effectiveVideoDurationForProject(project, requestedDurationMs) {
-  const latestLyricMs = visibleTracks(project).reduce((latestTrack, track) => {
+  const latestLyricMs = styledVisibleTracks(project).reduce((latestTrack, track) => {
     const latestLine = track.lines.reduce((latest, line) => {
       const range = adjustedLineRange(line, project.offsetMs)
       return range ? Math.max(latest, range.endMs) : latest
@@ -237,50 +202,6 @@ function effectiveVideoDurationForProject(project, requestedDurationMs) {
 
 function effectiveVideoDuration(projectValue, requestedDurationMs) {
   return effectiveVideoDurationForProject(normalizeProjectForVideo(projectValue), requestedDurationMs)
-}
-
-function createTrackDisplayIndex(track, offsetMs) {
-  const positions = []
-  let section = []
-  const appendSection = () => {
-    section.forEach((line, lineIndex) => {
-      positions.push({ line, lineIndex, section })
-    })
-    section = []
-  }
-
-  track.lines.forEach((line) => {
-    if (!line.text.trim() && line.words.length === 0) appendSection()
-    else section.push(line)
-  })
-  appendSection()
-
-  const timedPositions = positions.flatMap((position) => {
-    const rawRange = rawLineRange(position.line)
-    return rawRange ? [{ position, rawRange }] : []
-  })
-  const adjustedLines = timedPositions.flatMap(({ position, rawRange }) => {
-    const range = adjustedLineRange(position.line, offsetMs)
-    return range ? [{ line: position.line, range, rawRange }] : []
-  })
-  return { track, timedPositions, adjustedLines }
-}
-
-function createVideoIndex(project) {
-  const tracks = visibleTracks(project).map((track) =>
-    createTrackDisplayIndex(track, project.offsetMs),
-  )
-  const upcomingLines = tracks
-    .flatMap(({ track, adjustedLines }) =>
-      adjustedLines.map((entry) => ({ ...entry, track })),
-    )
-    .sort((left, right) => left.range.startMs - right.range.startMs)
-  return {
-    project,
-    tracks,
-    upcomingLines,
-    firstStart: upcomingLines[0]?.range.startMs ?? Number.POSITIVE_INFINITY,
-  }
 }
 
 function buildFrameTimelineForProject(project, requestedDurationMs, fps = DEFAULT_VIDEO_FPS) {
@@ -308,115 +229,13 @@ function buildFrameTimeline(projectValue, requestedDurationMs, settings = {}) {
   )
 }
 
-function wordProgress(word, lyricMs) {
-  if (word.startMs === null || word.endMs === null) return 0
-  if (lyricMs <= word.startMs) return 0
-  if (lyricMs >= word.endMs) return 1
-  return Math.max(0, Math.min(1, (lyricMs - word.startMs) / Math.max(1, word.endMs - word.startMs)))
-}
-
-function createFrameCursor(index) {
-  return {
-    trackPositions: index.tracks.map(() => 0),
-  }
-}
-
-function plannedTrackLines(trackIndex, lyricMs, settings, cursorPosition) {
-  let position = cursorPosition
-  if (position === undefined) {
-    position = trackIndex.timedPositions.findIndex(
-      (entry) => lyricMs < entry.rawRange.endMs,
-    )
-  }
-  const target = position >= 0 ? trackIndex.timedPositions[position]?.position : undefined
-  if (!target) return []
-  const startIndex = settings.advanceMode === 'scroll'
-    ? Math.min(target.lineIndex, Math.max(0, target.section.length - settings.lineCount))
-    : Math.floor(target.lineIndex / settings.lineCount) * settings.lineCount
-  return target.section.slice(startIndex, startIndex + settings.lineCount)
-}
-
-function frameStateAtIndex(index, playbackMs, cursor) {
-  const { project } = index
-  const lyricMs = playbackMs - project.offsetMs
-  const showTitle = !Number.isFinite(index.firstStart) || playbackMs < Math.max(0, index.firstStart - 1_500)
-  const lines = []
-
-  const trackWindows = index.tracks.map((trackIndex, trackPosition) => {
-    let timedPosition
-    if (cursor) {
-      timedPosition = cursor.trackPositions[trackPosition]
-      while (
-        timedPosition < trackIndex.timedPositions.length &&
-        lyricMs >= trackIndex.timedPositions[timedPosition].rawRange.endMs
-      ) {
-        timedPosition += 1
-      }
-      cursor.trackPositions[trackPosition] = timedPosition
-    }
-    return {
-      track: trackIndex.track,
-      lines: plannedTrackLines(trackIndex, lyricMs, project.lyricDisplay, timedPosition),
-    }
-  })
-  for (
-    let lineIndex = 0;
-    lineIndex < project.lyricDisplay.lineCount && lines.length < project.lyricDisplay.lineCount;
-    lineIndex += 1
-  ) {
-    trackWindows.forEach(({ track, lines: trackLines }) => {
-      const line = trackLines[lineIndex]
-      if (line && lines.length < project.lyricDisplay.lineCount) {
-        lines.push({
-          color: track.color,
-          text: line.text.replaceAll('/', '·'),
-          words: line.words
-            .filter((word) => word.text)
-            .map((word) => ({
-              text: word.text.replaceAll('/', '·'),
-              progress: wordProgress(word, lyricMs),
-            })),
-        })
-      }
-    })
-  }
-
-  return {
-    title: project.title || 'Untitled song',
-    artist: project.artist || 'Unknown artist',
-    playbackMs,
-    showTitle,
-    lines,
-  }
-}
-
 function frameStateAt(projectValue, playbackMs) {
   const project = normalizeProjectForVideo(projectValue)
-  return frameStateAtIndex(createVideoIndex(project), playbackMs)
+  return styleFrameStateAt(project, playbackMs)
 }
 
 function renderDocument(settings = {}) {
-  const { width, height } = normalizeVideoSettings(settings)
-  const scaleX = width / 1920
-  const scaleY = height / 1080
-  return `<!doctype html>
-<html><head><meta charset="utf-8"><style>
-*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#17111e;color:#f8f6fb;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif}
-.scene{position:absolute;width:1920px;height:1080px;overflow:hidden;transform:scale(${scaleX},${scaleY});transform-origin:0 0;background:radial-gradient(circle at 18% 20%,rgba(155,120,207,.28),transparent 34%),radial-gradient(circle at 82% 35%,rgba(255,138,43,.16),transparent 38%),linear-gradient(155deg,#30223f 0%,#21172b 52%,#17111e 100%)}
-.grain{position:absolute;inset:0;opacity:.12;background-image:linear-gradient(rgba(248,246,251,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(248,246,251,.018) 1px,transparent 1px);background-size:5px 5px}.safe{position:absolute;inset:64px 96px;border:2px solid rgba(203,182,230,.16);border-radius:30px}
-.brand{position:absolute;left:86px;top:58px;font-size:25px;font-weight:800;letter-spacing:.22em;color:#9b78cf}.clock{position:absolute;right:86px;top:56px;font:600 27px ui-monospace,SFMono-Regular,Menlo,monospace;color:rgba(248,246,251,.62)}
-.content{position:absolute;inset:140px 130px 120px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}.title-card span{font-size:25px;letter-spacing:.2em;text-transform:uppercase;color:#ff8a2b}.title-card h1{margin:34px 0 14px;font-size:104px;line-height:1.04;max-width:1500px}.title-card p{margin:0;font-size:42px;color:rgba(248,246,251,.72)}
-.lines{width:100%;display:flex;flex-direction:column;gap:18px}.lyric{width:100%;height:1.18em;font-size:82px;line-height:1.12;font-weight:850;letter-spacing:.01em;white-space:nowrap}.word{position:relative;display:inline-block;color:rgba(248,246,251,.5);filter:drop-shadow(0 5px 5px rgba(0,0,0,.8))}.word-fill{position:absolute;inset:0 auto 0 0;width:0;overflow:hidden;color:var(--accent);white-space:nowrap}
-.footer{position:absolute;left:86px;right:86px;bottom:53px;display:flex;justify-content:space-between;font-size:24px;color:rgba(248,246,251,.54)}
-</style></head><body><div class="scene"><div class="grain"></div><div class="safe"></div><div class="brand">OKAY / STUDIO</div><div id="clock" class="clock"></div><main id="content" class="content"></main><footer class="footer"><span id="footer-song"></span><span>Okay Karaoke Studio</span></footer></div><script>
-const text=(tag,className,value)=>{const node=document.createElement(tag);if(className)node.className=className;node.textContent=value;return node}
-const fitSize=(value,count)=>Math.max(28,Math.min(88,Math.floor(1520/Math.max(12,value.length)*1.28),Math.floor(610/Math.max(1,count))))
-let layoutKey='';let wordNodes=[];let lastClock='';let lastFooter='';
-window.renderKaraokeFrame=(state,sequence)=>{document.body.dataset.frame=String(sequence);const clock=new Date(Math.max(0,state.playbackMs)).toISOString().slice(11,19);if(clock!==lastClock){document.querySelector('#clock').textContent=clock;lastClock=clock}const footer=state.artist+' · '+state.title;if(footer!==lastFooter){document.querySelector('#footer-song').textContent=footer;lastFooter=footer}const content=document.querySelector('#content');const nextKey=state.showTitle?'title:'+state.title+'|'+state.artist:'lines:'+JSON.stringify(state.lines.map((item)=>[item.color,item.text,item.words.map((word)=>word.text)]));
-if(nextKey!==layoutKey){layoutKey=nextKey;wordNodes=[];content.replaceChildren();if(state.showTitle){const card=text('div','title-card','');card.append(text('span','',"Tonight's performance"),text('h1','',state.title),text('p','',state.artist));content.append(card)}else if(state.lines.length){const group=text('div','lines','');group.style.gap=Math.max(8,38-state.lines.length*3)+'px';for(const item of state.lines){const line=text('div','line','');const lyric=text('div','lyric','');lyric.style.setProperty('--accent',item.color);lyric.style.fontSize=fitSize(item.text,state.lines.length)+'px';item.words.forEach((word,index)=>{const node=text('span','word','');const fill=text('span','word-fill',word.text);node.append(text('span','word-base',word.text),fill);lyric.append(node);wordNodes.push(fill);if(index<item.words.length-1)lyric.append(document.createTextNode(' '))});line.append(lyric);group.append(line)}content.append(group)}}
-let wordIndex=0;for(const item of state.lines){for(const word of item.words){wordNodes[wordIndex]?.style.setProperty('width',(word.progress*100).toFixed(3)+'%');wordIndex+=1}}
-return true}
-</script></body></html>`
+  return renderStyleDocument(normalizeVideoSettings(settings))
 }
 
 function createAbortError() {
@@ -618,6 +437,45 @@ async function findFfmpeg(preferredPath, signal) {
   throw new Error('FFmpeg was not found. Install FFmpeg or set OKAY_KARAOKE_FFMPEG to its path.')
 }
 
+function projectFonts(project) {
+  const style = project.stageStyle
+  const fonts = [
+    style.lyrics,
+    style.titleCard.eyebrow,
+    style.titleCard.title,
+    style.titleCard.artist,
+    style.stageFrame.brand,
+    style.stageFrame.clock,
+    style.stageFrame.footer,
+    ...project.tracks.map((track) => resolveVocalStyle(style.lyrics, track.vocalStyle)),
+  ]
+  return [...new Map(fonts.map(({ typeface, fontStyle }) => [
+    JSON.stringify([typeface, fontStyle]),
+    { typeface, fontStyle },
+  ])).values()]
+}
+
+async function prepareStyleRuntime(project, readLinkedImage) {
+  const runtime = {
+    fonts: projectFonts(project),
+    backgroundDataUrl: '',
+    stageLayout: STAGE_LAYOUT,
+    syncAidGeometry: SYNC_AID_GEOMETRY,
+  }
+  const background = project.stageStyle.background
+  if (background.mode !== 'image') return runtime
+  if (!background.imagePath) throw new Error('Choose a linked background image before exporting')
+  if (!path.isAbsolute(background.imagePath)) {
+    throw new Error('The linked background image path must be absolute')
+  }
+  if (typeof readLinkedImage !== 'function') {
+    throw new Error('The linked background image decoder is unavailable')
+  }
+  const { bytes, mime } = await readLinkedImage(background.imagePath)
+  runtime.backgroundDataUrl = `data:${mime};base64,${bytes.toString('base64')}`
+  return runtime
+}
+
 async function writeJpegFrame(stream, image, settings, signal) {
   throwIfAborted(signal)
   if (stream.destroyed) throw new Error('FFmpeg stopped accepting video frames')
@@ -631,7 +489,16 @@ async function writeJpegFrame(stream, image, settings, signal) {
   throwIfAborted(signal)
 }
 
-async function renderVideoFrames(BrowserWindow, index, timeline, stream, settings, onProgress, signal) {
+async function renderVideoFrames(
+  BrowserWindow,
+  project,
+  timeline,
+  stream,
+  settings,
+  runtime,
+  onProgress,
+  signal,
+) {
   throwIfAborted(signal)
   const window = new BrowserWindow({
     show: false,
@@ -657,16 +524,16 @@ async function renderVideoFrames(BrowserWindow, index, timeline, stream, setting
     const documentUrl = `data:text/html;charset=utf-8,${encodeURIComponent(renderDocument(settings))}`
     await window.loadURL(documentUrl)
     throwIfAborted(signal)
-    const cursor = createFrameCursor(index)
+    const assetResult = await window.webContents.executeJavaScript(assetInvocation(runtime))
+    throwIfAborted(signal)
     let lastProgressMs = Number.NEGATIVE_INFINITY
 
     for (let frameIndex = 0; frameIndex < timeline.times.length; frameIndex += 1) {
       throwIfAborted(signal)
       const currentMs = timeline.times[frameIndex]
-      const state = frameStateAtIndex(index, currentMs, cursor)
-      const stateJson = JSON.stringify(state)
+      const state = styleFrameStateAt(project, currentMs)
       const image = await captureRenderedPage(window.webContents, () =>
-        window.webContents.executeJavaScript(`window.renderKaraokeFrame(${stateJson},${frameIndex})`),
+        window.webContents.executeJavaScript(frameInvocation(state, frameIndex)),
       signal)
       await writeJpegFrame(stream, image, settings, signal)
       if (
@@ -678,6 +545,7 @@ async function renderVideoFrames(BrowserWindow, index, timeline, stream, setting
         onProgress?.({ phase: 'frames', completed: frameIndex + 1, total: timeline.times.length })
       }
     }
+    return assetResult
   } finally {
     signal?.removeEventListener('abort', onAbort)
     if (!window.isDestroyed()) window.destroy()
@@ -699,7 +567,7 @@ function buildFfmpegArguments(audioPath, outputPath, durationMs, settings = {}) 
     '-i', audioPath,
     '-map', '0:v:0',
     '-map', '1:a:0',
-    '-vf', 'format=yuv420p',
+    '-vf', 'scale=in_range=full:out_range=tv,format=yuv420p',
     '-c:v', 'libx264',
     '-preset', 'veryfast',
     '-bf', '0',
@@ -720,6 +588,8 @@ async function exportKaraokeVideo({
   audioPath,
   outputPath,
   ffmpegPath,
+  resolveFfmpegPath,
+  readLinkedImage,
   resolution = DEFAULT_VIDEO_RESOLUTION,
   fps = DEFAULT_VIDEO_FPS,
   onProgress,
@@ -730,9 +600,12 @@ async function exportKaraokeVideo({
   throwIfAborted(signal)
   if (typeof BrowserWindow !== 'function') throw new TypeError('BrowserWindow is required')
   const project = parseProjectForVideo(projectJson)
-  const requestedAudioPath = limitedText(audioPath || project.audioPath, '', 8_192).trim()
+  const requestedAudioPath = limitedText(audioPath, '', 8_192).trim()
   const requestedOutputPath = limitedText(outputPath, '', 8_192).trim()
   if (!requestedAudioPath || !requestedOutputPath) throw new TypeError('Audio and output paths are required')
+  if (!path.isAbsolute(requestedAudioPath)) {
+    throw new TypeError('Video export requires the active absolute linked audio path')
+  }
   const resolvedAudioPath = path.resolve(requestedAudioPath)
   const resolvedOutputPath = path.resolve(requestedOutputPath)
   const settings = normalizeVideoSettings({ resolution, fps })
@@ -740,14 +613,20 @@ async function exportKaraokeVideo({
   const audioStats = await fs.stat(resolvedAudioPath).catch(() => null)
   if (!audioStats?.isFile()) throw new Error('The linked audio file could not be read')
   const timeline = buildFrameTimelineForProject(project, durationMs, settings.fps)
-  const index = createVideoIndex(project)
-  const executable = ffmpegPath || await findFfmpeg(undefined, signal)
+  const runtime = await prepareStyleRuntime(project, readLinkedImage)
+  const executable = ffmpegPath || (
+    typeof resolveFfmpegPath === 'function'
+      ? await resolveFfmpegPath(signal)
+      : await findFfmpeg(undefined, signal)
+  )
+  if (!executable) return null
   const parsedOutput = path.parse(resolvedOutputPath)
   const partialPath = path.join(
     parsedOutput.dir,
     `${parsedOutput.name}.partial-${randomUUID()}${parsedOutput.ext || '.mp4'}`,
   )
   let preservePartial = false
+  let fontFallbacks = []
 
   try {
     throwIfAborted(signal)
@@ -760,7 +639,19 @@ async function exportKaraokeVideo({
     ), {
       signal,
       inputWriter: async (stream) => {
-        await renderVideoFrames(BrowserWindow, index, timeline, stream, settings, onProgress, signal)
+        const assetResult = await renderVideoFrames(
+          BrowserWindow,
+          project,
+          timeline,
+          stream,
+          settings,
+          runtime,
+          onProgress,
+          signal,
+        )
+        fontFallbacks = Array.isArray(assetResult?.fontFallbacks)
+          ? assetResult.fontFallbacks
+          : []
         throwIfAborted(signal)
         onProgress?.({ phase: 'encoding', completed: 0, total: 1 })
       },
@@ -779,6 +670,7 @@ async function exportKaraokeVideo({
       width: settings.width,
       height: settings.height,
       fps: settings.fps,
+      fontFallbacks,
     }
   } catch (error) {
     preservePartial = error?.name === 'AbortError' || signal?.aborted === true
