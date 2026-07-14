@@ -40,15 +40,16 @@ capabilities that are deliberately deferred belong in
    order, including across line boundaries.
 5. Correct individual words by dragging and resizing them in the TimeBoard;
    edits stop at those same lyric-order boundaries.
-6. Exit synchronization and verify the result in the restored Live Preview,
-   choosing its line count and Clear or Scroll advance behavior as needed.
+6. Exit synchronization, configure the video's stage style, and verify the
+   result in the restored Live Preview, choosing its line count and Clear or
+   Scroll advance behavior as needed.
 7. Save the editable project and export LRC, ASS, or a finished MP4 karaoke video.
 
 ## Single-window layout invariant
 
 The main window must provide access to:
 
-- Project metadata and lead-track controls.
+- Project metadata, video-style settings, and lead-track controls.
 - An **Edit text** action in Live Preview that opens the transactional lyric
   editor; TimeBoard does not duplicate it, and the main workspace does not
   persistently render a Word Map or lyric list. While synchronization replaces
@@ -62,8 +63,10 @@ While synchronization is armed, the stage preview is intentionally suspended
 and replaced in the same workspace by a lightweight, cursor-ordered Sync Focus
 showing the current and next lyric lines. Exiting synchronization restores the
 preview. Focused overlays are permitted for short, transactional tasks such as
-pasting raw lyrics or choosing an export format. The preview, editor, and
-transport must never become separate application windows.
+pasting raw lyrics or choosing an export format. Video-style editing must remain
+in the unified window and preserve a practical way to compare changes with Live
+Preview; its exact inline or focused presentation is a design decision. The
+preview, editor, and transport must never become separate application windows.
 
 ## In scope
 
@@ -71,6 +74,9 @@ transport must never become separate application windows.
 
 - New, open, save, and save-as for versioned `.oks` JSON project files.
 - Link MP3, WAV, M4A, FLAC, AAC, or OGG audio without copying it into the project.
+- Link one static background image without copying it into the project. A
+  missing or unreadable linked image must be reported before export rather than
+  silently replaced in the requested result.
 - Display the decoded waveform when possible, with a deterministic placeholder before audio is attached.
 - Song title, artist, global timing offset, audio path, and duration metadata.
 - First launch and **New Project** create a clean slate: one empty **Lead Vocal**
@@ -83,7 +89,7 @@ transport must never become separate application windows.
 
 ### Lyrics and vocal track
 
-- One lead-vocal authoring track with its own name and color.
+- One lead-vocal authoring track with its own name and sung color.
 - Creating additional independently timed singer tracks is deferred.
 - **Edit text** opens a transactional plain-text lyric editor rather than a
   persistent Word Map or lyric panel in the main workspace.
@@ -138,11 +144,13 @@ transport must never become separate application windows.
 
 ### Preview and transport
 
-- Progressive word highlighting driven by the same authoritative playback clock as the editor.
+- Progressive word highlighting from the configured unsung color to the sung
+  color, driven by the same authoritative playback clock as the editor.
 - Per-word highlighting is the lyric progress signal; the stage does not add a
   separate whole-line progress meter.
 - Render full lyric lines without repeating the singer or track name above each
-  line. The authored lead track still supplies the lyrics and color.
+  line. The authored lead track still supplies the lyrics and any vocal style
+  overrides.
 - A project-persisted visible-line count from 1 through 5 governs both Live
   Preview and MP4 output. The stage renders only those full lines, with no
   miniature upcoming-line treatment.
@@ -167,18 +175,70 @@ transport must never become separate application windows.
 - Fallback-clock playback when no audio is attached so timing interactions can
   still be exercised without loading the development demo fixture.
 
+### Video style
+
+- A project-persisted stage-style model governs both Live Preview and MP4
+  output. The fixed current stage appearance becomes its default so existing
+  projects retain a recognizable result after migration.
+- Choose a **Solid**, **Gradient**, or **Image** background. Solid mode has a
+  configurable color, Gradient mode has configurable colors, and Image mode
+  selects one linked static image. Background scheduling, animation, and
+  per-section scenes remain deferred.
+- The **Stage frame** means the visible frame plus its built-in brand, clock,
+  and song-metadata elements. It can be enabled or disabled as a whole, and its
+  built-in elements can be configured independently.
+- Title-card, footer, and Stage-frame text roles retain independent visibility
+  and typography instead of receiving one project font indiscriminately. Their
+  typeface, style, size, and color are configurable without changing the
+  semantic project title, artist, or playback time they display.
+- Project lyric defaults include typeface, style, size, unsung color, and sung
+  color. The sung color is the progressive fill applied to words as they are
+  performed; it is independent of Clear or Scroll line advance mode.
+- The font selector enumerates fonts installed on the current system, exposes
+  their available typefaces and styles, accepts a size, and previews
+  `This is <typeface>` using the selected style and size. The chosen face must
+  resolve consistently in Live Preview and MP4 output.
+- Font files are neither copied into projects nor bundled with the application.
+  Reopening a project on a system without its selected font produces a visible
+  warning and uses a deterministic fallback rather than silently changing only
+  one renderer.
+- A vocal track can independently inherit or override the project lyric
+  typeface, style, size, unsung color, and sung color. It also owns horizontal
+  alignment (**Left**, **Center**, or **Right**), line preview time, and sync-aid
+  settings.
+- Preview time is measured in milliseconds and controls how far before a lyric
+  line's first sung word the line becomes eligible to appear, subject to the
+  configured line count and Clear or Scroll advance behavior.
+- One built-in sync-aid animation cues only the first lyric line of each blank-
+  row-separated lyric section, including the first section. It renders only
+  when that line has a timed first word and never transfers to a later line in
+  the section.
+- Let `A` be the available time between that first line becoming visible and its
+  first sung word, `Min` the minimum useful sync-aid lead time, and `Max` the
+  configured maximum. Let `D = min(A, Max, Preview time)`. Render the aid only
+  when `D >= Min`; when rendered, its duration is `D` and it ends at the first
+  word's start. The default `Min` is 2000 ms. If the minimum time is not
+  available, skip the aid rather than compressing it or showing it before the
+  lyric line.
+- Live Preview and MP4 output use the same resolved styles, font fallback,
+  background asset, line-visibility plan, and sync-aid timing.
+
 ### Save and export
 
 - Save lyric text, blank-row section separators, word timings, lyric-display
-  settings, track styling, media linkage, and metadata in schema-v3 `.oks`.
-- Open schema-v1 and schema-v2 projects by migrating them to schema v3 with the
-  lyric-display defaults of 3 lines and Clear advance mode. Schema-v3 settings
-  and blank separators must round trip without loss.
+  settings, stage style, track styling and overrides, linked media paths, and
+  metadata in a versioned `.oks` schema.
+- The video-style implementation advances the project schema beyond v3. Open
+  schema-v1, schema-v2, and schema-v3 projects by migrating them through their
+  existing lyric-display defaults and then applying stage-style defaults that
+  preserve the current appearance. All new settings and linked paths must round
+  trip without loss.
 - Export the active vocal track as LRC.
 - Export the project as ASS with karaoke timing tags.
-- Render an MP4 up to 30 minutes from the built-in stage design, persisted lyric
-  line count and advance mode, per-word timing, the authored lead track, and
-  linked backing track through a locally installed FFmpeg executable.
+- Render an MP4 up to 30 minutes from the persisted stage style, lyric line
+  count and advance mode, per-word timing, authored lead track, linked static
+  background when selected, and linked backing track through a locally
+  installed FFmpeg executable.
 - Offer the exact resolution presets 240p (426 x 240), 360p (640 x 360), 480p
   (854 x 480), 720p (1280 x 720), 1080p (1920 x 1080), 1440p (2560 x 1440),
   and 2160p (3840 x 2160), with 30 fps and 60 fps choices. Default to 720p at
@@ -203,17 +263,18 @@ transport must never become separate application windows.
 - Responsive down to a 1280 × 720 application window; optimized for larger desktop displays.
 - Complete keyboard focus states, accessible labels for icon-only actions, and
   adequate contrast.
-- Inputs and dropdowns share the same control treatment, and the built-in Live
-  Preview and MP4 stage use the app's purple, orange, and neutral identity while
-  preserving the authored track color for lyric highlighting.
+- Inputs and dropdowns share the same control treatment. Stage-style defaults
+  preserve the app's existing purple, orange, and neutral identity until the
+  user changes them.
 - Icon-only and compact controls expose concise hover help that names the action
   and, when applicable, its keyboard shortcut.
-- Unit tests for schema-v1/v2 migration, schema-v3 project round trips, blank-row
-  section preservation, synchronization semantics/history, timing validation,
-  and LRC/ASS round trips.
+- Unit tests for schema-v1/v2/v3 migration into the video-style schema, current
+  project round trips, blank-row section preservation, synchronization
+  semantics/history, timing validation, and LRC/ASS round trips.
 - Unit tests must keep Live Preview and video frame planning aligned for line
-  count, Clear/Scroll behavior, and section boundaries, plus the gated
-  `bun run test:video` H.264/AAC export smoke check.
+  count, Clear/Scroll behavior, section boundaries, resolved styles, preview
+  time, and sync-aid eligibility and timing, plus the gated `bun run test:video`
+  H.264/AAC export smoke check.
 - Clean TypeScript build, production Vite build, and launchable unpacked desktop package.
 
 ## Explicitly out of scope for 0.1
@@ -222,7 +283,11 @@ transport must never become separate application windows.
 - Stem separation or vocal removal.
 - MIDI/KAR playback and lead-vocal-note mapping.
 - CDG authoring or MP3+G export.
-- Background image scheduling.
+- Background image scheduling, animated backgrounds, or per-section scenes. One
+  linked static project background is in scope.
+- Embedded background-image data, bundled fonts, or fonts copied into project
+  files.
+- Alternative sync-aid animations.
 - Automatic linguistic hyphenation.
 - Authoring additional independently timed singer tracks. Those tracks are the
   future mechanism for intentional overlapping vocals; timing within the active
@@ -242,6 +307,9 @@ transport must never become separate application windows.
 - [x] A schema-v3 project reopens with identical metadata, tracks, lyrics, blank
   section separators, timings, and lyric-display settings; schema-v1/v2 projects
   migrate with the 3-line/Clear defaults.
+- [ ] Existing schema-v1/v2/v3 projects migrate to the video-style schema with
+  the current stage appearance as their default, and every new setting and
+  linked background path round trips without loss.
 - [x] TimeBoard-native start, clear-all, and clear-after-cursor actions operate on
   the active track without deleting lyrics.
 - [x] Bare Space times words only while synchronization is armed; Shift+Space
@@ -265,11 +333,23 @@ transport must never become separate application windows.
 - [x] Live Preview and MP4 use the same per-word timing, show no repeated singer
   or track label above lyric lines, and add no automatic Instrumental treatment
   between sections.
+- [ ] The project can choose a solid, gradient, or linked-image background and
+  can configure or disable the Stage frame, while title-card, footer, and frame
+  typography remain independently configurable.
+- [ ] The font selector reliably lists installed typefaces and styles on each
+  supported system, previews the selected style and size, and produces the same
+  resolved font or visible fallback warning in Live Preview and MP4 output.
+- [ ] Project lyric defaults and vocal overrides produce matching typeface,
+  style, size, unsung color, sung color, and horizontal alignment in Live
+  Preview and MP4 output.
+- [ ] Preview time controls line eligibility, and the built-in sync aid appears
+  only on the first line of a blank-row-separated section when at least its
+  configured minimum lead time is available.
 - [x] Timeline movement and resize operations immediately affect the Live Preview
   when it is mounted outside armed synchronization.
 - [x] LRC and ASS exports contain monotonic, non-negative timing.
 - [x] Undo and redo cover lyric replacement, timing edits, and timing clears.
-- [x] Required tests, builds, packages, and platform CI are green for the final
+- [ ] Required tests, builds, packages, and platform CI are green for the final
   acceptance candidate.
 - [ ] A linked-audio project renders synchronized H.264/AAC MP4 lyric frames at
   every supported resolution and at 30 or 60 fps; a new export defaults to
@@ -278,5 +358,5 @@ transport must never become separate application windows.
   requires confirmation and preserves a UUID-named partial file beside the
   chosen destination, while an ordinary export failure leaves the destination
   safe.
-- [x] The final UI is visually checked at the working desktop size and the minimum
+- [ ] The final UI is visually checked at the working desktop size and the minimum
   supported 1280 × 720 window.

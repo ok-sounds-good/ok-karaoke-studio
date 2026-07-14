@@ -37,17 +37,20 @@ no such integration is currently planned.
 - Multiple lyric revisions and side-by-side source and synchronized lyrics.
 - Command-based editing history with named operations and a visual history panel.
 
-## Next: repeatable visual production
+## Next: reusable visual production
 
-- A serializable stage-theme model shared by live preview and video export.
-- Curated theme packs built on that shared model.
+- Curated theme packs built on the MVP stage-style model.
 - Reusable project templates that copy layout, track, style, and export defaults
   without copying linked media or lyrics.
-- Rich style controls for fonts, outline, shadow, gradients, positioning, and
-  per-track themes.
+- Alternative sync-aid animations that preserve the MVP timing and phrase-
+  eligibility rules.
+- Rich effects and layout controls beyond the MVP editor, including lyric
+  outline and shadow effects, advanced gradient geometry, arbitrary positioning,
+  and reusable per-track themes.
 
-The shared theme model comes first so the editor preview and exported result cannot
-drift. Theme packs and project templates are a high-priority product milestone.
+The MVP stage-style model is the shared foundation, so every extension must keep
+the editor preview and exported result aligned. Theme packs and project templates
+remain a high-priority product milestone.
 
 ## Next: CD+G and MP3+G interoperability
 
@@ -63,6 +66,9 @@ decision.
 ## Later: visual production
 
 - Standards-aware ASS import that preserves unknown sections and column formats.
+- Portable embedding or managed copying of static background images. Any font-
+  portability design must respect font licensing and must not silently
+  redistribute installed font files.
 - Scheduled still images, animated backgrounds, and per-section scenes.
 - Aspect-ratio presets, title-safe/action-safe overlays, and multiple preview
   devices.
@@ -138,7 +144,9 @@ at a time, and the project retains one authoritative clock.
 - Automatic Instrumental words, countdowns, or graphics between lyric sections.
 - Creator-authored placement of optional stage elements, including the retained
   dormant instrumental-break graphic source. The source remains available for
-  future exploration, but no stage-element authoring workflow is planned.
+  future exploration, but no arbitrary stage-element authoring workflow is
+  planned. Styling the built-in MVP title card, footer, and Stage frame does not
+  create such a workflow.
 
 ## Decision gates
 
