@@ -41,6 +41,9 @@ jobs:
       - name: Run unit tests
         run: bun run test
 
+      - name: Smoke Electron native image decoding
+        run: bun run test:image
+
       - name: Build renderer
         run: bun run build
 
