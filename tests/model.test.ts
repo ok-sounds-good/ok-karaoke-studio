@@ -18,6 +18,7 @@ import {
   planLyricDisplayLines,
   retimeLine,
   serializeProject,
+  UNSUPPORTED_PROJECT_FORMAT_ERROR,
   validateProject,
   type KaraokeProject,
 } from '../src/lib/karaoke'
@@ -28,7 +29,7 @@ describe('karaoke project model', () => {
   it('creates a valid seeded project with integer word timings', () => {
     const project = createDemoProject()
 
-    expect(project.schemaVersion).toBe(4)
+    expect(project.schemaVersion).toBe(0)
     expect(project.lyricDisplay).toEqual({ lineCount: 3, advanceMode: 'clear' })
     expect(project.title).toBe('Neon Afterglow')
     expect(project.stageStyle).toEqual(DEFAULT_STAGE_STYLE)
@@ -633,13 +634,15 @@ describe('strict current project serialization', () => {
     expect(parseProject(serializeProject(project))).toEqual(project)
   })
 
-  it('rejects every earlier v0 schema and the legacy track color field', () => {
-    for (const schemaVersion of [1, 2, 3]) {
+  it('accepts only numeric schemaVersion 0 and rejects the legacy track shape', () => {
+    const unsupportedDeclarations: unknown[] = [1, -1, 0.5, '0', null, false, {}, undefined]
+    for (const schemaVersion of unsupportedDeclarations) {
       expect(() => parseProject(JSON.stringify({
         ...createDemoProject(),
         schemaVersion,
-      }))).toThrow(`Unsupported project schema version ${schemaVersion}`)
+      }))).toThrow(UNSUPPORTED_PROJECT_FORMAT_ERROR)
     }
+
     const legacy = structuredClone(createDemoProject()) as unknown as {
       tracks: Array<Record<string, unknown>>
     }
@@ -648,15 +651,8 @@ describe('strict current project serialization', () => {
     expect(() => parseProject(JSON.stringify(legacy))).toThrow('color is not supported')
   })
 
-  it('rejects malformed, future, and invalid project JSON', () => {
+  it('rejects malformed and invalid current-v0 project JSON', () => {
     expect(() => parseProject('{oops')).toThrow('Invalid project JSON')
-    expect(() => parseProject('{"schemaVersion":99}')).toThrow('newer than supported')
-    expect(() => parseProject('{"schemaVersion":"2"}')).toThrow(
-      'Unsupported project schema version',
-    )
-    expect(() => parseProject('{"schemaVersion":1.5}')).toThrow(
-      'Unsupported project schema version',
-    )
     const malformedCurrent = { ...createDemoProject(), title: 42 }
     expect(() => parseProject(JSON.stringify(malformedCurrent))).toThrow(
       'project.title must be a string',

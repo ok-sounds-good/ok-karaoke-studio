@@ -1122,6 +1122,81 @@ describe('mounted first-time workflow', () => {
     })
   })
 
+  it('warns on a rejected desktop open without changing current project state', async () => {
+    vi.stubGlobal('AudioContext', class {
+      async close() {}
+      async decodeAudioData() {
+        return { getChannelData: () => new Float32Array([0]) }
+      }
+    })
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      arrayBuffer: async () => new ArrayBuffer(0),
+    })))
+    harness.importAudio.mockResolvedValueOnce({
+      path: '/music/current.mp3',
+      name: 'current.mp3',
+      url: 'studio-media://asset/00000000-0000-0000-0000-000000000000/current.mp3',
+    })
+
+    await clickButton('Workflow')
+    await clickButton('Attach audio')
+    await replaceProjectTitle('Saved baseline')
+    await clickButton('Workflow')
+    await clickButton('Save .oks')
+
+    await replaceProjectTitle('First unsaved edit')
+    await replaceProjectTitle('Second unsaved edit')
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')?.click()
+    })
+    expect(document.querySelector('.topbar__document')?.textContent).toContain(
+      'First unsaved edit',
+    )
+    expect(document.querySelector('[title="Unsaved changes"]')).not.toBeNull()
+    expect(document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')?.disabled).toBe(false)
+    expect(document.querySelector<HTMLButtonElement>('[aria-label="Redo"]')?.disabled).toBe(false)
+    expect(document.body.textContent).toContain('Audio linked')
+
+    harness.openProject.mockRejectedValueOnce(new Error('Desktop project dialog failed'))
+    await clickButton('Workflow')
+    await clickButton('Open .oks')
+
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(
+      'Desktop project dialog failed',
+    )
+    expect(window.confirm).not.toHaveBeenCalled()
+    expect(harness.studio.releaseAudio).not.toHaveBeenCalled()
+    expect(document.querySelector('.topbar__document')?.textContent).toContain(
+      'First unsaved edit',
+    )
+    expect(document.querySelector('[title="Unsaved changes"]')).not.toBeNull()
+    expect(document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')?.disabled).toBe(false)
+    expect(document.querySelector<HTMLButtonElement>('[aria-label="Redo"]')?.disabled).toBe(false)
+    expect(document.body.textContent).toContain('Audio linked')
+
+    await clickButton('Workflow')
+    await clickButton('Save .oks')
+    expect(harness.saveProject).toHaveBeenLastCalledWith(expect.objectContaining({
+      path: '/saved/project.oks',
+    }))
+    expect(parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents)).toMatchObject({
+      title: 'First unsaved edit',
+      audioPath: '/music/current.mp3',
+    })
+  })
+
+  it('uses a safe warning when desktop open rejects without an Error', async () => {
+    harness.openProject.mockRejectedValueOnce({ reason: 'private IPC detail' })
+
+    await clickButton('Workflow')
+    await clickButton('Open .oks')
+
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(
+      'Project could not be opened.',
+    )
+    expect(document.body.textContent).not.toContain('private IPC detail')
+  })
+
   it('ignores a previous project save that completes after New project', async () => {
     const previousProjectSave = deferred<{ path: string }>()
     harness.saveProject.mockImplementationOnce(() => previousProjectSave.promise)

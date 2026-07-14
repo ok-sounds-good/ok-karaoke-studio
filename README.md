@@ -31,7 +31,7 @@ Okay Karaoke Studio is a single-window desktop application for editing and synch
   guidance; TimeBoard does not duplicate it, and no Word Map is persistently
   rendered in the main workspace.
 - LRC import, enhanced LRC and ASS export, configurable 240p-through-2160p MP4
-  karaoke rendering at 30 or 60 fps, and versioned `.oks` projects.
+  karaoke rendering at 30 or 60 fps, and current v0 `.oks` projects.
 - Native open/save/import/export dialogs with secure linked-media streaming.
 - Command history, timing review, hover help, playback Stop, and browser fallback.
 
@@ -120,15 +120,16 @@ bun run test:video
    undoable edits.
 8. Use the TimeBoard's **Clear Timing** or **Clear Timing After Cursor** controls
    when resynchronizing. Use transport **Stop** to pause and return to `0:00`.
-9. Review the timing status, save the schema-v4 `.oks` project, and export LRC,
+9. Review the timing status, save the current v0 `.oks` project, and export LRC,
    ASS, or an MP4 karaoke video. Video export requires attached audio and offers
    240p (426 x 240), 360p (640 x 360), 480p (854 x 480), 720p (1280 x 720),
    1080p (1920 x 1080), 1440p (2560 x 1440), and 2160p (3840 x 2160), each at
    30 or 60 fps. It defaults to 720p at 30 fps for faster iteration. Closing the
    export dialog, closing the application, quitting, or choosing Cancel during an
    active export asks for confirmation; a confirmed cancellation preserves a
-   UUID-named partial file beside the destination.
-   This clean-slate v0 build rejects schema-v1 through schema-v3 projects.
+   UUID-named partial file beside the destination. This clean-slate build accepts
+   only the current v0 project format with numeric `schemaVersion: 0`; this build
+   provides no compatibility or migration path for any other `.oks` format.
 
 ## Keyboard controls
 
@@ -161,11 +162,12 @@ docs/ROADMAP.md         Prioritized future capabilities and product boundaries
 docs/SDLC.md            Pull-request, verification, ruleset, and release policy
 ```
 
-The canonical schema-v4 model stores integer-millisecond word timings, blank-row
+The canonical current v0 model stores integer-millisecond word timings, blank-row
 section separators, stage/vocal styles, and shared Live Preview/MP4
-lyric-display settings inside the project. Earlier schemas are rejected without
-migration. The active MVP authors one lead track; adding new singer
-tracks remains deferred. The renderer does not receive Node.js access. Electron
+lyric-display settings inside the project. Any other project format is rejected
+by this build. Compatibility or migration requires an intentional future product
+promise. The active MVP authors one lead track; adding new singer tracks remains
+deferred. The renderer does not receive Node.js access. Electron
 exposes a small typed bridge for project dialogs, audio import,
 project-authorized audio restoration, text/video export, and menu commands.
 Linked audio is streamed through an owner-scoped, tokenized read-only custom

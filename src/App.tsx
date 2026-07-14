@@ -510,12 +510,24 @@ export default function App() {
 
   const handleOpen = useCallback(async () => {
     if (window.studio) {
-      const result = await window.studio.openProject()
+      let result: StudioOpenProjectResult | null
+      try {
+        result = await window.studio.openProject()
+      } catch (error) {
+        const message = error instanceof Error && error.message.trim()
+          ? error.message
+          : 'Project could not be opened.'
+        showToast(
+          message,
+          'warning',
+        )
+        return
+      }
       if (result) await openProjectContents(result.contents, result.path)
     } else {
       projectInputRef.current?.click()
     }
-  }, [openProjectContents])
+  }, [openProjectContents, showToast])
 
   const handleSave = useCallback(async (saveAs = false) => {
     const saveRequestSequence = saveRequestSequenceRef.current + 1

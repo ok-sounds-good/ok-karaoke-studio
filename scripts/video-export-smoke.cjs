@@ -158,7 +158,7 @@ app.whenReady().then(async () => {
     await fs.writeFile(audioPath, silentWav(1))
     const ffmpegPath = await findFfmpeg()
     const project = JSON.parse(await fs.readFile(
-      path.join(__dirname, '..', 'tests', 'fixtures', 'current-project-v4.json'),
+      path.join(__dirname, '..', 'tests', 'fixtures', 'current-project-v0.json'),
       'utf8',
     ))
     Object.assign(project, {
