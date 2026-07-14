@@ -39,7 +39,10 @@ A change is done when:
   or media-process code changes.
 - User-visible behavior is checked manually; visual changes include before/after
   evidence in the pull request.
-- Project-schema changes include migration and round-trip regression tests.
+- During the clean-slate pre-v1 MVP, project-schema changes include exhaustive
+  current-format round-trip coverage and clear rejection of unsupported earlier
+  artifacts. Migration coverage becomes required once the product promises
+  compatibility with a prior format.
 - Format or export changes include fixtures, validation, and licensing notes.
 - Documentation and the relevant release or roadmap status are updated.
 

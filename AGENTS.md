@@ -55,8 +55,10 @@ roadmap boundary.
   media-process boundaries, trace the normal and failure paths through every
   affected boundary.
 - Keep the single-window layout invariant from `docs/MVP.md`.
-- Project-schema changes require migration handling and round-trip regression
-  coverage.
+- Project-schema changes require current-format round-trip and rejection
+  coverage. Before v1.0, an MVP iteration may replace the format without
+  migration when `docs/MVP.md` says so. Once compatibility is promised,
+  migration handling is required.
 - Save and export operations must fail safely without stale success state,
   corrupted projects, or partial destination files.
 - FFmpeg video support means verified H.264 (`libx264`) and AAC encoder
@@ -80,7 +82,7 @@ required by the change:
 - Visual changes: capture before/after evidence at the affected desktop size and
   at the minimum supported 1280 x 720 window when relevant.
 - Project-format or export-format changes: add fixtures, round-trip validation,
-  and migration or licensing notes as applicable.
+  and compatibility, migration, or licensing notes as applicable.
 
 If an environment-dependent gate cannot run, report the exact blocker and what
 remains unverified. Do not represent a partial validation result as a full pass.

@@ -13,6 +13,11 @@ supporting criteria below may change as real editing work exposes blockers;
 capabilities that are deliberately deferred belong in
 [`ROADMAP.md`](./ROADMAP.md).
 
+Version 0.1 is a clean-slate **v0** product. Before v1.0, `.oks` files are
+disposable development artifacts: an MVP iteration may replace the project
+format without migration or backward compatibility. Each build accepts only
+its current schema, and fixtures and tests change in lockstep with that schema.
+
 ## Acceptance status and scope control
 
 - **Product acceptance: open.** The user holds the gate until they can use the
@@ -178,8 +183,8 @@ preview, editor, and transport must never become separate application windows.
 ### Video style
 
 - A project-persisted stage-style model governs both Live Preview and MP4
-  output. The fixed current stage appearance becomes its default so existing
-  projects retain a recognizable result after migration.
+  output. The fixed current stage appearance is the default for new projects in
+  the current v0 format.
 - Choose a **Solid**, **Gradient**, or **Image** background. Solid mode has a
   configurable color, Gradient mode has configurable colors, and Image mode
   selects one linked static image. Background scheduling, animation, and
@@ -223,16 +228,33 @@ preview, editor, and transport must never become separate application windows.
 - Live Preview and MP4 output use the same resolved styles, font fallback,
   background asset, line-visibility plan, and sync-aid timing.
 
+### Saved style templates
+
+- Save the Studio's creator preferences as named, application-level templates
+  that can be created, applied, renamed, and deleted.
+- A template includes every supported creator-configurable stage, lyric-display,
+  vocal-style, sync-aid, and export-default setting. It includes the linked
+  background-image selection and path, but does not copy or embed the image.
+- A template excludes project content and timing: title, artist, loaded audio,
+  audio metadata, lyrics, section separators, word timings, global offset, and
+  vocal-track identity remain properties of the `.oks` project.
+- Applying a template changes only the included preferences, is one undoable
+  project edit, and never replaces excluded project content. Saving, renaming,
+  or deleting a template does not dirty the open project.
+- A template retains a missing linked-image path and shows the established
+  Preview warning/fallback, but MP4 export remains blocked until the image is
+  replaced, cleared, or no longer selected. An unavailable font remains selected
+  and uses the same named deterministic fallback in Live Preview and MP4 output
+  as a font loaded directly from the project.
+
 ### Save and export
 
 - Save lyric text, blank-row section separators, word timings, lyric-display
   settings, stage style, track styling and overrides, linked media paths, and
   metadata in a versioned `.oks` schema.
-- The video-style implementation advances the project schema beyond v3. Open
-  schema-v1, schema-v2, and schema-v3 projects by migrating them through their
-  existing lyric-display defaults and then applying stage-style defaults that
-  preserve the current appearance. All new settings and linked paths must round
-  trip without loss.
+- The current v0 build rejects unsupported older MVP schemas with a clear
+  format-version error. It does not migrate or accept them. All fields and
+  linked paths in the current schema must round trip without loss.
 - Export the active vocal track as LRC.
 - Export the project as ASS with karaoke timing tags.
 - Render an MP4 up to 30 minutes from the persisted stage style, lyric line
@@ -268,9 +290,11 @@ preview, editor, and transport must never become separate application windows.
   user changes them.
 - Icon-only and compact controls expose concise hover help that names the action
   and, when applicable, its keyboard shortcut.
-- Unit tests for schema-v1/v2/v3 migration into the video-style schema, current
-  project round trips, blank-row section preservation, synchronization
-  semantics/history, timing validation, and LRC/ASS round trips.
+- Unit tests for TypeScript/main-process strict current-schema acceptance
+  parity and round trips, clear rejection of unsupported pre-v1 formats and
+  authorization from rejected data, blank-row section preservation,
+  synchronization semantics/history, timing validation, and LRC/ASS round
+  trips.
 - Unit tests must keep Live Preview and video frame planning aligned for line
   count, Clear/Scroll behavior, section boundaries, resolved styles, preview
   time, and sync-aid eligibility and timing, plus the gated `bun run test:video`
@@ -304,12 +328,9 @@ preview, editor, and transport must never become separate application windows.
 - [x] The main workspace has no persistent Word Map or lyric list; its single
   **Edit text** action lives in Live Preview (or its Sync Focus replacement),
   not TimeBoard, and transactionally applies or cancels lyric edits.
-- [x] A schema-v3 project reopens with identical metadata, tracks, lyrics, blank
-  section separators, timings, and lyric-display settings; schema-v1/v2 projects
-  migrate with the 3-line/Clear defaults.
-- [ ] Existing schema-v1/v2/v3 projects migrate to the video-style schema with
-  the current stage appearance as their default, and every new setting and
-  linked background path round trips without loss.
+- [ ] The current v0 project schema round trips every project field and linked
+  path without loss, while unsupported older MVP schema versions fail with a
+  clear format-version error and no partial load state.
 - [x] TimeBoard-native start, clear-all, and clear-after-cursor actions operate on
   the active track without deleting lyrics.
 - [x] Bare Space times words only while synchronization is armed; Shift+Space
@@ -345,6 +366,14 @@ preview, editor, and transport must never become separate application windows.
 - [ ] Preview time controls line eligibility, and the built-in sync aid appears
   only on the first line of a blank-row-separated section when at least its
   configured minimum lead time is available.
+- [ ] Named style templates preserve every supported creator preference,
+  including the linked background-image path, and applying one leaves title,
+  artist, audio, lyrics, section separators, word timing, global offset, and
+  vocal-track identity unchanged.
+- [ ] Style-template create, apply, rename, and delete behavior persists across
+  application restarts; missing linked images remain explicit and block MP4
+  export, while missing fonts remain explicit and use the same deterministic
+  Preview/MP4 fallback as project-loaded settings.
 - [x] Timeline movement and resize operations immediately affect the Live Preview
   when it is mounted outside armed synchronization.
 - [x] LRC and ASS exports contain monotonic, non-negative timing.

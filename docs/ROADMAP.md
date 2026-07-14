@@ -40,17 +40,16 @@ no such integration is currently planned.
 ## Next: reusable visual production
 
 - Curated theme packs built on the MVP stage-style model.
-- Reusable project templates that copy layout, track, style, and export defaults
-  without copying linked media or lyrics.
 - Alternative sync-aid animations that preserve the MVP timing and phrase-
   eligibility rules.
 - Rich effects and layout controls beyond the MVP editor, including lyric
   outline and shadow effects, advanced gradient geometry, arbitrary positioning,
   and reusable per-track themes.
 
-The MVP stage-style model is the shared foundation, so every extension must keep
-the editor preview and exported result aligned. Theme packs and project templates
-remain a high-priority product milestone.
+Named creator-preference templates are now part of the active MVP contract. The
+MVP stage-style model is the shared foundation, so every later extension must
+keep the editor preview and exported result aligned. Curated theme packs remain
+a high-priority post-MVP product milestone.
 
 ## Next: CD+G and MP3+G interoperability
 
@@ -154,7 +153,7 @@ Before assigning a roadmap item to a release, document:
 
 1. The editing problem it solves and evidence that the problem is real.
 2. The minimum interaction that solves it.
-3. Project-format impact and migration requirements.
+3. Project-format impact and compatibility or migration requirements.
 4. Export-format, codec, rights, and licensing implications.
 5. Automated and hands-on acceptance checks.
 6. Packaging, security-update, and ongoing maintenance burden.
