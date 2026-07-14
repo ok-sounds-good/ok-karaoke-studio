@@ -91,8 +91,23 @@ declare global {
     onMenuAction(callback: (action: StudioMenuAction) => void): () => void
   }
 
+  interface StudioLocalFontRecord {
+    readonly family: string
+    readonly fullName: string
+    readonly postscriptName: string
+    readonly style: string
+  }
+
+  interface StudioLocalFontQueryOptions {
+    readonly postscriptNames?: readonly string[]
+  }
+
   interface Window {
     /** Undefined in the regular browser/Vite preview. */
     readonly studio?: StudioApi
+    /** Chromium Local Font Access; available only in a secure, permissioned renderer. */
+    queryLocalFonts?: (
+      options?: StudioLocalFontQueryOptions
+    ) => Promise<StudioLocalFontRecord[]>
   }
 }

@@ -12,7 +12,7 @@ import {
   type TextStyle,
   type VocalStyle,
 } from './video-style'
-import { isValidPostScriptName } from './font-identity'
+import { MAX_FONT_FACES_PER_TYPEFACE, isValidPostScriptName } from './font-identity'
 
 type RecordValue = Record<string, unknown>
 
@@ -129,7 +129,11 @@ export function validTypefaceDescriptor(value: unknown): value is FontTypefaceDe
   if (typeof source.family !== 'string' || !source.family.trim() || source.family.length > 300) {
     return false
   }
-  if (!Array.isArray(source.faces) || source.faces.length < 1 || source.faces.length > 100) {
+  if (
+    !Array.isArray(source.faces) ||
+    source.faces.length < 1 ||
+    source.faces.length > MAX_FONT_FACES_PER_TYPEFACE
+  ) {
     return false
   }
   for (let index = 0; index < source.faces.length; index += 1) {
