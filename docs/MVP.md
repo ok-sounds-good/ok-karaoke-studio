@@ -4,7 +4,7 @@
 
 Okay Karaoke Studio is a desktop editor for turning a backing track and plain
 lyrics into precisely timed karaoke lyrics on one lead-vocal authoring track.
-Project settings, lyric editing, the TimeBoard, stage verification, and playback
+Project settings, lyric editing, Lyric Timing, stage verification, and playback
 stay in **one unified window**, with a focused low-latency surface replacing the
 stage while synchronization is armed.
 
@@ -32,6 +32,12 @@ its current schema, and fixtures and tests change in lockstep with that schema.
 - **Technical baseline:** every iteration must leave `main` green and releasable.
   Passing CI or producing a package is required engineering evidence, but is not
   equivalent to product acceptance.
+- **Distribution acceptance: open and user-held.** Before public distribution,
+  the user selects and applies the final project license and explicitly decides
+  whether FFmpeg remains externally installed or is redistributed with a
+  documented compatible build and compliance plan. This separate decision does
+  not block private-repository MVP implementation, CI, or product testing, and
+  no agent may close it on the user's behalf.
 
 ## Primary user journey
 
@@ -43,7 +49,7 @@ its current schema, and fixtures and tests change in lockstep with that schema.
    word; hold Space on the final word of a line to extend its duration. The
    resulting timing cannot cross the preceding or following timed word in lyric
    order, including across line boundaries.
-5. Correct individual words by dragging and resizing them in the TimeBoard;
+5. Correct individual words by dragging and resizing them in Lyric Timing;
    edits stop at those same lyric-order boundaries.
 6. Exit synchronization, configure the video's stage style, and verify the
    result in the restored Live Preview, choosing its line count and Clear or
@@ -56,10 +62,10 @@ The main window must provide access to:
 
 - Project metadata, video-style settings, and lead-track controls.
 - An **Edit text** action in Live Preview that opens the transactional lyric
-  editor; TimeBoard does not duplicate it, and the main workspace does not
+  editor; Lyric Timing does not duplicate it, and the main workspace does not
   persistently render a Word Map or lyric list. While synchronization replaces
   Live Preview, Sync Focus owns the single equivalent action.
-- A scrollable waveform TimeBoard.
+- A scrollable waveform Lyric Timing editor.
 - Playback, seeking, speed, volume, zoom, and tap-sync controls.
 - A live karaoke stage preview for timing verification when synchronization is
   not armed.
@@ -72,6 +78,9 @@ pasting raw lyrics or choosing an export format. Video-style editing must remain
 in the unified window and preserve a practical way to compare changes with Live
 Preview; its exact inline or focused presentation is a design decision. The
 preview, editor, and transport must never become separate application windows.
+The inspector does not reserve a decorative **Document / Project** header row.
+The **Style** entry point belongs in the application header beside the Okay
+Karaoke Studio identity.
 
 ## In scope
 
@@ -80,8 +89,9 @@ preview, editor, and transport must never become separate application windows.
 - New, open, save, and save-as for versioned `.oks` JSON project files.
 - Link MP3, WAV, M4A, FLAC, AAC, or OGG audio without copying it into the project.
 - Link one static background image without copying it into the project. A
-  missing or unreadable linked image must be reported before export rather than
-  silently replaced in the requested result.
+  missing, animated, or decoder-invalid linked image must be reported before
+  export rather than silently replaced in the requested result; a matching
+  filename extension or magic header alone is not sufficient.
 - Display the decoded waveform when possible, with a deterministic placeholder before audio is attached.
 - Song title, artist, global timing offset, audio path, and duration metadata.
 - First launch and **New Project** create a clean slate: one empty **Lead Vocal**
@@ -105,7 +115,7 @@ preview, editor, and transport must never become separate application windows.
 - Import line-timed or enhanced LRC into the active track.
 - Clear timing without deleting lyrics.
 
-### Synchronization and TimeBoard
+### Synchronization and Lyric Timing
 
 - Tap-sync mode in which bare Space key-down starts the current word. The next
   same-line key-down backfills the preceding word's end to that new onset;
@@ -119,7 +129,7 @@ preview, editor, and transport must never become separate application windows.
 - A low-latency Sync Focus with cursor-ordered current and next lyric lines, a
   visible target word, and timed/untimed progress. The heavier stage preview is
   not mounted while synchronization is armed.
-- TimeBoard-native controls for **Start Sync**, **Clear Timing**, and **Clear
+- Lyric Timing controls for **Start Sync**, **Clear Timing**, and **Clear
   Timing After Cursor**. Clear operations affect timing in the active track,
   preserve lyric text, and participate in undo/redo.
 - Click the ruler or waveform to seek.
@@ -128,10 +138,10 @@ preview, editor, and transport must never become separate application windows.
   boundaries.
 - Drag word edges to change start or end times within those same lyric-order
   bounds.
-- Select words from the TimeBoard, including its untimed-word tray.
+- Select words from Lyric Timing, including its untimed-word tray.
 - Outside a text-editing field, Command/Ctrl+A selects every word in the active
   track instead of selecting page text.
-- Dragging across empty TimeBoard space draws a visible marquee and selects the
+- Dragging across empty Lyric Timing space draws a visible marquee and selects the
   active track's intersecting word blocks.
 - Word text is rendered separately from duration-sized timing blocks. Timing
   blocks for non-overlapping words in the single lead track share a common
@@ -143,7 +153,7 @@ preview, editor, and transport must never become separate application windows.
 - Keyboard delete clears selected words' timing, Escape exits sync, and timing
   selection and clear operations participate in undo/redo.
 - All timing captured in one armed synchronization session is one undoable
-  history step. TimeBoard selection and correction operations remain available
+  history step. Lyric Timing selection and correction operations remain available
   as their own undoable edits.
 - Zoom and horizontal scrolling suitable for detailed timing correction.
 
@@ -199,10 +209,23 @@ preview, editor, and transport must never become separate application windows.
 - Project lyric defaults include typeface, style, size, unsung color, and sung
   color. The sung color is the progressive fill applied to words as they are
   performed; it is independent of Clear or Scroll line advance mode.
-- The font selector enumerates fonts installed on the current system, exposes
-  their available typefaces and styles, accepts a size, and previews
-  `This is <typeface>` using the selected style and size. The chosen face must
-  resolve consistently in Live Preview and MP4 output.
+- The font selector uses a searchable, keyboard-accessible typeface combobox.
+  Visible options render in their own typeface and are loaded incrementally so
+  a large installed catalog remains responsive. Available face traits use
+  compact modern controls, unsupported traits are unavailable rather than
+  synthesized, and size comes from an enumerated dropdown.
+- Font selection activates a target-aware design mode in Live Preview. The
+  fixed logical video stage renders representative content for the role being
+  edited at the selected face, traits, and size, so scale is judged relative to
+  the real video frame. There is no separate oversized `This is <typeface>`
+  specimen in the control panel.
+- The chosen face must resolve consistently in Live Preview and MP4 output.
+  Typeface, Style, and Size are separate persisted fields; selecting or
+  inheriting one does not mutate the others. Persisted local faces use actual
+  enumerated PostScript names and a deterministic catalog/trait fallback, never
+  a guessed name. A changed installed catalog is an explicit Typeface
+  replacement: until chosen, the persisted face and its shared Preview/MP4
+  fallback remain selected.
 - Font files are neither copied into projects nor bundled with the application.
   Reopening a project on a system without its selected font produces a visible
   warning and uses a deterministic fallback rather than silently changing only
@@ -216,8 +239,9 @@ preview, editor, and transport must never become separate application windows.
   configured line count and Clear or Scroll advance behavior.
 - One built-in sync-aid animation cues only the first lyric line of each blank-
   row-separated lyric section, including the first section. It renders only
-  when that line has a timed first word and never transfers to a later line in
-  the section.
+  when that line's literal first word has a valid start/end timing pair and
+  never transfers to a later word or line in the section. Its horizontal travel
+  is at least 128 logical pixels for Left, Center, and Right alignment.
 - Let `A` be the available time between that first line becoming visible and its
   first sung word, `Min` the minimum useful sync-aid lead time, and `Max` the
   configured maximum. Let `D = min(A, Max, Preview time)`. Render the aid only
@@ -227,6 +251,9 @@ preview, editor, and transport must never become separate application windows.
   lyric line.
 - Live Preview and MP4 output use the same resolved styles, font fallback,
   background asset, line-visibility plan, and sync-aid timing.
+- A missing or errored active Image background is not MP4-ready even if a stale
+  scoped URL remains. Applying the style preserves the linked-path warning;
+  both the Export UI and command handler block MP4 until it is resolved.
 
 ### Saved style templates
 
@@ -279,6 +306,21 @@ preview, editor, and transport must never become separate application windows.
 - Validate and report untimed, invalid, or overlapping timing before export.
 - Browser fallbacks for open/download when the React surface is run outside Electron.
 
+### Platform and distribution
+
+- Windows x64 is an MVP distribution target. Windows CI produces both an
+  unsigned NSIS installer and the unpacked application, launch-smokes the
+  packaged application, and runs the applicable font, visual, project, and
+  H.264/AAC media gates. Windows signing and automatic updates remain deferred.
+- macOS and Windows must both pass their protected platform checks. Linux
+  packaging and Linux-specific media verification remain Roadmap work.
+- The Windows package continues to use the guided external-FFmpeg setup unless
+  the user separately approves a redistributable FFmpeg build and its compliance
+  plan. Bundling FFmpeg is not required for Windows MVP acceptance.
+- The repository currently declares MIT. The final public-distribution license
+  remains a user-held MVP decision; agents must not change `LICENSE`, package
+  metadata, or redistribution policy without the user's explicit direction.
+
 ### Quality bar
 
 - Electron desktop shell with a constrained preload bridge and no renderer Node access.
@@ -299,7 +341,8 @@ preview, editor, and transport must never become separate application windows.
   count, Clear/Scroll behavior, section boundaries, resolved styles, preview
   time, and sync-aid eligibility and timing, plus the gated `bun run test:video`
   H.264/AAC export smoke check.
-- Clean TypeScript build, production Vite build, and launchable unpacked desktop package.
+- Clean TypeScript build, production Vite build, launchable unpacked macOS and
+  Windows packages, and the required Windows installer artifact.
 
 ## Explicitly out of scope for 0.1
 
@@ -327,18 +370,18 @@ preview, editor, and transport must never become separate application windows.
   Sync Focus replaces Live Preview only while synchronization is armed.
 - [x] The main workspace has no persistent Word Map or lyric list; its single
   **Edit text** action lives in Live Preview (or its Sync Focus replacement),
-  not TimeBoard, and transactionally applies or cancels lyric edits.
+  not in Lyric Timing, and transactionally applies or cancels lyric edits.
 - [ ] The current v0 project schema round trips every project field and linked
   path without loss, while unsupported older MVP schema versions fail with a
   clear format-version error and no partial load state.
-- [x] TimeBoard-native start, clear-all, and clear-after-cursor actions operate on
+- [x] Lyric Timing start, clear-all, and clear-after-cursor actions operate on
   the active track without deleting lyrics.
 - [x] Bare Space times words only while synchronization is armed; Shift+Space
   controls playback.
 - [x] Space onsets backfill preceding same-line word ends, holding the final word
   extends that line's final duration, and taps before lyric time `0:00` are
   ignored.
-- [x] One synchronization session is one undoable history step; TimeBoard
+- [x] One synchronization session is one undoable history step; Lyric Timing
   selection and correction behaviors remain available afterward.
 - [x] Command/Ctrl+A and marquee selection select the intended active-track words
   without selecting page text.
@@ -357,9 +400,14 @@ preview, editor, and transport must never become separate application windows.
 - [ ] The project can choose a solid, gradient, or linked-image background and
   can configure or disable the Stage frame, while title-card, footer, and frame
   typography remain independently configurable.
-- [ ] The font selector reliably lists installed typefaces and styles on each
-  supported system, previews the selected style and size, and produces the same
-  resolved font or visible fallback warning in Live Preview and MP4 output.
+- [ ] The searchable font combobox reliably lists installed typefaces on each
+  supported system, renders visible options in their own fonts, exposes only
+  supported face traits plus an enumerated size list, and remains usable with a
+  large catalog by loading visible choices incrementally.
+- [ ] Font editing switches Live Preview into a target-aware fixed-stage design
+  mode that shows the selected face, traits, and size relative to the video
+  frame, and produces the same resolved font or visible fallback warning in MP4
+  output without a separate oversized control-panel specimen.
 - [ ] Project lyric defaults and vocal overrides produce matching typeface,
   style, size, unsung color, sung color, and horizontal alignment in Live
   Preview and MP4 output.
@@ -380,6 +428,15 @@ preview, editor, and transport must never become separate application windows.
 - [x] Undo and redo cover lyric replacement, timing edits, and timing clears.
 - [ ] Required tests, builds, packages, and platform CI are green for the final
   acceptance candidate.
+- [ ] Windows x64 CI produces an unsigned NSIS installer and unpacked app,
+  launch-smokes the packaged app, and passes the applicable font, visual,
+  project, and H.264/AAC media gates without bundling FFmpeg by default.
+- [ ] The inspector has no decorative **Document / Project** header row, and
+  **Style** is available beside the Okay Karaoke Studio identity in the
+  application header.
+- [ ] The user selects and applies the final public-distribution license and
+  decides whether FFmpeg remains externally installed or is redistributed with
+  a documented compatible build and compliance plan.
 - [ ] A linked-audio project renders synchronized H.264/AAC MP4 lyric frames at
   every supported resolution and at 30 or 60 fps; a new export defaults to
   720p/30.

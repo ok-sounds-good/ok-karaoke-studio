@@ -6,6 +6,19 @@ karaoke video for a new song with the Studio. The purpose of this process is to
 preserve that technical baseline while making product and technical decisions
 easy to audit.
 
+## Authoritative contracts and checkpoints
+
+The copies of `docs/MVP.md`, `docs/SDLC.md`, and `docs/ROADMAP.md` on `main` are
+authoritative. A checkpoint or extraction branch is implementation evidence and
+a source of tested code; its documentation never overrides newer decisions on
+`main`.
+
+Before extracting implementation from a checkpoint, bring the authoritative
+documents from `main` into that checkpoint with `main` winning every
+documentation conflict. Start each delivery slice from current `main` and port
+only the cohesive implementation and tests that belong to that slice. Do not
+merge a checkpoint wholesale merely because its integrated test suite passed.
+
 ## Change flow
 
 1. Start nontrivial work from an observed MVP workflow blocker, a roadmap item,
@@ -13,14 +26,22 @@ easy to audit.
 2. Create a short-lived branch from current `main`. Use a descriptive prefix such
    as `feature/`, `fix/`, `docs/`, or `chore/`.
 3. Open a draft pull request early. Keep unrelated changes in separate pull
-   requests.
+   requests. Aim for 750–1000 changed lines, counting additions and deletions,
+   so an adversarial reviewer can understand the complete diff. This is a soft
+   limit: a documented invariant class may exceed it when splitting schema,
+   trust-boundary, persistence, or renderer/export parity changes would make the
+   result less safe or less reviewable.
 4. Record scope, tests, manual checks, project-format impact, export or licensing
    impact, and deliberate exclusions in the pull request. For MVP work, record
    the observation from the real-song attempt and any supporting contract
    criterion added, removed, or revised.
-5. Merge only after the required macOS and Windows CI checks pass and all review
-   conversations are resolved.
-6. Squash merge, delete the branch, and leave `main` green and releasable.
+5. Prefer a sequence of cohesive **Foundation**, **Behavior**, and **Hardening**
+   pull requests. Minimize duplicated invariants and cross-module dependencies;
+   never split a security or data-integrity invariant solely to satisfy the line
+   target.
+6. Merge only after an independent adversarial review passes, the required
+   macOS and Windows CI checks pass, and all review conversations are resolved.
+7. Squash merge, delete the branch, and leave `main` green and releasable.
 
 One human approval becomes required when a second maintainer is reliably available.
 Until then, pull requests still provide the change record, while a zero-approval
@@ -35,15 +56,24 @@ A change is done when:
 - `bun run test` and `bun run build` pass.
 - `bun run dist:dir` passes when Electron, packaging, preload, or main-process code
   changes.
+- The final Windows MVP candidate produces an unsigned x64 NSIS installer and
+  unpacked app in Windows CI, launch-smokes the package, and runs the applicable
+  font, visual, project, and H.264/AAC media gates.
 - `bun run test:video` passes when video rendering, audio muxing, frame planning,
   or media-process code changes.
 - User-visible behavior is checked manually; visual changes include before/after
-  evidence in the pull request.
+  evidence in the pull request. For Video Style Editor changes, the protected
+  macOS and Windows jobs also capture ordered 1280 x 720 production-window
+  evidence; inspect those short-lived artifacts rather than treating a passing
+  geometry assertion as a design review.
 - During the clean-slate pre-v1 MVP, project-schema changes include exhaustive
   current-format round-trip coverage and clear rejection of unsupported earlier
   artifacts. Migration coverage becomes required once the product promises
   compatibility with a prior format.
 - Format or export changes include fixtures, validation, and licensing notes.
+- The public-distribution license and any FFmpeg redistribution policy remain
+  user-held decisions. Do not change license files, package metadata, or bundled
+  binary policy without explicit user direction.
 - Documentation and the relevant release or roadmap status are updated.
 
 ## Recommended `main` ruleset

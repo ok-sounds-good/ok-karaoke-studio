@@ -88,8 +88,10 @@ definition of done.
 
 ## Platform and distribution
 
-- Windows and Linux packaging and platform-specific media verification.
-- Signed and notarized macOS releases with automatic updates.
+- Linux packaging and Linux-specific media verification. Unsigned Windows x64
+  packaging and its platform media gates are part of the MVP contract.
+- Signed Windows releases, signed and notarized macOS releases, and automatic
+  updates.
 - Validate the guided FFmpeg setup flow through WinGet, an existing Homebrew, and
   platform instructions with nontechnical users. Reconsider a bundled companion
   executable only if that flow remains a material distribution barrier.
@@ -98,7 +100,10 @@ definition of done.
 
 Okay Karaoke Studio currently invokes a system-installed FFmpeg as a separate
 command-line process and does not redistribute that encoder executable. Bundling
-it remains possible, but the selected build determines the obligations.
+it remains possible, but is not required for Windows MVP acceptance and the
+selected build determines the obligations. The final public project license and
+FFmpeg redistribution policy are separate user-held MVP decisions; implementation
+work must not silently choose or close them.
 FFmpeg is LGPL 2.1-or-later by default, while GPL components and external libraries
 can make the resulting build GPL. The current exporter uses `libx264`, which the
 [FFmpeg license documentation](https://ffmpeg.org/doxygen/trunk/md_LICENSE.html)
