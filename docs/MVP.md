@@ -232,51 +232,51 @@ transport must never become separate application windows.
 ## Product acceptance checklist
 
 - [ ] The user makes and accepts a karaoke video for a new song using the Studio.
-- [ ] Launch and **New Project** start with a clean slate; the development demo is
+- [x] Launch and **New Project** start with a clean slate; the development demo is
   never introduced implicitly.
-- [ ] The primary journey can be completed without leaving the main window; the
+- [x] The primary journey can be completed without leaving the main window; the
   Sync Focus replaces Live Preview only while synchronization is armed.
-- [ ] The main workspace has no persistent Word Map or lyric list; its single
+- [x] The main workspace has no persistent Word Map or lyric list; its single
   **Edit text** action lives in Live Preview (or its Sync Focus replacement),
   not TimeBoard, and transactionally applies or cancels lyric edits.
-- [ ] A schema-v3 project reopens with identical metadata, tracks, lyrics, blank
+- [x] A schema-v3 project reopens with identical metadata, tracks, lyrics, blank
   section separators, timings, and lyric-display settings; schema-v1/v2 projects
   migrate with the 3-line/Clear defaults.
-- [ ] TimeBoard-native start, clear-all, and clear-after-cursor actions operate on
+- [x] TimeBoard-native start, clear-all, and clear-after-cursor actions operate on
   the active track without deleting lyrics.
-- [ ] Bare Space times words only while synchronization is armed; Shift+Space
+- [x] Bare Space times words only while synchronization is armed; Shift+Space
   controls playback.
-- [ ] Space onsets backfill preceding same-line word ends, holding the final word
+- [x] Space onsets backfill preceding same-line word ends, holding the final word
   extends that line's final duration, and taps before lyric time `0:00` are
   ignored.
-- [ ] One synchronization session is one undoable history step; TimeBoard
+- [x] One synchronization session is one undoable history step; TimeBoard
   selection and correction behaviors remain available afterward.
-- [ ] Command/Ctrl+A and marquee selection select the intended active-track words
+- [x] Command/Ctrl+A and marquee selection select the intended active-track words
   without selecting page text.
-- [ ] Non-overlapping lead-track timing blocks share one chronological baseline;
+- [x] Non-overlapping lead-track timing blocks share one chronological baseline;
   label lanes may stagger while full word labels remain readable.
-- [ ] Sync capture, block movement, and edge resizing cannot cross the preceding
+- [x] Sync capture, block movement, and edge resizing cannot cross the preceding
   or following timed word in lyric order, including across line boundaries.
-- [ ] Timeline navigation, transport Stop, and hover help are discoverable and
+- [x] Timeline navigation, transport Stop, and hover help are discoverable and
   behave as labeled.
-- [ ] Live Preview and MP4 show the persisted 1-to-5 line count with matching
+- [x] Live Preview and MP4 show the persisted 1-to-5 line count with matching
   Clear/Scroll behavior, no miniature upcoming line, and no blending across
   blank-row section boundaries.
-- [ ] Live Preview and MP4 use the same per-word timing, show no repeated singer
+- [x] Live Preview and MP4 use the same per-word timing, show no repeated singer
   or track label above lyric lines, and add no automatic Instrumental treatment
   between sections.
-- [ ] Timeline movement and resize operations immediately affect the Live Preview
+- [x] Timeline movement and resize operations immediately affect the Live Preview
   when it is mounted outside armed synchronization.
-- [ ] LRC and ASS exports contain monotonic, non-negative timing.
-- [ ] Undo and redo cover lyric replacement, timing edits, and timing clears.
-- [ ] Required tests, builds, packages, and platform CI are green for the final
+- [x] LRC and ASS exports contain monotonic, non-negative timing.
+- [x] Undo and redo cover lyric replacement, timing edits, and timing clears.
+- [x] Required tests, builds, packages, and platform CI are green for the final
   acceptance candidate.
 - [ ] A linked-audio project renders synchronized H.264/AAC MP4 lyric frames at
   every supported resolution and at 30 or 60 fps; a new export defaults to
   720p/30.
-- [ ] Cancelling an active MP4 export from its dialog, application close, or quit
+- [x] Cancelling an active MP4 export from its dialog, application close, or quit
   requires confirmation and preserves a UUID-named partial file beside the
   chosen destination, while an ordinary export failure leaves the destination
   safe.
-- [ ] The final UI is visually checked at the working desktop size and the minimum
+- [x] The final UI is visually checked at the working desktop size and the minimum
   supported 1280 × 720 window.
