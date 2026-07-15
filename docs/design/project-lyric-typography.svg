@@ -1,0 +1,84 @@
+<?xml version="1.0"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="680" viewBox="0 0 1200 680" role="img" aria-labelledby="title desc">
+  <title id="title">Project lyric typography interaction</title>
+  <desc id="desc">An editable Typeface combobox is open with choices shown in their own fonts. Supported face buttons, an enumerated size dropdown, Sung and Unsung colors sit beside a fixed sixteen-by-nine Live Preview containing one representative lyric line.</desc>
+  <defs>
+    <linearGradient id="stage" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#322242"/>
+      <stop offset="1" stop-color="#1e1629"/>
+    </linearGradient>
+    <filter id="shadow">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#4c3765" flood-opacity=".14"/>
+    </filter>
+    <style>
+      text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#302b38}.heading{font-size:18px;font-weight:800}.label{font-size:12px;font-weight:700}.small{font-size:10px;fill:#62576e}.tiny{font-size:8px;fill:#72677c;font-weight:700;letter-spacing:.08em}.panel{fill:#fff;stroke:#d9cce9}.field{fill:#fff;stroke:#9a83ad}.soft{fill:#f3edf9;stroke:#d9cce9}.selected{fill:#f1eafa;stroke:#9b78cf}.button{fill:#ff8a2b;stroke:#e66f12}.buttonText{fill:#3c200e;font-size:10px;font-weight:800}.stageLine{font-size:24px;font-weight:800}.stageSmall{fill:#c1bbc7;font-size:8px;font-weight:700}.system{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.baskerville{font-family:Baskerville,serif}.georgia{font-family:Georgia,serif}.mono{font-family:"Courier New",monospace}
+    </style>
+  </defs>
+  <rect width="1200" height="680" fill="#f8f6fb"/>
+  <text x="30" y="34" class="tiny">VIDEO STYLE &#xB7; PROJECT LYRICS</text>
+  <text x="30" y="60" class="heading">Typography controls and stage-relative preview</text>
+  <rect x="30" y="82" width="480" height="566" rx="15" class="panel"/>
+  <text x="52" y="112" class="label">Typeface</text>
+  <text x="485" y="112" text-anchor="end" class="tiny">SEARCH INSTALLED FONTS</text>
+  <rect x="52" y="124" width="436" height="38" rx="9" class="field"/>
+  <circle cx="71" cy="143" r="7" fill="none" stroke="#72677c"/>
+  <path d="M76 148l6 6" stroke="#72677c"/>
+  <text x="90" y="148" class="label system">Northstar Sans</text>
+  <path d="M468 139l6 6 6-6" fill="none" stroke="#72677c"/>
+  <rect x="52" y="168" width="436" height="214" rx="10" fill="#fff" stroke="#d9cce9" filter="url(#shadow)"/>
+  <rect x="60" y="176" width="420" height="36" rx="8" class="selected"/>
+  <text x="74" y="199" class="label system">Northstar Sans</text>
+  <text x="464" y="199" text-anchor="end" class="tiny">SAVED &#xB7; MISSING</text>
+  <text x="74" y="238" class="label system">System UI</text>
+  <text x="74" y="276" class="label baskerville">Baskerville</text>
+  <text x="74" y="314" class="label georgia">Georgia</text>
+  <text x="74" y="352" class="label mono">System Monospace</text>
+  <line x1="473" y1="220" x2="473" y2="362" stroke="#ebe4f2" stroke-width="5" stroke-linecap="round"/>
+  <line x1="473" y1="220" x2="473" y2="276" stroke="#9b78cf" stroke-width="5" stroke-linecap="round"/>
+  <text x="64" y="374" class="tiny">VISIBLE ROWS LOAD INCREMENTALLY &#xB7; ARROW KEYS MOVE &#xB7; ENTER SELECTS</text>
+  <text x="52" y="414" class="label">Face</text>
+  <rect x="52" y="426" width="73" height="34" rx="9" class="soft"/>
+  <text x="88" y="448" text-anchor="middle" class="small">Regular</text>
+  <rect x="133" y="426" width="86" height="34" rx="9" class="soft"/>
+  <text x="176" y="448" text-anchor="middle" class="label">Semi Bold</text>
+  <rect x="227" y="426" width="90" height="34" rx="9" class="selected"/>
+  <text x="272" y="448" text-anchor="middle" class="label">Extra Bold</text>
+  <rect x="325" y="426" width="60" height="34" rx="9" class="soft"/>
+  <text x="355" y="448" text-anchor="middle" class="small" font-style="italic">Italic</text>
+  <text x="52" y="493" class="label">Size</text>
+  <rect x="52" y="505" width="132" height="38" rx="9" class="field"/>
+  <text x="68" y="530" class="label">82 px</text>
+  <path d="M160 518l7 7 7-7" fill="none" stroke="#72677c"/>
+  <text x="52" y="560" class="tiny">ENUMERATED LOGICAL-STAGE SIZES ONLY</text>
+  <text x="213" y="493" class="label">Sung</text>
+  <rect x="213" y="505" width="118" height="38" rx="9" class="field"/>
+  <circle cx="235" cy="524" r="11" fill="#ff8a2b"/>
+  <text x="254" y="528" class="small">#FF8A2B</text>
+  <text x="349" y="493" class="label">Unsung</text>
+  <rect x="349" y="505" width="139" height="38" rx="9" class="field"/>
+  <circle cx="371" cy="524" r="11" fill="#72687d"/>
+  <text x="390" y="528" class="small">#72687D</text>
+  <line x1="30" y1="588" x2="510" y2="588" stroke="#ebe4f2"/>
+  <rect x="326" y="602" width="70" height="32" rx="9" class="soft"/>
+  <text x="361" y="623" text-anchor="middle" class="small">Cancel</text>
+  <rect x="404" y="602" width="84" height="32" rx="9" class="button"/>
+  <text x="446" y="623" text-anchor="middle" class="buttonText">Apply &amp; close</text>
+  <rect x="530" y="82" width="640" height="566" rx="15" class="panel"/>
+  <text x="552" y="110" class="tiny">STAGE MONITOR</text>
+  <text x="552" y="135" class="heading">Live Preview &#xB7; Project lyrics design mode</text>
+  <rect x="558" y="158" width="584" height="328.5" rx="11" fill="url(#stage)"/>
+  <rect x="598" y="195" width="504" height="254" rx="3" fill="none" stroke="#473c54" stroke-width="2"/>
+  <text x="614" y="215" class="stageSmall">OKAY / STUDIO</text>
+  <text x="1086" y="215" text-anchor="end" class="stageSmall">00:00.000</text>
+  <text x="850" y="326" text-anchor="middle" class="stageLine system">
+    <tspan fill="#ff8a2b">Sing the first words</tspan>
+    <tspan fill="#72687d"> and see the rest</tspan>
+  </text>
+  <text x="614" y="429" class="stageSmall">UNKNOWN ARTIST &#xB7; UNTITLED SONG</text>
+  <rect x="552" y="511" width="596" height="60" rx="9" class="soft"/>
+  <text x="568" y="536" class="label">Representative text lives only on the video stage</text>
+  <text x="568" y="555" class="small">The selected face, size, Sung, and Unsung are judged at real stage scale.</text>
+  <rect x="552" y="580" width="596" height="48" rx="9" fill="#fff8f1" stroke="#f2d2b9"/>
+  <text x="568" y="601" class="small">Requested: Northstar Sans Extra Bold (missing)</text>
+  <text x="568" y="618" class="small">Fallback: System UI Extra Bold in Preview and MP4 &#xB7; Retry available</text>
+</svg>
