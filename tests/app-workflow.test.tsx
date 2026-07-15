@@ -14,12 +14,35 @@ interface StudioHarness {
   exportVideo: ReturnType<typeof vi.fn>
   importAudio: ReturnType<typeof vi.fn>
   openProject: ReturnType<typeof vi.fn>
+  resetProjectScope: ReturnType<typeof vi.fn>
   saveProject: ReturnType<typeof vi.fn>
+  settleProjectOpen: ReturnType<typeof vi.fn>
   sendMenuAction: (action: StudioMenuAction) => void
+}
+
+class MetadataAudio extends EventTarget {
+  static instances: MetadataAudio[] = []
+
+  currentTime = 0
+  duration = 30
+  playbackRate = 1
+  volume = 1
+  preload = ''
+  play = vi.fn(async () => undefined)
+  pause = vi.fn()
+  load = vi.fn()
+  removeAttribute = vi.fn()
+
+  constructor(_url: string) {
+    super()
+    MetadataAudio.instances.push(this)
+  }
 }
 
 function createStudioHarness(): StudioHarness {
   const openProject = vi.fn(async () => null)
+  const settleProjectOpen = vi.fn(async () => true)
+  const resetProjectScope = vi.fn(async () => true)
   const saveProject = vi.fn(async () => ({ path: '/saved/project.oks' }))
   const importAudio = vi.fn(async () => null)
   const exportText = vi.fn(async () => ({ path: '/exports/project.oks' }))
@@ -34,6 +57,8 @@ function createStudioHarness(): StudioHarness {
   })
   const studio = {
     openProject,
+    settleProjectOpen,
+    resetProjectScope,
     saveProject,
     importAudio,
     resolveProjectAudio: vi.fn(async () => null),
@@ -53,7 +78,9 @@ function createStudioHarness(): StudioHarness {
     exportVideo,
     importAudio,
     openProject,
+    resetProjectScope,
     saveProject,
+    settleProjectOpen,
     sendMenuAction: (action) => menuActionListener?.(action),
   }
 }
@@ -918,7 +945,9 @@ describe('mounted first-time workflow', () => {
     }
     project.stageStyle.lyrics.fontStyle = face
     harness.openProject.mockResolvedValueOnce({
-      path: '/opened/unavailable-font.oks', contents: serializeProject(project),
+      requestId: 'unavailable-font-open',
+      path: '/opened/unavailable-font.oks',
+      contents: serializeProject(project),
     })
 
     await clickButton('Workflow')
@@ -956,6 +985,7 @@ describe('mounted first-time workflow', () => {
       tracks: [lead, duet],
     }
     harness.openProject.mockResolvedValueOnce({
+      requestId: 'offset-clear-open',
       path: '/opened/offset-clear.oks',
       contents: serializeProject(openedProject),
     })
@@ -1012,6 +1042,7 @@ describe('mounted first-time workflow', () => {
       })),
     }
     harness.openProject.mockResolvedValueOnce({
+      requestId: 'duet-only-open',
       path: '/opened/duet-only.oks',
       contents: serializeProject({
         ...demo,
@@ -1065,7 +1096,11 @@ describe('mounted first-time workflow', () => {
 
   it('rejects linked-image video export before IPC or progress starts', async () => {
     const project = createDemoProject(); Object.assign(project.stageStyle.background, { mode: 'image', imagePath: '/fixtures/background.png' })
-    harness.openProject.mockResolvedValueOnce({ path: '/opened/image.oks', contents: serializeProject(project) })
+    harness.openProject.mockResolvedValueOnce({
+      requestId: 'image-open',
+      path: '/opened/image.oks',
+      contents: serializeProject(project),
+    })
     await clickButton('Workflow'); await clickButton('Open .oks'); await prepareVideoExportProject()
     await clickButton('Karaoke video')
     expect(harness.exportVideo).not.toHaveBeenCalled()
@@ -1246,6 +1281,271 @@ describe('mounted first-time workflow', () => {
     expect(document.body.textContent).not.toContain('private IPC detail')
   })
 
+  it('does not replace A until main acknowledges B and blocks lifecycle actions meanwhile', async () => {
+    await replaceProjectTitle('Project A')
+    await clickButton('Edit text')
+    await replaceTextarea('Held')
+    await clickButton('Apply lyrics')
+    await clickButton('Start sync')
+    await pressKey('Space')
+    const heldTiming = timelineTimingLabels()
+    expect(heldTiming).toEqual(['Held timing block, 0:00.000–0:00.100'])
+
+    const settlement = deferred<boolean>()
+    harness.settleProjectOpen.mockImplementationOnce(() => settlement.promise)
+    harness.openProject.mockResolvedValueOnce({
+      requestId: 'pending-project-b',
+      path: '/opened/project-b.oks',
+      contents: serializeProject({ ...createDemoProject(), title: 'Pending Project B' }),
+    })
+
+    await clickButton('Workflow')
+    await clickButton('Open .oks')
+    expect(harness.settleProjectOpen).toHaveBeenCalledWith('pending-project-b', true)
+    expect(document.querySelector('.topbar__document')?.textContent).toContain('Project A')
+
+    await replaceProjectTitle('Post-confirm edit')
+    expect(document.querySelector('.topbar__document')?.textContent).toContain('Project A')
+    const pendingOpenUndo = document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')
+    if (!pendingOpenUndo) throw new Error('Undo control was not mounted')
+    expect(pendingOpenUndo.disabled).toBe(false)
+    await act(async () => {
+      pendingOpenUndo.click()
+    })
+    expect(timelineTimingLabels()).toEqual(heldTiming)
+    expect(document.querySelector('.transport')?.classList.contains('is-syncing')).toBe(true)
+
+    await pressKey('ArrowRight')
+    await releaseKey('Space')
+    expect(timelineTimingLabels()).toEqual(heldTiming)
+    expect(document.querySelector('.transport')?.classList.contains('is-syncing')).toBe(true)
+
+    await tapSyncWord()
+    expect(document.querySelector('.topbar__document')?.textContent).toContain('Project A')
+    expect(timelineTimingLabels()).toEqual(heldTiming)
+    expect(document.querySelector('.transport')?.classList.contains('is-syncing')).toBe(true)
+
+    await clickButton('Workflow')
+    await clickButton('Save .oks')
+    await clickButton('Workflow')
+    await clickButton('Attach audio')
+    await clickButton('Workflow')
+    await clickButton('New project')
+    expect(harness.saveProject).not.toHaveBeenCalled()
+    expect(harness.importAudio).not.toHaveBeenCalled()
+    expect(harness.resetProjectScope).not.toHaveBeenCalled()
+    expect(document.querySelector('.topbar__document')?.textContent).toContain('Project A')
+
+    await act(async () => {
+      settlement.resolve(true)
+      await settlement.promise
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
+    })
+    expect(document.querySelector('.topbar__document')?.textContent).toContain('Pending Project B')
+    expect(harness.studio.releaseAudio).not.toHaveBeenCalled()
+  })
+
+  it('settles malformed renderer data and a dirty decline as false without changing A', async () => {
+    await replaceProjectTitle('Dirty Project A')
+    harness.openProject.mockResolvedValueOnce({
+      requestId: 'malformed-project-b',
+      path: '/opened/malformed.oks',
+      contents: JSON.stringify({ schemaVersion: '0' }),
+    })
+
+    await clickButton('Workflow')
+    await clickButton('Open .oks')
+    expect(harness.settleProjectOpen).toHaveBeenLastCalledWith('malformed-project-b', false)
+    expect(window.confirm).not.toHaveBeenCalled()
+    expect(document.querySelector('.topbar__document')?.textContent).toContain('Dirty Project A')
+    expect(document.querySelector('[title="Unsaved changes"]')).not.toBeNull()
+
+    ;(window.confirm as ReturnType<typeof vi.fn>).mockReturnValueOnce(false)
+    harness.openProject.mockResolvedValueOnce({
+      requestId: 'declined-project-b',
+      path: '/opened/declined.oks',
+      contents: serializeProject({ ...createDemoProject(), title: 'Declined Project B' }),
+    })
+    await clickButton('Workflow')
+    await clickButton('Open .oks')
+
+    expect(harness.settleProjectOpen).toHaveBeenLastCalledWith('declined-project-b', false)
+    expect(document.querySelector('.topbar__document')?.textContent).toContain('Dirty Project A')
+    expect(document.querySelector('[title="Unsaved changes"]')).not.toBeNull()
+    expect(harness.studio.releaseAudio).not.toHaveBeenCalled()
+  })
+
+  it('preserves A when B settlement returns false and leaves A usable', async () => {
+    harness.settleProjectOpen.mockResolvedValueOnce(false)
+    harness.openProject.mockResolvedValueOnce({
+      requestId: 'stale-project-b',
+      path: '/opened/stale.oks',
+      contents: serializeProject({ ...createDemoProject(), title: 'Stale Project B' }),
+    })
+
+    await clickButton('Workflow')
+    await clickButton('Open .oks')
+    expect(document.querySelector('.topbar__document')?.textContent).toContain('Untitled Song')
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(
+      'selected project is no longer pending',
+    )
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+
+    await clickButton('Workflow')
+    await clickButton('Save .oks')
+    expect(harness.saveProject).toHaveBeenCalledOnce()
+  })
+
+  it('fails closed when the B acknowledgement is lost after a possible commit', async () => {
+    harness.settleProjectOpen.mockRejectedValueOnce(new Error('IPC response lost after commit'))
+    harness.openProject.mockResolvedValueOnce({
+      requestId: 'possibly-committed-project-b',
+      path: '/opened/possibly-committed.oks',
+      contents: serializeProject({ ...createDemoProject(), title: 'Possibly Committed B' }),
+    })
+
+    await clickButton('Workflow')
+    await clickButton('Open .oks')
+    expect(document.querySelector('.topbar__document')?.textContent).toContain('Untitled Song')
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      'Reopen a project or start New',
+    )
+
+    await clickButton('Workflow')
+    await clickButton('Save .oks')
+    await clickButton('Workflow')
+    await clickButton('Attach audio')
+    expect(harness.saveProject).not.toHaveBeenCalled()
+    expect(harness.importAudio).not.toHaveBeenCalled()
+
+    await clickButton('Workflow')
+    await clickButton('New project')
+    expect(harness.resetProjectScope).toHaveBeenCalledOnce()
+    expect(document.querySelector('.topbar__document')?.textContent).toContain('Untitled Song')
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it('locks edits and history until a deferred successful New reset applies cleanly', async () => {
+    await replaceProjectTitle('Previous Project A')
+    await replaceProjectTitle('Redo Project A')
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')?.click()
+    })
+    expect(document.querySelector('.topbar__document')?.textContent).toContain('Previous Project A')
+
+    const pendingReset = deferred<boolean>()
+    harness.resetProjectScope.mockImplementationOnce(() => pendingReset.promise)
+    await clickButton('Workflow')
+    await clickButton('New project')
+
+    await replaceProjectTitle('Post-confirm reset edit')
+    expect(document.querySelector('.topbar__document')?.textContent).toContain('Previous Project A')
+
+    const pendingResetUndo = document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')
+    const pendingResetRedo = document.querySelector<HTMLButtonElement>('[aria-label="Redo"]')
+    if (!pendingResetUndo || !pendingResetRedo) {
+      throw new Error('History controls were not mounted')
+    }
+    expect(pendingResetUndo.disabled).toBe(false)
+    expect(pendingResetRedo.disabled).toBe(false)
+
+    await act(async () => pendingResetRedo.click())
+    expect(document.querySelector('.topbar__document')?.textContent).toContain('Previous Project A')
+
+    await act(async () => pendingResetUndo.click())
+    expect(document.querySelector('.topbar__document')?.textContent).toContain('Previous Project A')
+
+    await act(async () => {
+      pendingReset.resolve(true)
+      await pendingReset.promise
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
+    })
+    expect(document.querySelector('.topbar__document')?.textContent).toContain('Untitled Song')
+    expect(document.querySelector('[title="Unsaved changes"]')).toBeNull()
+    expect(document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')?.disabled).toBe(true)
+    expect(document.querySelector<HTMLButtonElement>('[aria-label="Redo"]')?.disabled).toBe(true)
+  })
+
+  it('preserves A and rejects a metadata duration mutation while reset returns false', async () => {
+    MetadataAudio.instances = []
+    vi.stubGlobal('Audio', MetadataAudio)
+    vi.stubGlobal(
+      'AudioContext',
+      class {
+        async close() {}
+        async decodeAudioData() {
+          return { getChannelData: () => new Float32Array([0]) }
+        }
+      },
+    )
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        arrayBuffer: async () => new ArrayBuffer(0),
+      })),
+    )
+    harness.importAudio.mockResolvedValueOnce({
+      path: '/music/transition.mp3',
+      name: 'transition.mp3',
+      url: 'studio-media://asset/00000000-0000-0000-0000-000000000000/transition.mp3',
+    })
+
+    await replaceProjectTitle('Project A')
+    await clickButton('Workflow')
+    await clickButton('Attach audio')
+    expect(MetadataAudio.instances).toHaveLength(1)
+
+    const pendingReset = deferred<boolean>()
+    harness.resetProjectScope.mockImplementationOnce(() => pendingReset.promise)
+    await clickButton('Workflow')
+    await clickButton('New project')
+
+    const audio = MetadataAudio.instances[0]
+    audio.duration = 12.345
+    await act(async () => audio.dispatchEvent(new Event('loadedmetadata')))
+    expect(document.querySelector('.topbar__document')?.textContent).toContain('Project A')
+
+    await act(async () => {
+      pendingReset.resolve(false)
+      await pendingReset.promise
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
+    })
+    expect(document.querySelector('.topbar__document')?.textContent).toContain('Project A')
+    expect(document.querySelector('[title="Unsaved changes"]')).not.toBeNull()
+
+    await replaceProjectTitle('Project A after false reset')
+    expect(document.querySelector('.topbar__document')?.textContent).toContain(
+      'Project A after false reset',
+    )
+    await act(async () => harness.sendMenuAction('save'))
+    expect(parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents)).toMatchObject({
+      audioPath: '/music/transition.mp3',
+      durationMs: null,
+      title: 'Project A after false reset',
+    })
+  })
+
+  it('fails closed on a rejected reset and recovers after an acknowledged New', async () => {
+    await replaceProjectTitle('Project A')
+    harness.resetProjectScope.mockRejectedValueOnce(new Error('reset response lost'))
+
+    await clickButton('Workflow')
+    await clickButton('New project')
+    expect(document.querySelector('.topbar__document')?.textContent).toContain('Project A')
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      'Project access could not be confirmed',
+    )
+    await clickButton('Workflow')
+    await clickButton('Save .oks')
+    expect(harness.saveProject).not.toHaveBeenCalled()
+
+    await clickButton('Workflow')
+    await clickButton('New project')
+    expect(document.querySelector('.topbar__document')?.textContent).toContain('Untitled Song')
+    expect(document.querySelector('[title="Unsaved changes"]')).toBeNull()
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+  })
+
   it('ignores a previous project save that completes after New project', async () => {
     const previousProjectSave = deferred<{ path: string }>()
     harness.saveProject.mockImplementationOnce(() => previousProjectSave.promise)
@@ -1309,6 +1609,7 @@ describe('mounted first-time workflow', () => {
     const previousProjectSave = deferred<{ path: string }>()
     harness.saveProject.mockImplementationOnce(() => previousProjectSave.promise)
     harness.openProject.mockResolvedValueOnce({
+      requestId: 'stale-save-project-b-open',
       path: '/opened/project-b.oks',
       contents: serializeProject({ ...createDemoProject(), title: 'Opened Project B' }),
     })

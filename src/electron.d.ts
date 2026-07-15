@@ -17,6 +17,7 @@ declare global {
     | 'redo'
 
   interface StudioOpenProjectResult {
+    requestId: string
     path: string
     contents: string
   }
@@ -83,6 +84,8 @@ declare global {
 
   interface StudioApi {
     openProject(): Promise<StudioOpenProjectResult | null>
+    settleProjectOpen(requestId: string, accepted: boolean): Promise<boolean>
+    resetProjectScope(): Promise<boolean>
     saveProject(options: StudioSaveProjectOptions): Promise<StudioPathResult | null>
     importAudio(): Promise<StudioAudioImportResult | null>
     resolveProjectAudio(projectPath: string): Promise<StudioAudioImportResult | null>

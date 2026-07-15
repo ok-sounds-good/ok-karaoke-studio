@@ -4,6 +4,8 @@ const { contextBridge, ipcRenderer } = require('electron')
 
 const CHANNELS = Object.freeze({
   openProject: 'studio:open-project',
+  settleProjectOpen: 'studio:settle-project-open',
+  resetProjectScope: 'studio:reset-project-scope',
   saveProject: 'studio:save-project',
   importAudio: 'studio:import-audio',
   resolveProjectAudio: 'studio:resolve-project-audio',
@@ -33,12 +35,13 @@ const VIDEO_EXPORT_PHASES = new Set(['preparing', 'frames', 'encoding', 'complet
 
 const studio = Object.freeze({
   openProject: () => ipcRenderer.invoke(CHANNELS.openProject),
+  settleProjectOpen: async (requestId, accepted) =>
+    (await ipcRenderer.invoke(CHANNELS.settleProjectOpen, { requestId, accepted })) === true,
+  resetProjectScope: async () => (await ipcRenderer.invoke(CHANNELS.resetProjectScope)) === true,
   saveProject: (options) => ipcRenderer.invoke(CHANNELS.saveProject, options),
   importAudio: () => ipcRenderer.invoke(CHANNELS.importAudio),
-  resolveProjectAudio: (projectPath) => ipcRenderer.invoke(
-    CHANNELS.resolveProjectAudio,
-    { projectPath },
-  ),
+  resolveProjectAudio: (projectPath) =>
+    ipcRenderer.invoke(CHANNELS.resolveProjectAudio, { projectPath }),
   releaseAudio: () => ipcRenderer.invoke(CHANNELS.releaseAudio),
   importLrc: () => ipcRenderer.invoke(CHANNELS.importLrc),
   exportText: (options) => ipcRenderer.invoke(CHANNELS.exportText, options),
@@ -56,12 +59,15 @@ const studio = Object.freeze({
         !VIDEO_EXPORT_PHASES.has(progress.phase) ||
         !Number.isFinite(progress.completed) ||
         !Number.isFinite(progress.total)
-      ) return
-      callback(Object.freeze({
-        phase: progress.phase,
-        completed: Math.max(0, progress.completed),
-        total: Math.max(1, progress.total),
-      }))
+      )
+        return
+      callback(
+        Object.freeze({
+          phase: progress.phase,
+          completed: Math.max(0, progress.completed),
+          total: Math.max(1, progress.total),
+        }),
+      )
     }
 
     ipcRenderer.on(CHANNELS.videoExportProgress, listener)

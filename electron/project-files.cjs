@@ -6,6 +6,10 @@ const path = require('node:path')
 
 const projectSaveQueues = new Map()
 
+async function acquireUnrestrictedPromotion() {
+  return () => {}
+}
+
 function isErrnoException(error, code) {
   return error !== null && typeof error === 'object' && error.code === code
 }
@@ -87,11 +91,23 @@ async function writeUtf8FileAtomically(filePath, contents) {
   }
 }
 
-async function queueProjectWrite(filePath, contents) {
+async function queueProjectWrite(
+  filePath,
+  contents,
+  acquirePromotion = acquireUnrestrictedPromotion,
+) {
   const previousWrite = projectSaveQueues.get(filePath) || Promise.resolve()
   const pendingWrite = previousWrite
     .catch(() => {})
-    .then(() => writeUtf8FileAtomically(filePath, contents))
+    .then(async () => {
+      const releasePromotion = await acquirePromotion()
+      if (typeof releasePromotion !== 'function') return
+      try {
+        await writeUtf8FileAtomically(filePath, contents)
+      } finally {
+        releasePromotion()
+      }
+    })
   projectSaveQueues.set(filePath, pendingWrite)
 
   try {

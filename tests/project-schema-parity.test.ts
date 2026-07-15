@@ -213,8 +213,15 @@ describe('current project schema parity', () => {
     projectSchema.withParsedProject(GOLDEN_JSON, () => { effects += 1 })
     expect(effects).toBe(1)
     const mainSource = readFileSync(new URL('../electron/main.cjs', import.meta.url), 'utf8')
-    expect(mainSource).toContain('withParsedProject(contents, (project) => {')
-    expect(mainSource).toContain('withParsedProject(request.contents, async () => {')
+    const projectOpenSource = readFileSync(
+      new URL('../electron/project-open.cjs', import.meta.url),
+      'utf8',
+    )
+    expect(mainSource).toContain('projectOpens.stageOpen(ownerId, requestId, filePath, contents)')
+    expect(projectOpenSource.indexOf('const project = decodeProjectJson(contents)')).toBeLessThan(
+      projectOpenSource.indexOf('pendingByOwner.set(ownerId, pending)'),
+    )
+    expect(mainSource).toContain('() => saveValidatedProject(owner, ownerId, request)')
   })
 
   it('gates editable-project export effects behind strict project parsing', () => {

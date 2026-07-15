@@ -39,6 +39,7 @@ const {
 const { createLocalFontPermissionPolicy } = require('./local-font-access.cjs')
 const { readLinkedImage } = require('./linked-image-decoder.cjs')
 const { createElectronNativeImageDecoder } = require('./native-image-adapter.cjs')
+const { createProjectOpenCoordinator } = require('./project-open.cjs')
 
 const APP_NAME = 'Okay Karaoke Studio'
 const APP_SCHEME = 'studio-app'
@@ -53,6 +54,8 @@ const MAX_LRC_FILE_BYTES = 8 * 1024 * 1024
 
 const CHANNELS = Object.freeze({
   openProject: 'studio:open-project',
+  settleProjectOpen: 'studio:settle-project-open',
+  resetProjectScope: 'studio:reset-project-scope',
   saveProject: 'studio:save-project',
   importAudio: 'studio:import-audio',
   resolveProjectAudio: 'studio:resolve-project-audio',
@@ -141,7 +144,35 @@ const mediaFiles = new Map()
 const mediaTokensByOwner = new Map()
 const mediaRequestSequences = new Map()
 const restorableProjectAudioByOwner = new Map()
-const writableProjectPaths = new Set()
+const projectOpens = createProjectOpenCoordinator({
+  prepareScope(_ownerId, scope) {
+    return prepareProjectAudio(scope.path, scope.project)
+  },
+  async validateScope(_ownerId, scope) {
+    try {
+      const currentContents = await readUtf8FileWithinLimit(
+        scope.path,
+        MAX_PROJECT_FILE_BYTES,
+        'Project file',
+      )
+      return currentContents === scope.contents
+    } catch {
+      return false
+    }
+  },
+  commitScope(ownerId, scope) {
+    beginMediaRequest(ownerId)
+    revokeMediaForOwner(ownerId)
+    restorableProjectAudioByOwner.set(ownerId, scope)
+    return true
+  },
+  resetScope(ownerId) {
+    beginMediaRequest(ownerId)
+    revokeMediaForOwner(ownerId)
+    restorableProjectAudioByOwner.delete(ownerId)
+    return true
+  },
+})
 
 let mainWindow = null
 
@@ -445,7 +476,7 @@ function mediaRequestIsCurrent(ownerId, sequence) {
   return mediaRequestSequences.get(ownerId) === sequence
 }
 
-function authorizeProjectAudio(ownerId, projectPath, project) {
+function prepareProjectAudio(projectPath, project) {
   let audioPath = null
   if (project.audioPath) {
     const candidate = path.isAbsolute(project.audioPath)
@@ -453,7 +484,7 @@ function authorizeProjectAudio(ownerId, projectPath, project) {
       : path.resolve(path.dirname(projectPath), project.audioPath)
     if (AUDIO_EXTENSIONS.has(path.extname(candidate).toLowerCase())) audioPath = candidate
   }
-  restorableProjectAudioByOwner.set(ownerId, { projectPath, audioPath })
+  return Object.freeze({ projectPath, audioPath })
 }
 
 function assertTrustedSender(event) {
@@ -645,9 +676,54 @@ const videoExportLifecycleGuard = createVideoExportLifecycleGuard({
   },
 })
 
+async function saveValidatedProject(owner, ownerId, request) {
+  const writeGrant = projectOpens.captureWriteGrant(ownerId)
+  const requestedPath = request.path ? path.resolve(request.path) : null
+  const requestedPathIsWritable = requestedPath
+    ? projectOpens.canWrite(ownerId, requestedPath)
+    : false
+
+  let filePath =
+    requestedPath && isCanonicalSavePath(requestedPath, 'oks') && requestedPathIsWritable
+      ? requestedPath
+      : null
+
+  if (!filePath) {
+    const defaultName = ensureExportExtension(
+      safeFileName(request.suggestedName, 'Untitled Karaoke Project.oks'),
+      'oks',
+    )
+    const defaultPath =
+      requestedPath && requestedPathIsWritable
+        ? canonicalSavePath(requestedPath, 'oks')
+        : documentsPath(defaultName)
+    filePath = await showCanonicalSaveDialog(
+      dialog.showSaveDialog.bind(dialog),
+      owner,
+      {
+        title: 'Save Karaoke Project',
+        buttonLabel: 'Save Project',
+        defaultPath,
+        filters: PROJECT_SAVE_FILTERS,
+      },
+      'oks',
+    )
+    if (!filePath) return null
+  }
+
+  await queueProjectWrite(filePath, request.contents, () =>
+    projectOpens.acquireWritePromotion(ownerId, writeGrant),
+  )
+  const promoted = projectOpens.writeGrantIsCurrent(ownerId, writeGrant)
+  projectOpens.grantWrite(ownerId, filePath, writeGrant)
+  return promoted ? { path: filePath } : null
+}
+
 function registerIpcHandlers() {
   ipcMain.handle(CHANNELS.openProject, async (event) => {
     const owner = assertTrustedSender(event)
+    const ownerId = event.sender.id
+    const requestId = projectOpens.beginOpen(ownerId)
     const result = await dialog.showOpenDialog(owner, {
       title: 'Open Karaoke Project',
       buttonLabel: 'Open Project',
@@ -658,54 +734,30 @@ function registerIpcHandlers() {
     if (result.canceled || result.filePaths.length === 0) return null
 
     const filePath = path.resolve(result.filePaths[0])
-    const contents = await readUtf8FileWithinLimit(
-      filePath,
-      MAX_PROJECT_FILE_BYTES,
-      'Project file',
-    )
-    return withParsedProject(contents, (project) => {
-      authorizeProjectAudio(event.sender.id, filePath, project)
-      writableProjectPaths.add(filePath)
-      return { path: filePath, contents }
-    })
+    const contents = await readUtf8FileWithinLimit(filePath, MAX_PROJECT_FILE_BYTES, 'Project file')
+    return projectOpens.stageOpen(ownerId, requestId, filePath, contents)
+  })
+
+  ipcMain.handle(CHANNELS.settleProjectOpen, async (event, value) => {
+    assertTrustedSender(event)
+    if (!isRecord(value)) throw new TypeError('settleProjectOpen requires an options object')
+    const requestId = requireString(value.requestId, 'requestId')
+    if (typeof value.accepted !== 'boolean') {
+      throw new TypeError('settleProjectOpen.accepted must be a boolean')
+    }
+    return projectOpens.settleOpen(event.sender.id, requestId, value.accepted)
+  })
+
+  ipcMain.handle(CHANNELS.resetProjectScope, async (event) => {
+    assertTrustedSender(event)
+    return projectOpens.resetProjectScope(event.sender.id)
   })
 
   ipcMain.handle(CHANNELS.saveProject, async (event, value) => {
     const owner = assertTrustedSender(event)
+    const ownerId = event.sender.id
     const request = normalizeProjectRequest(value)
-    return withParsedProject(request.contents, async () => {
-      const requestedPath = request.path ? path.resolve(request.path) : null
-      const requestedPathIsWritable = requestedPath
-        ? writableProjectPaths.has(requestedPath)
-        : false
-
-      let filePath = requestedPath &&
-        isCanonicalSavePath(requestedPath, 'oks') &&
-        requestedPathIsWritable
-        ? requestedPath
-        : null
-
-      if (!filePath) {
-        const defaultName = ensureExportExtension(
-          safeFileName(request.suggestedName, 'Untitled Karaoke Project.oks'),
-          'oks',
-        )
-        const defaultPath = requestedPath && requestedPathIsWritable
-          ? canonicalSavePath(requestedPath, 'oks')
-          : documentsPath(defaultName)
-        filePath = await showCanonicalSaveDialog(dialog.showSaveDialog.bind(dialog), owner, {
-          title: 'Save Karaoke Project',
-          buttonLabel: 'Save Project',
-          defaultPath,
-          filters: PROJECT_SAVE_FILTERS,
-        }, 'oks')
-        if (!filePath) return null
-      }
-
-      await queueProjectWrite(filePath, request.contents)
-      writableProjectPaths.add(filePath)
-      return { path: filePath }
-    })
+    return withParsedProject(request.contents, () => saveValidatedProject(owner, ownerId, request))
   })
 
   ipcMain.handle(CHANNELS.importAudio, async (event) => {
@@ -967,14 +1019,11 @@ function secureWebContents(contents) {
   })
   contents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
     if (isMainFrame && !isInPlace) {
-      beginMediaRequest(ownerId)
-      revokeMediaForOwner(ownerId)
+      projectOpens.releaseOwner(ownerId)
     }
   })
   contents.once('destroyed', () => {
-    beginMediaRequest(ownerId)
-    revokeMediaForOwner(ownerId)
-    restorableProjectAudioByOwner.delete(ownerId)
+    projectOpens.releaseOwner(ownerId)
     mediaRequestSequences.delete(ownerId)
   })
 }
