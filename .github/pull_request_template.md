@@ -18,17 +18,19 @@ Closes #
 
 ## Validation
 
-<!-- Record exact commands/evidence and PASS, FAIL, UNAVAILABLE, or NOT RUN. -->
+<!-- Record exact commands/evidence and PASS, FAIL, UNAVAILABLE, NOT RUN, or -->
+<!-- NOT APPLICABLE — <reason>. NOT APPLICABLE is valid only with a concrete -->
+<!-- applicability rationale; a blank conditional row is not an exemption. -->
 
-| Gate                 | Exact command or evidence | Result         |
-| -------------------- | ------------------------- | -------------- |
-| Changed-range format | `bun run format:check`    |                |
-| Test suite           | `bun run test`            |                |
-| Build                | `bun run build`           |                |
-| Electron/package     | `bun run dist:dir`        | Not applicable |
-| Video/media          | `bun run test:video`      | Not applicable |
-| Manual workflow      |                           | Not applicable |
-| Visual evidence      |                           | Not applicable |
+| Gate                 | Exact command or evidence | Result |
+| -------------------- | ------------------------- | ------ |
+| Changed-range format | `bun run format:check`    |        |
+| Test suite           | `bun run test`            |        |
+| Build                | `bun run build`           |        |
+| Electron/package     | `bun run dist:dir`        |        |
+| Video/media          | `bun run test:video`      |        |
+| Manual workflow      |                           |        |
+| Visual evidence      |                           |        |
 
 - Environment-dependent or manual gaps:
 - Protected `macOS` check and evidence:

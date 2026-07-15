@@ -58,6 +58,7 @@ describe('reviewer infrastructure contract', () => {
 
   it('requires each residual finding class to supply its canonical evidence', () => {
     const issueForm = source('.github/ISSUE_TEMPLATE/accepted-residual.yml')
+    const reviewing = source('docs/REVIEWING.md')
     const sdlc = source('docs/SDLC.md')
 
     expect(issueForm).toContain('label: Finding class')
@@ -84,8 +85,48 @@ describe('reviewer infrastructure contract', () => {
     }
 
     expect(issueForm).toContain('without inventing a runtime trigger')
+    expect(reviewing).toContain('issue form is the evidence-field contract')
+    expect(reviewing).toContain('A human may submit the form directly')
+    expect(reviewing).toContain('an agent-authored equivalent')
+    expect(reviewing).toContain("author's role marker as its first\nnonblank line")
+    expect(reviewing).toContain(
+      'reproduce every applicable form field and tracking attestation\nwithout omission',
+    )
+
+    for (const canonicalField of [
+      'Originating pull request and review thread',
+      'Finding class',
+      'Runtime reachability',
+      'Affected contract or boundary',
+      'Class-specific evidence',
+      'Severity and impact',
+      'Acceptance rationale',
+      'Existing invariant, mitigation, or consistency mechanism',
+      'Supporting evidence and validation gaps',
+      'Closure acceptance criteria',
+      'Target milestone, dependency, or roadmap disposition',
+      'Tracking checks',
+    ]) {
+      expect(issueForm).toContain(`label: ${canonicalField}`)
+    }
+
     expect(sdlc).toContain('finding class and class-specific evidence')
     expect(sdlc).not.toContain('records its trigger')
+  })
+
+  it('requires evidence before a conditional validation gate is inapplicable', () => {
+    const pullRequestTemplate = source('.github/pull_request_template.md')
+
+    expect(pullRequestTemplate).toContain('NOT APPLICABLE — <reason>')
+    expect(pullRequestTemplate).toContain('NOT APPLICABLE is valid only with a concrete')
+    expect(pullRequestTemplate).toContain('applicability rationale')
+    expect(pullRequestTemplate).not.toMatch(/\|\s*Not applicable\s*\|/i)
+
+    for (const gate of ['Electron/package', 'Video/media', 'Manual workflow', 'Visual evidence']) {
+      const row = pullRequestTemplate.split(/\r?\n/).find((line) => line.includes(`| ${gate}`))
+      expect(row, `missing ${gate} row`).toBeDefined()
+      expect(row?.split('|').at(-2)?.trim(), `${gate} must start without a result`).toBe('')
+    }
   })
 
   it('requires a durable delivery Issue before assignment and a closing PR link', () => {

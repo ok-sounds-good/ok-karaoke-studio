@@ -175,8 +175,17 @@ The issue must record:
 - acceptance criteria for closing the residual; and
 - a target milestone, delivery dependency, or roadmap disposition.
 
-Use the **Accepted review residual** issue form when creating a new ticket and
-apply the `accepted-residual` label when that label exists. The review thread
+The **Accepted review residual** issue form is the evidence-field contract for a
+new residual ticket: its required and conditional fields implement the issue
+contents above. A human may submit the form directly. Because GitHub's generated
+form output cannot place an agent role marker first, an agent-authored equivalent
+must instead start with the substantive author's role marker as its first
+nonblank line and reproduce every applicable form field and tracking attestation
+without omission. Conditional runtime reachability remains required only for a
+runtime/path finding; an agent must not invent runtime evidence for a
+scope-integrity finding.
+
+Apply the `accepted-residual` label when that label exists. The review thread
 must link the issue, and the issue must link back to the pull request. The
 reviewer identifies the residual; only the maintainer can accept it.
 
