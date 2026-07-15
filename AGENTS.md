@@ -24,6 +24,9 @@ roadmap boundary.
 - Use Bun `1.3.14` and Node.js `24` or newer, as declared in `package.json`.
 - Install dependencies with `bun install --frozen-lockfile`.
 - Use repository scripts rather than substituting ad hoc commands.
+- Run `bun run format` after writes. It formats only changed Git ranges and may
+  expand them to their enclosing syntax structures; do not manipulate
+  whitespace to satisfy pull-request or file-length guidance.
 - Do not commit generated `dist/`, `release/`, logs, or local project artifacts.
 
 ## Branches and worktrees
@@ -71,7 +74,7 @@ roadmap boundary.
 Run the smallest sufficient validation while working, then the complete gate
 required by the change:
 
-- Every change: `bun run test` and `bun run build`.
+- Every change: `bun run format:check`, `bun run test`, and `bun run build`.
 - Electron, preload, main-process, or packaging changes: `bun run dist:dir`.
 - Video rendering, audio muxing, frame planning, or media-process changes:
   `bun run test:video`.

@@ -1,0 +1,115 @@
+#!/usr/bin/env node
+
+import { execFileSync, spawnSync } from 'node:child_process'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
+import path from 'node:path'
+import process from 'node:process'
+import { pathToFileURL } from 'node:url'
+
+function readStdin() {
+  return new Promise((resolve, reject) => {
+    let value = ''
+    process.stdin.setEncoding('utf8')
+    process.stdin.on('data', (chunk) => {
+      value += chunk
+    })
+    process.stdin.on('end', () => resolve(value))
+    process.stdin.on('error', reject)
+  })
+}
+
+export function collectToolPaths(toolInput = {}) {
+  const paths = new Set()
+  for (const key of ['path', 'file_path', 'filename']) {
+    if (typeof toolInput[key] === 'string') paths.add(toolInput[key])
+  }
+
+  const patch = typeof toolInput.command === 'string' ? toolInput.command : ''
+  const fileMarker = /^\*\*\* (?:Add|Update) File: (.+)$/gm
+  const moveMarker = /^\*\*\* Move to: (.+)$/gm
+  for (const match of patch.matchAll(fileMarker)) paths.add(match[1].trim())
+  for (const match of patch.matchAll(moveMarker)) paths.add(match[1].trim())
+
+  return [...paths]
+}
+
+function findRoot(cwd) {
+  try {
+    const root = execFileSync('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim()
+    return root ? realpathSync(root) : null
+  } catch {
+    return null
+  }
+}
+
+function isOkayKaraokeStudio(root) {
+  try {
+    const manifest = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'))
+    return (
+      manifest.name === 'okay-karaoke-studio' &&
+      manifest.scripts?.format === 'bun scripts/format-diff.mjs --write'
+    )
+  } catch {
+    return false
+  }
+}
+
+function normalizePaths(root, cwd, values) {
+  const results = []
+  const canonicalCwd = existsSync(cwd) ? realpathSync(cwd) : cwd
+  for (const value of values) {
+    const cwdCandidate = path.isAbsolute(value) ? value : path.resolve(canonicalCwd, value)
+    const rootCandidate = path.isAbsolute(value) ? value : path.resolve(root, value)
+    const candidate = existsSync(cwdCandidate) ? cwdCandidate : rootCandidate
+    const relative = path.relative(root, candidate)
+    if (relative.startsWith('..') || path.isAbsolute(relative)) continue
+    results.push(relative)
+  }
+  return [...new Set(results)]
+}
+
+export async function runHook(rawInput, { formatterPath = null } = {}) {
+  const event = JSON.parse(rawInput || '{}')
+  if (event.hook_event_name !== 'PostToolUse') return null
+  if (!['apply_patch', 'Edit', 'Write'].includes(event.tool_name)) return null
+
+  const cwd = event.cwd || process.cwd()
+  const root = findRoot(cwd)
+  if (!root || !isOkayKaraokeStudio(root)) return null
+
+  const paths = normalizePaths(root, cwd, collectToolPaths(event.tool_input))
+  if (paths.length === 0) return null
+
+  const formatter = formatterPath || path.join(root, 'scripts', 'format-diff.mjs')
+  if (!existsSync(formatter)) return null
+
+  const result = spawnSync(
+    process.execPath,
+    [formatter, '--write', ...paths.flatMap((value) => ['--path', value])],
+    { cwd: root, encoding: 'utf8' },
+  )
+
+  if (result.status !== 0) {
+    const detail = result.stderr.trim() || result.stdout.trim() || 'unknown formatter error'
+    throw new Error(`Changed-range formatting failed: ${detail}`)
+  }
+
+  const summary = result.stdout.trim()
+  return summary ? { systemMessage: summary } : null
+}
+
+const isEntryPoint = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
+if (isEntryPoint) {
+  readStdin()
+    .then(runHook)
+    .then((output) => {
+      if (output) process.stdout.write(`${JSON.stringify(output)}\n`)
+    })
+    .catch((error) => {
+      process.stderr.write(`${error.message}\n`)
+      process.exitCode = 2
+    })
+}

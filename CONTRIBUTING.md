@@ -20,6 +20,17 @@ export-format impact, and what was deliberately left out. For MVP work, identify
 the real-song workflow blocker being addressed and call out any supporting
 criterion that the evidence adds, removes, or revises.
 
+Run `bun run format` before validation. It applies the pinned formatter only to
+the changed Git hunks, expanding to the enclosing syntax structure when
+Prettier requires it. `bun run format:check` validates that same range contract
+without rewriting files; CI supplies the pull-request or push base commit. The
+range ratchet intentionally leaves untouched legacy lines alone and stops
+without writing if it cannot isolate a safe structural expansion. Use the
+full-repository `bun run format:all` only for a dedicated, behavior-neutral
+formatting change.
+The checked-in `.codex/hooks.json` runs the same formatter after Codex writes;
+it requires normal project-hook trust, not a separate user hook.
+
 Run `bun run dist:dir` for Electron or packaging changes. Run the gated
 `bun run test:video` smoke test for video, audio-muxing, or media-process changes;
 it requires Electron, FFmpeg, and FFprobe.
