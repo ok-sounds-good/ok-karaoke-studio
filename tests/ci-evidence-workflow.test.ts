@@ -21,11 +21,17 @@ describe('CI visual evidence contract', () => {
     const node = workflow.indexOf('uses: actions/setup-node@v6')
     const bun = workflow.indexOf('uses: oven-sh/setup-bun@v2')
     const build = workflow.indexOf('run: bun run build')
+    const path = workflow.indexOf('id: video-style-visual-path')
     const capture = workflow.indexOf('run: bun run test:visual')
     expect(node).toBeGreaterThan(0)
     expect(workflow.slice(node, bun)).toContain('node-version: 24')
     expect(node).toBeLessThan(bun)
     expect(build).toBeLessThan(capture)
+    expect(build).toBeLessThan(path)
+    expect(path).toBeLessThan(capture)
+    expect(workflow.slice(path, capture)).toContain(
+      'run: node scripts/visual-result-validation.cjs --emit-workflow-evidence-path',
+    )
     const packageJson = JSON.parse(await repositoryFile('package.json'))
     expect(packageJson.scripts['test:visual']).toBe('node scripts/video-style-visual-smoke.cjs')
   })
@@ -39,8 +45,9 @@ describe('CI visual evidence contract', () => {
     expect(workflow).toContain(
       'name: video-style-visual-${{ matrix.os-name }}-${{ github.run_id }}-${{ github.run_attempt }}',
     )
-    const leaf = '${{ runner.temp }}/okay-karaoke-studio-video-style-visual'
-    expect(workflow.match(new RegExp(leaf.replace(/[${}]/gu, '\\$&'), 'gu'))).toHaveLength(2)
+    const leaf = '${{ steps.video-style-visual-path.outputs.path }}'
+    expect(workflow.split(leaf)).toHaveLength(3)
+    expect(workflow).not.toContain('${{ runner.temp }}/okay-karaoke-studio-video-style-visual')
     expect(workflow).toContain('if-no-files-found: error')
     expect(workflow).toContain('retention-days: 14')
   })

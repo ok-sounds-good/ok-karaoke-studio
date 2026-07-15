@@ -295,6 +295,61 @@ describe('bounded child lifecycle', () => {
     expect(bounded.publicChildOutcomeCode('VISUAL_SMOKE', outcome)).toBe(
       'VISUAL_SMOKE_CHILD_FAILED',
     )
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('bounds captured settlement when a descendant retains stdio after child exit', async () => {
+    vi.useFakeTimers()
+    const child = new FakeChild()
+    const { parent, pending } = pendingChild(child, {
+      captureOutput: { classify: () => false, maxBytesPerStream: 64 },
+      spawnOptions: { stdio: ['ignore', 'pipe', 'pipe'] },
+    })
+    let settled = false
+    void pending.then(() => {
+      settled = true
+    })
+
+    child.exit(0)
+    await vi.advanceTimersByTimeAsync(999)
+    expect(settled).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+
+    const outcome = await pending
+    expect(outcome).toMatchObject({
+      code: 0,
+      terminationConfirmed: true,
+      terminationUnconfirmed: false,
+      timedOut: true,
+    })
+    expect(bounded.publicChildOutcomeCode('VISUAL_SMOKE', outcome)).toBe('VISUAL_SMOKE_TIMEOUT')
+    expect(child.kills).toEqual([])
+    expect(child.stdout.destroyed).toBe(true)
+    expect(child.stderr.destroyed).toBe(true)
+    expect(parent.listenerCount('SIGINT')).toBe(0)
+    expect(parent.listenerCount('SIGTERM')).toBe(0)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('preserves captured timeout escalation when SIGKILL exit never reaches close', async () => {
+    vi.useFakeTimers()
+    const child = new FakeChild()
+    const { pending } = pendingChild(child, {
+      captureOutput: { classify: () => false, maxBytesPerStream: 64 },
+      spawnOptions: { stdio: ['ignore', 'pipe', 'pipe'] },
+    })
+
+    await vi.advanceTimersByTimeAsync(3_250)
+    await expect(pending).resolves.toMatchObject({
+      signal: 'SIGKILL',
+      terminationConfirmed: true,
+      terminationUnconfirmed: false,
+      timedOut: true,
+    })
+    expect(child.kills).toEqual(['SIGTERM', 'SIGKILL'])
+    expect(child.stdout.destroyed).toBe(true)
+    expect(child.stderr.destroyed).toBe(true)
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it.each(['FONT_SMOKE', 'VISUAL_SMOKE'])(

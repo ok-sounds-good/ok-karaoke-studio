@@ -11,6 +11,8 @@ const RESULT_NAME = 'result.json'
 const EXPECTED_FILES = Object.freeze([BASELINE_NAME, RESULT_NAME])
 const VIEWPORT = Object.freeze({ height: 720, width: 1280 })
 const MAX_RESULT_BYTES = 16 * 1024
+const WORKFLOW_EVIDENCE_NAME = 'okay-karaoke-studio-video-style-visual'
+const WORKFLOW_PATH_ARGUMENT = '--emit-workflow-evidence-path'
 
 function resultError() {
   const error = new Error('VISUAL_SMOKE_RESULT_INVALID')
@@ -24,6 +26,45 @@ function statIdentity(stats) {
 
 function sameIdentity(left, right) {
   return Boolean(left && right && left.dev === right.dev && left.ino === right.ino)
+}
+
+function workflowEvidencePath(rawTemporaryRoot, pathApi = path) {
+  try {
+    if (
+      typeof rawTemporaryRoot !== 'string' ||
+      !rawTemporaryRoot ||
+      !pathApi ||
+      typeof pathApi.resolve !== 'function' ||
+      typeof pathApi.join !== 'function' ||
+      pathApi.resolve(rawTemporaryRoot) !== rawTemporaryRoot
+    )
+      throw resultError()
+    const output = pathApi.join(rawTemporaryRoot, WORKFLOW_EVIDENCE_NAME)
+    if (/[\r\n]/u.test(output)) throw resultError()
+    return validateFreshOutputPath(output, pathApi)
+  } catch (error) {
+    if (error?.code === 'VISUAL_SMOKE_RESULT_INVALID') throw error
+    throw resultError()
+  }
+}
+
+async function writeWorkflowEvidencePath(environment = process.env, fsApi = fs, pathApi = path) {
+  try {
+    const githubOutput = environment?.GITHUB_OUTPUT
+    if (
+      typeof githubOutput !== 'string' ||
+      !githubOutput ||
+      githubOutput.includes('\0') ||
+      /[\r\n]/u.test(githubOutput)
+    )
+      throw resultError()
+    const output = workflowEvidencePath(environment.RUNNER_TEMP, pathApi)
+    await fsApi.appendFile(githubOutput, `path=${output}\n`, 'utf8')
+    return output
+  } catch (error) {
+    if (error?.code === 'VISUAL_SMOKE_RESULT_INVALID') throw error
+    throw resultError()
+  }
 }
 
 function plainDataObject(value, keys) {
@@ -228,6 +269,18 @@ async function validateVisualResultDirectory(rawOutput, options = {}) {
   }
 }
 
+async function main(argv = process.argv.slice(2)) {
+  if (argv.length !== 1 || argv[0] !== WORKFLOW_PATH_ARGUMENT) throw resultError()
+  await writeWorkflowEvidencePath()
+}
+
+if (require.main === module) {
+  main().catch(() => {
+    process.stderr.write('VISUAL_SMOKE_RESULT_INVALID\n')
+    process.exitCode = 1
+  })
+}
+
 module.exports = {
   BASELINE_NAME,
   EXPECTED_FILES,
@@ -238,4 +291,6 @@ module.exports = {
   serializeManifest,
   validateBaselinePng,
   validateVisualResultDirectory,
+  workflowEvidencePath,
+  writeWorkflowEvidencePath,
 }

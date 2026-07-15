@@ -62,10 +62,14 @@ jobs:
       - name: Build renderer
         run: bun run build
 
+      - name: Resolve production-window visual evidence path
+        id: video-style-visual-path
+        run: node scripts/visual-result-validation.cjs --emit-workflow-evidence-path
+
       - name: Capture production-window visual evidence
         id: video-style-visual
         env:
-          OKS_VISUAL_EVIDENCE_DIR: ${{ runner.temp }}/okay-karaoke-studio-video-style-visual
+          OKS_VISUAL_EVIDENCE_DIR: ${{ steps.video-style-visual-path.outputs.path }}
         run: bun run test:visual
 
       - name: Upload production-window visual evidence
@@ -73,7 +77,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: video-style-visual-${{ matrix.os-name }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/okay-karaoke-studio-video-style-visual
+          path: ${{ steps.video-style-visual-path.outputs.path }}
           if-no-files-found: error
           retention-days: 14
 

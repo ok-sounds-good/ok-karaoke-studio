@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
-import { mkdir, mkdtemp, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, posix, win32 } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { validPng } from './support/png-fixture'
 
@@ -32,6 +32,34 @@ async function freshResult() {
 }
 
 describe('visual result validation', () => {
+  it('constructs exact native workflow paths without depending on the host platform', () => {
+    const posixRoot = '/Users/runner/work/_temp'
+    const windowsRoot = String.raw`D:\a\_temp`
+    expect(results.workflowEvidencePath(posixRoot, posix)).toBe(
+      `${posixRoot}/okay-karaoke-studio-video-style-visual`,
+    )
+    expect(results.workflowEvidencePath(windowsRoot, win32)).toBe(
+      String.raw`D:\a\_temp\okay-karaoke-studio-video-style-visual`,
+    )
+    expect(results.workflowEvidencePath(windowsRoot, win32)).not.toContain('/')
+    expect(() => results.workflowEvidencePath(String.raw`D:\a\_temp/`, win32)).toThrow(
+      'VISUAL_SMOKE_RESULT_INVALID',
+    )
+  })
+
+  it('writes the exact validated workflow path as one GitHub step output', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'oks-visual-workflow-'))
+    roots.push(root)
+    const githubOutput = join(root, 'github-output')
+    await writeFile(githubOutput, '')
+    const output = await results.writeWorkflowEvidencePath({
+      GITHUB_OUTPUT: githubOutput,
+      RUNNER_TEMP: root,
+    })
+    expect(await readFile(githubOutput, 'utf8')).toBe(`path=${output}\n`)
+    expect(output).toBe(join(root, 'okay-karaoke-studio-video-style-visual'))
+  })
+
   it('accepts only the exact hashed 1280 by 720 baseline contract', async () => {
     const { output } = await freshResult()
     await expect(results.validateVisualResultDirectory(output)).resolves.toMatchObject({

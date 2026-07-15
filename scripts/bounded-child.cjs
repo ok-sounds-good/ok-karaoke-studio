@@ -159,9 +159,20 @@ function runBoundedChild(options) {
     let postSpawnError = false
     let killFailed = false
     let terminationAttempted = false
+    let capturedExit = null
     const captured = createOutputCapture(captureConfig)
     const capturedListeners = []
 
+    const destroyCapturedStreams = () => {
+      if (!captured) return
+      for (const stream of [child?.stdout, child?.stderr]) {
+        try {
+          stream?.destroy?.()
+        } catch {
+          postSpawnError = true
+        }
+      }
+    }
     const cleanup = () => {
       if (timeout !== null) clearTimeoutImpl(timeout)
       if (forceKill !== null) clearTimeoutImpl(forceKill)
@@ -174,11 +185,8 @@ function runBoundedChild(options) {
       if (settled) return
       settled = true
       if (outcome.terminationUnconfirmed) {
+        destroyCapturedStreams()
         try {
-          if (captured) {
-            child.stdout?.destroy?.()
-            child.stderr?.destroy?.()
-          }
           child.unref()
         } catch {
           killFailed = true
@@ -197,6 +205,25 @@ function runBoundedChild(options) {
       if (captured) result.diagnostics = captured.outcome()
       resolve(result)
     }
+    const finishCapturedExitWithoutClose = () => {
+      if (!capturedExit) return false
+      destroyCapturedStreams()
+      finish(capturedExit)
+      return true
+    }
+    const scheduleForceSettle = () => {
+      if (settled || forceSettle !== null) return
+      forceSettle = setTimeoutImpl(() => {
+        if (settled || finishCapturedExitWithoutClose()) return
+        finish({
+          code: null,
+          signal: null,
+          startFailed: false,
+          terminationConfirmed: false,
+          terminationUnconfirmed: true,
+        })
+      }, forceSettleMs)
+    }
     const attemptKill = (signal) => {
       if (!child || childHasExited(child)) return
       try {
@@ -209,21 +236,11 @@ function runBoundedChild(options) {
       if (settled || !child || childHasExited(child)) return
       terminationAttempted = true
       attemptKill(signal)
-      if (forceKill) return
+      if (settled || forceKill) return
       forceKill = setTimeoutImpl(() => {
-        if (settled || childHasExited(child)) return
-        attemptKill('SIGKILL')
-        if (settled || childHasExited(child)) return
-        forceSettle = setTimeoutImpl(() => {
-          if (settled) return
-          finish({
-            code: null,
-            signal: null,
-            startFailed: false,
-            terminationConfirmed: false,
-            terminationUnconfirmed: true,
-          })
-        }, forceSettleMs)
+        if (settled) return
+        if (!childHasExited(child)) attemptKill('SIGKILL')
+        if (!settled) scheduleForceSettle()
       }, killGraceMs)
     }
     function forward(signal) {
@@ -249,7 +266,9 @@ function runBoundedChild(options) {
       return
     }
 
-    child.once('spawn', () => { spawned = true })
+    child.once('spawn', () => {
+      spawned = true
+    })
     child.on('error', () => {
       if (!spawned && !terminationAttempted) {
         finish({
@@ -279,10 +298,13 @@ function runBoundedChild(options) {
           stream.on('data', listener)
         }
       }
-      child.once('exit', () => {
-        if (timeout !== null) {
-          clearTimeoutImpl(timeout)
-          timeout = null
+      child.once('exit', (code, signal) => {
+        capturedExit = {
+          code,
+          signal,
+          startFailed: false,
+          terminationConfirmed: true,
+          terminationUnconfirmed: false,
         }
       })
       child.once('close', (code, signal) =>
@@ -307,6 +329,9 @@ function runBoundedChild(options) {
     }
     timeout = setTimeoutImpl(() => {
       timedOut = true
+      // Captured diagnostics settle on `close`, not `exit`. Keep this original
+      // timeout as the hard bound when a descendant retains the stdio pipes.
+      if (finishCapturedExitWithoutClose()) return
       requestTermination('SIGTERM')
     }, timeoutMs)
     // A signal can arrive synchronously inside a test or wrapper spawnImpl,
