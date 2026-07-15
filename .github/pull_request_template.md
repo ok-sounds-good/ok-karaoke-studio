@@ -24,6 +24,12 @@ Closes #
 - Packaging or security-update impact:
 - Documentation updated:
 
+## Adversarial review
+
+- Reviewer and commit range:
+- Recommendation:
+- Accepted residual issues: None
+
 ## Release note
 
 <!-- User-visible summary, or "None". -->

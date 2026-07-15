@@ -43,8 +43,12 @@ merge a checkpoint wholesale merely because its integrated test suite passed.
    pull requests. Minimize duplicated invariants and cross-module dependencies;
    never split a security or data-integrity invariant solely to satisfy the line
    target.
-6. Merge only after an independent adversarial review passes, the required
-   macOS and Windows CI checks pass, and all review conversations are resolved.
+6. Obtain an independent adversarial review using the reachability and finding
+   contract in [`REVIEWING.md`](./REVIEWING.md). A confirmed finding remains a
+   merge blocker until it is fixed or the maintainer explicitly accepts it with
+   a linked GitHub issue created before merge. Merge only after the review
+   passes, the required macOS and Windows CI checks pass, and all review
+   conversations are resolved.
 7. Squash merge, delete the branch, and leave `main` green and releasable.
 
 One human approval becomes required when a second maintainer is reliably available.
@@ -79,6 +83,9 @@ A change is done when:
   user-held decisions. Do not change license files, package metadata, or bundled
   binary policy without explicit user direction.
 - Documentation and the relevant release or roadmap status are updated.
+- Every accepted review residual links to its GitHub issue, and that issue
+  records its finding class and class-specific evidence, impact, deferral
+  rationale, and closure criteria.
 
 ## Recommended `main` ruleset
 

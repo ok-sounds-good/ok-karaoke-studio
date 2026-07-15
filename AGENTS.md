@@ -103,8 +103,11 @@ delegating work.
   edit the same worktree concurrently.
 - Give each write-capable agent an explicit file and behavior scope.
 - For nontrivial changes, obtain an independent adversarial review before merge.
+  Use the canonical reachability rubric and finding template in
+  `docs/REVIEWING.md`, and pass that document to reviewer agents.
   Treat confirmed correctness, security, data-integrity, and missing-test
-  findings as merge blockers until resolved or explicitly accepted by the user.
+  findings as merge blockers until resolved or explicitly accepted by the user
+  with a linked GitHub issue created before merge.
 - The lead agent waits for delegated results, resolves contradictions, and owns
   the final synthesis, validation statement, and merge recommendation.
 - Do not delegate trivial tasks where coordination cost exceeds likely value.
