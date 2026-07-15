@@ -46,6 +46,13 @@ const {
   createNativeCloseRendererReadiness,
   isNativeCloseRequestId,
 } = require('./native-close-arbiter.cjs')
+const {
+  VIEWPORT: VISUAL_SMOKE_VIEWPORT,
+  configureVisualSmokeBeforeReady,
+  installVisualSmokeFatalObserver,
+  parseVisualSmokeArguments,
+  runVisualSmoke,
+} = require('./video-style-visual-smoke.cjs')
 
 const APP_NAME = 'Okay Karaoke Studio'
 const APP_SCHEME = 'studio-app'
@@ -187,6 +194,16 @@ let mainWindow = null
 
 app.setName(APP_NAME)
 
+let visualSmokeConfig = null
+let visualSmokeFatalObserver = null
+let visualSmokeStartupFailed = false
+try {
+  visualSmokeConfig = configureVisualSmokeBeforeReady(app, parseVisualSmokeArguments(process.argv))
+  if (visualSmokeConfig) visualSmokeFatalObserver = installVisualSmokeFatalObserver(process)
+} catch {
+  visualSmokeStartupFailed = true
+}
+
 protocol.registerSchemesAsPrivileged([
   {
     scheme: APP_SCHEME,
@@ -223,9 +240,11 @@ function textResponse(message, status, extraHeaders = {}) {
 }
 
 function rendererOrigin() {
-  return app.isPackaged
-    ? `${APP_SCHEME}://${APP_HOST}`
-    : new URL(DEVELOPMENT_URL).origin
+  return useBuiltRenderer() ? `${APP_SCHEME}://${APP_HOST}` : new URL(DEVELOPMENT_URL).origin
+}
+
+function useBuiltRenderer() {
+  return app.isPackaged || visualSmokeConfig !== null
 }
 
 function appFilePathFromUrl(rawUrl) {
@@ -243,9 +262,8 @@ function appFilePathFromUrl(rawUrl) {
 
     const decodedPath = decodeURIComponent(url.pathname)
     if (decodedPath.includes('\0')) return null
-    const relativePath = decodedPath === '/' || decodedPath === ''
-      ? 'index.html'
-      : decodedPath.replace(/^\/+/, '')
+    const relativePath =
+      decodedPath === '/' || decodedPath === '' ? 'index.html' : decodedPath.replace(/^\/+/, '')
     const filePath = path.resolve(DIST_ROOT, relativePath)
     const pathWithinDist = path.relative(DIST_ROOT, filePath)
     if (
@@ -300,7 +318,8 @@ function installApplicationProtocol() {
         ? 'public, max-age=31536000, immutable'
         : 'no-cache',
       'Content-Length': String(fileStats.size),
-      'Content-Type': APP_MIME_TYPES.get(path.extname(filePath).toLowerCase()) || 'application/octet-stream',
+      'Content-Type':
+        APP_MIME_TYPES.get(path.extname(filePath).toLowerCase()) || 'application/octet-stream',
       'X-Content-Type-Options': 'nosniff',
     }
 
@@ -454,7 +473,9 @@ function documentsPath(fileName) {
 function requireStringWithinBytes(value, fieldName, maxBytes) {
   const text = requireString(value, fieldName)
   if (Buffer.byteLength(text, 'utf8') > maxBytes) {
-    throw new RangeError(`${fieldName} exceeds the ${Math.floor(maxBytes / (1024 * 1024))} MB limit`)
+    throw new RangeError(
+      `${fieldName} exceeds the ${Math.floor(maxBytes / (1024 * 1024))} MB limit`,
+    )
   }
   return text
 }
@@ -511,11 +532,7 @@ function normalizeProjectRequest(value) {
   return {
     path: optionalString(value.path, 'path'),
     suggestedName: optionalString(value.suggestedName, 'suggestedName'),
-    contents: requireStringWithinBytes(
-      value.contents,
-      'contents',
-      MAX_PROJECT_FILE_BYTES,
-    ),
+    contents: requireStringWithinBytes(value.contents, 'contents', MAX_PROJECT_FILE_BYTES),
   }
 }
 
@@ -536,12 +553,17 @@ async function writeTextExport(owner, request) {
     safeFileName(request.suggestedName, `lyrics.${request.format}`),
     request.format,
   )
-  const filePath = await showCanonicalSaveDialog(dialog.showSaveDialog.bind(dialog), owner, {
-    title: `Export ${request.format.toUpperCase()}`,
-    buttonLabel: 'Export',
-    defaultPath: documentsPath(defaultName),
-    filters: EXPORT_FILTERS[request.format],
-  }, request.format)
+  const filePath = await showCanonicalSaveDialog(
+    dialog.showSaveDialog.bind(dialog),
+    owner,
+    {
+      title: `Export ${request.format.toUpperCase()}`,
+      buttonLabel: 'Export',
+      defaultPath: documentsPath(defaultName),
+      filters: EXPORT_FILTERS[request.format],
+    },
+    request.format,
+  )
 
   if (!filePath) return null
   await writeUtf8FileAtomically(filePath, request.contents)
@@ -570,11 +592,7 @@ function normalizeVideoExportRequest(value) {
   return {
     audioPath,
     durationMs,
-    projectJson: requireStringWithinBytes(
-      value.projectJson,
-      'projectJson',
-      MAX_PROJECT_FILE_BYTES,
-    ),
+    projectJson: requireStringWithinBytes(value.projectJson, 'projectJson', MAX_PROJECT_FILE_BYTES),
     resolution: videoSettings.resolution,
     fps: videoSettings.fps,
     suggestedName: optionalString(value.suggestedName, 'suggestedName'),
@@ -633,9 +651,10 @@ function executeVideoExport({ request, preparation, destination, operation, onPr
     audioPath: request.audioPath,
     outputPath: path.resolve(destination),
     ffmpegPath: preparation,
-    readLinkedImage: (imagePath) => readLinkedImage(imagePath, {
-      decode: createElectronNativeImageDecoder(),
-    }),
+    readLinkedImage: (imagePath) =>
+      readLinkedImage(imagePath, {
+        decode: createElectronNativeImageDecoder(),
+      }),
     resolution: request.resolution,
     fps: request.fps,
     onProgress,
@@ -647,7 +666,10 @@ function executeVideoExport({ request, preparation, destination, operation, onPr
 
 function parseVideoExportProject(projectJson) {
   const project = parseProjectJson(projectJson)
-  if (project.stageStyle.background.mode === 'image') throw new Error('Linked-image video export is deferred until Live Preview can verify the same image.')
+  if (project.stageStyle.background.mode === 'image')
+    throw new Error(
+      'Linked-image video export is deferred until Live Preview can verify the same image.',
+    )
   return project
 }
 const videoExportOperation = createVideoExportOperation({
@@ -878,11 +900,7 @@ function registerIpcHandlers() {
     if (result.canceled || result.filePaths.length === 0) return null
 
     const filePath = path.resolve(result.filePaths[0])
-    const contents = await readUtf8FileWithinLimit(
-      filePath,
-      MAX_LRC_FILE_BYTES,
-      'LRC file',
-    )
+    const contents = await readUtf8FileWithinLimit(filePath, MAX_LRC_FILE_BYTES, 'LRC file')
     return { path: filePath, name: path.basename(filePath), contents }
   })
 
@@ -919,37 +937,64 @@ function sendMenuAction(action) {
 }
 
 function applicationMenuTemplate() {
-  const macAppMenu = process.platform === 'darwin'
-    ? [{
-        label: APP_NAME,
-        submenu: [
-          { role: 'about' },
-          { type: 'separator' },
-          { role: 'services' },
-          { type: 'separator' },
-          { role: 'hide' },
-          { role: 'hideOthers' },
-          { role: 'unhide' },
-          { type: 'separator' },
-          { role: 'quit' },
-        ],
-      }]
-    : []
+  const macAppMenu =
+    process.platform === 'darwin'
+      ? [
+          {
+            label: APP_NAME,
+            submenu: [
+              { role: 'about' },
+              { type: 'separator' },
+              { role: 'services' },
+              { type: 'separator' },
+              { role: 'hide' },
+              { role: 'hideOthers' },
+              { role: 'unhide' },
+              { type: 'separator' },
+              { role: 'quit' },
+            ],
+          },
+        ]
+      : []
 
   return [
     ...macAppMenu,
     {
       label: 'File',
       submenu: [
-        { label: 'New Project', accelerator: 'CommandOrControl+N', click: () => sendMenuAction('new') },
-        { label: 'Open Project…', accelerator: 'CommandOrControl+O', click: () => sendMenuAction('open') },
+        {
+          label: 'New Project',
+          accelerator: 'CommandOrControl+N',
+          click: () => sendMenuAction('new'),
+        },
+        {
+          label: 'Open Project…',
+          accelerator: 'CommandOrControl+O',
+          click: () => sendMenuAction('open'),
+        },
         { type: 'separator' },
         { label: 'Save', accelerator: 'CommandOrControl+S', click: () => sendMenuAction('save') },
-        { label: 'Save As…', accelerator: 'CommandOrControl+Shift+S', click: () => sendMenuAction('save-as') },
+        {
+          label: 'Save As…',
+          accelerator: 'CommandOrControl+Shift+S',
+          click: () => sendMenuAction('save-as'),
+        },
         { type: 'separator' },
-        { label: 'Import Audio…', accelerator: 'CommandOrControl+Shift+A', click: () => sendMenuAction('import-audio') },
-        { label: 'Import LRC…', accelerator: 'CommandOrControl+Shift+L', click: () => sendMenuAction('import-lrc') },
-        { label: 'Export Lyrics…', accelerator: 'CommandOrControl+Shift+E', click: () => sendMenuAction('export') },
+        {
+          label: 'Import Audio…',
+          accelerator: 'CommandOrControl+Shift+A',
+          click: () => sendMenuAction('import-audio'),
+        },
+        {
+          label: 'Import LRC…',
+          accelerator: 'CommandOrControl+Shift+L',
+          click: () => sendMenuAction('import-lrc'),
+        },
+        {
+          label: 'Export Lyrics…',
+          accelerator: 'CommandOrControl+Shift+E',
+          click: () => sendMenuAction('export'),
+        },
         { type: 'separator' },
         process.platform === 'darwin' ? { role: 'close' } : { role: 'quit' },
       ],
@@ -958,14 +1003,22 @@ function applicationMenuTemplate() {
       label: 'Edit',
       submenu: [
         { label: 'Undo', accelerator: 'CommandOrControl+Z', click: () => sendMenuAction('undo') },
-        { label: 'Redo', accelerator: 'Shift+CommandOrControl+Z', click: () => sendMenuAction('redo') },
+        {
+          label: 'Redo',
+          accelerator: 'Shift+CommandOrControl+Z',
+          click: () => sendMenuAction('redo'),
+        },
         { type: 'separator' },
         { role: 'cut' },
         { role: 'copy' },
         { role: 'paste' },
         { role: 'pasteAndMatchStyle' },
         { role: 'delete' },
-        { label: 'Select All', accelerator: 'CommandOrControl+A', click: () => sendMenuAction('select-all') },
+        {
+          label: 'Select All',
+          accelerator: 'CommandOrControl+A',
+          click: () => sendMenuAction('select-all'),
+        },
       ],
     },
     {
@@ -984,7 +1037,7 @@ function applicationMenuTemplate() {
       submenu: [
         { role: 'reload' },
         { role: 'forceReload' },
-        ...(app.isPackaged ? [] : [{ role: 'toggleDevTools' }]),
+        ...(useBuiltRenderer() ? [] : [{ role: 'toggleDevTools' }]),
         { type: 'separator' },
         { role: 'resetZoom' },
         { role: 'zoomIn' },
@@ -1014,7 +1067,7 @@ function isAllowedAppNavigation(rawUrl) {
   try {
     const url = new URL(rawUrl)
 
-    if (!app.isPackaged) {
+    if (!useBuiltRenderer()) {
       return url.origin === new URL(DEVELOPMENT_URL).origin
     }
 
@@ -1091,12 +1144,15 @@ function secureWebContents(contents) {
 async function createMainWindow() {
   if (mainWindow && !mainWindow.isDestroyed()) return mainWindow
 
+  const contentSize = visualSmokeConfig ? VISUAL_SMOKE_VIEWPORT : { height: 900, width: 1440 }
+
   const window = new BrowserWindow({
     title: APP_NAME,
-    width: 1440,
-    height: 900,
+    width: contentSize.width,
+    height: contentSize.height,
     minWidth: 1080,
     minHeight: 680,
+    enableLargerThanScreen: visualSmokeConfig !== null,
     show: false,
     backgroundColor: '#f8f6fb',
     useContentSize: true,
@@ -1114,6 +1170,7 @@ async function createMainWindow() {
 
   mainWindow = window
   secureWebContents(window.webContents)
+  if (visualSmokeConfig) visualSmokeFatalObserver.observeRenderer(window.webContents)
   const clearNativeCloseOwnershipAfterWindowClosed = createNativeCloseOwnershipCleanup(
     window.webContents,
     clearNativeCloseOwnership,
@@ -1137,7 +1194,7 @@ async function createMainWindow() {
     if (mainWindow === window) mainWindow = null
   })
 
-  if (app.isPackaged) {
+  if (useBuiltRenderer()) {
     await window.loadURL(PACKAGED_APP_URL)
   } else {
     await window.loadURL(DEVELOPMENT_URL)
@@ -1153,7 +1210,9 @@ function focusMainWindow() {
   }
 
   if (!mainWindow || mainWindow.isDestroyed()) {
-    void createMainWindow().catch((error) => console.error('Unable to create the main window:', error))
+    void createMainWindow().catch((error) =>
+      console.error('Unable to create the main window:', error),
+    )
     return
   }
 
@@ -1168,20 +1227,19 @@ function installRendererPermissionPolicy() {
     trustedOrigin: rendererOrigin(),
   })
   session.defaultSession.setPermissionCheckHandler(
-    (webContents, permission, requestingOrigin, details) => (
-      localFonts.check(webContents, permission, requestingOrigin, details)
-    ),
+    (webContents, permission, requestingOrigin, details) =>
+      localFonts.check(webContents, permission, requestingOrigin, details),
   )
-  session.defaultSession.setPermissionRequestHandler(
-    (webContents, permission, callback, details) => callback(
-      localFonts.request(webContents, permission, details),
-    ),
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) =>
+    callback(localFonts.request(webContents, permission, details)),
   )
 }
 
-const hasSingleInstanceLock = app.requestSingleInstanceLock()
+const hasSingleInstanceLock = !visualSmokeStartupFailed && app.requestSingleInstanceLock()
 
-if (!hasSingleInstanceLock) {
+if (visualSmokeStartupFailed) {
+  app.exit(1)
+} else if (!hasSingleInstanceLock) {
   app.quit()
 } else {
   app.on('second-instance', focusMainWindow)
@@ -1198,30 +1256,47 @@ if (!hasSingleInstanceLock) {
     nativeCloseArbiter.requestAppQuit()
   })
 
-  app.whenReady().then(async () => {
-    if (app.isPackaged) installApplicationProtocol()
-    installMediaProtocol()
-    registerIpcHandlers()
-    installApplicationMenu()
+  app
+    .whenReady()
+    .then(async () => {
+      if (useBuiltRenderer()) installApplicationProtocol()
+      installMediaProtocol()
+      registerIpcHandlers()
+      installApplicationMenu()
 
-    app.setAboutPanelOptions({
-      applicationName: APP_NAME,
-      applicationVersion: app.getVersion(),
+      app.setAboutPanelOptions({
+        applicationName: APP_NAME,
+        applicationVersion: app.getVersion(),
+      })
+
+      installRendererPermissionPolicy()
+
+      const window = await createMainWindow()
+      if (visualSmokeConfig) {
+        const outcome = await runVisualSmoke({
+          app,
+          config: visualSmokeConfig,
+          fatalObserver: visualSmokeFatalObserver,
+          window,
+        })
+        visualSmokeFatalObserver.dispose()
+        app.exit(outcome.ok && !visualSmokeFatalObserver.hasFatal() ? 0 : 1)
+      }
+    })
+    .catch((error) => {
+      if (visualSmokeConfig) {
+        app.exit(1)
+        return
+      }
+      console.error('Failed to start Okay Karaoke Studio:', error)
+      dialog.showErrorBox('Unable to start Okay Karaoke Studio', String(error?.message || error))
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.destroy()
+      app.quit()
     })
 
-    installRendererPermissionPolicy()
-
-    await createMainWindow()
-  }).catch((error) => {
-    console.error('Failed to start Okay Karaoke Studio:', error)
-    dialog.showErrorBox('Unable to start Okay Karaoke Studio', String(error?.message || error))
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.destroy()
-    app.quit()
-  })
-
-  app.on('activate', focusMainWindow)
+  if (!visualSmokeConfig) app.on('activate', focusMainWindow)
 
   app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') app.quit()
+    if (!visualSmokeConfig && process.platform !== 'darwin') app.quit()
   })
 }

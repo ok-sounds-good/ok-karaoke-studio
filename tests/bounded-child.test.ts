@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { EventEmitter, once } from 'node:events'
+import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const require = createRequire(import.meta.url)
@@ -13,6 +14,8 @@ const bounded = require('../scripts/bounded-child.cjs') as {
 class FakeChild extends EventEmitter {
   exitCode: number | null = null
   signalCode: string | null = null
+  stderr = new PassThrough()
+  stdout = new PassThrough()
   kills: string[] = []
   unrefs = 0
   killBehavior: 'exit-on-kill' | 'return-false' | 'throw' | 'ignore' = 'exit-on-kill'
@@ -28,14 +31,23 @@ class FakeChild extends EventEmitter {
     return true
   }
 
-  unref() { this.unrefs += 1; return this }
+  unref() {
+    this.unrefs += 1
+    return this
+  }
 
-  confirmSpawn() { this.emit('spawn') }
+  confirmSpawn() {
+    this.emit('spawn')
+  }
 
   exit(code = 0, signal: string | null = null) {
     this.exitCode = code
     this.signalCode = signal
     this.emit('exit', code, signal)
+  }
+
+  close(code = 0, signal: string | null = null) {
+    this.emit('close', code, signal)
   }
 }
 
@@ -248,6 +260,95 @@ describe('bounded child lifecycle', () => {
     await expect(pending).resolves.toMatchObject({ code: 0, terminationConfirmed: true })
     expect(parent.listenerCount('SIGINT')).toBe(0)
     expect(parent.listenerCount('SIGTERM')).toBe(0)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('caps private diagnostics and waits for close before settling captured output', async () => {
+    vi.useFakeTimers()
+    const child = new FakeChild()
+    const secret = 'fatal:/private/diagnostic-path'
+    const classify = vi.fn((_stdout: Buffer, stderr: Buffer) =>
+      stderr.toString('utf8').startsWith('fatal:'),
+    )
+    const { pending } = pendingChild(child, {
+      captureOutput: { classify, maxBytesPerStream: 8 },
+      spawnOptions: { stdio: ['ignore', 'pipe', 'pipe'] },
+    })
+    let settled = false
+    void pending.then(() => {
+      settled = true
+    })
+    child.stderr.write(secret)
+    child.exit(0)
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    child.close(0)
+    const outcome = await pending
+    expect(outcome).toMatchObject({
+      code: 0,
+      diagnostics: { fatal: true, overflow: true },
+      terminationConfirmed: true,
+    })
+    expect(classify).toHaveBeenCalledWith(Buffer.alloc(0), Buffer.from(secret.slice(0, 8)))
+    expect(JSON.stringify(outcome)).not.toContain('/private/diagnostic-path')
+    expect(bounded.publicChildOutcomeCode('VISUAL_SMOKE', outcome)).toBe(
+      'VISUAL_SMOKE_CHILD_FAILED',
+    )
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('bounds captured settlement when a descendant retains stdio after child exit', async () => {
+    vi.useFakeTimers()
+    const child = new FakeChild()
+    const { parent, pending } = pendingChild(child, {
+      captureOutput: { classify: () => false, maxBytesPerStream: 64 },
+      spawnOptions: { stdio: ['ignore', 'pipe', 'pipe'] },
+    })
+    let settled = false
+    void pending.then(() => {
+      settled = true
+    })
+
+    child.exit(0)
+    await vi.advanceTimersByTimeAsync(999)
+    expect(settled).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+
+    const outcome = await pending
+    expect(outcome).toMatchObject({
+      code: 0,
+      terminationConfirmed: true,
+      terminationUnconfirmed: false,
+      timedOut: true,
+    })
+    expect(bounded.publicChildOutcomeCode('VISUAL_SMOKE', outcome)).toBe('VISUAL_SMOKE_TIMEOUT')
+    expect(child.kills).toEqual([])
+    expect(child.stdout.destroyed).toBe(true)
+    expect(child.stderr.destroyed).toBe(true)
+    expect(parent.listenerCount('SIGINT')).toBe(0)
+    expect(parent.listenerCount('SIGTERM')).toBe(0)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('preserves captured timeout escalation when SIGKILL exit never reaches close', async () => {
+    vi.useFakeTimers()
+    const child = new FakeChild()
+    const { pending } = pendingChild(child, {
+      captureOutput: { classify: () => false, maxBytesPerStream: 64 },
+      spawnOptions: { stdio: ['ignore', 'pipe', 'pipe'] },
+    })
+
+    await vi.advanceTimersByTimeAsync(3_250)
+    await expect(pending).resolves.toMatchObject({
+      signal: 'SIGKILL',
+      terminationConfirmed: true,
+      terminationUnconfirmed: false,
+      timedOut: true,
+    })
+    expect(child.kills).toEqual(['SIGTERM', 'SIGKILL'])
+    expect(child.stdout.destroyed).toBe(true)
+    expect(child.stderr.destroyed).toBe(true)
     expect(vi.getTimerCount()).toBe(0)
   })
 
