@@ -1,0 +1,94 @@
+name: Accepted review residual
+description: Track a confirmed review finding that a maintainer explicitly accepts for later correction.
+title: '[Accepted residual]: '
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Create this issue only for a confirmed finding that will remain after
+        merge. Residual acceptance also requires explicit maintainer approval
+        and links in both directions between this issue and the originating pull
+        request or review thread.
+
+        A concern classified as "Not reachable under an enforced boundary" is
+        not an accepted residual and does not belong in this form.
+  - type: input
+    id: origin
+    attributes:
+      label: Originating pull request and review thread
+      description: Link the pull request and the exact review conversation.
+      placeholder: https://github.com/owner/repository/pull/123#discussion_r...
+    validations:
+      required: true
+  - type: dropdown
+    id: reachability
+    attributes:
+      label: Reachability
+      description: Use the canonical classification from docs/REVIEWING.md.
+      options:
+        - Current product path
+        - Accepted dependent behavior
+        - Platform/failure path
+        - Internal invariant only
+    validations:
+      required: true
+  - type: textarea
+    id: trigger
+    attributes:
+      label: Concrete trigger and boundary evidence
+      description: Give the smallest exact event order and the path or missing guard that makes it credible.
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Severity and impact
+      description: State the review severity and the resulting user or system harm.
+    validations:
+      required: true
+  - type: textarea
+    id: rationale
+    attributes:
+      label: Acceptance rationale
+      description: Explain why leaving this finding in the merge is acceptable now.
+    validations:
+      required: true
+  - type: textarea
+    id: mitigations
+    attributes:
+      label: Existing mitigations or enforced boundaries
+      description: Identify protections already in place, or write "None".
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Reproduction evidence and validation gaps
+      description: Link safe evidence and name checks that have not been run or cannot yet reproduce the path.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Closure acceptance criteria
+      description: List the correction and focused tests or evidence required to close this residual.
+    validations:
+      required: true
+  - type: input
+    id: target
+    attributes:
+      label: Target milestone, dependency, or roadmap disposition
+      placeholder: Hardening PR after #123, milestone 0.1, or docs/ROADMAP.md section
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Tracking checks
+      options:
+        - label: I searched for an existing issue and did not find a matching ticket.
+          required: true
+        - label: The maintainer explicitly accepted this residual.
+          required: true
+        - label: This issue links to the originating pull request or review thread, which links back here.
+          required: true

@@ -1,0 +1,142 @@
+# Adversarial Review Standard
+
+This is the canonical review contract for Okay Karaoke Studio pull requests.
+Reviewers use it with the product and delivery contracts in `MVP.md`,
+`ROADMAP.md`, and `SDLC.md`. A review should find credible failures in the
+change under review, not manufacture blockers from states that production
+boundaries already make impossible.
+
+## Review inputs
+
+Before reviewing:
+
+1. Identify the exact base and head commits and inspect the complete diff.
+2. Read the pull request's acceptance criteria, deliberate exclusions, and
+   validation record.
+3. Trace each changed path through the relevant renderer, preload, main-process,
+   filesystem, platform, or media boundary.
+4. Check the normal path, one realistic failure or recovery path, and one
+   cross-boundary integration edge when the change has such a boundary.
+5. Apply the validation matrix in `AGENTS.md` and `SDLC.md`; static inspection
+   does not substitute for required tests or hands-on evidence.
+
+## Classify reachability first
+
+Every proposed finding must use exactly one of these reachability labels:
+
+- **Current product path** — a user can reach the state through the current UI,
+  keyboard or accessibility commands, application menus, or another supported
+  workflow.
+- **Accepted dependent behavior** — an accepted, in-scope delivery slice relies
+  on the changed interface or state. A hypothetical feature or roadmap item is
+  not enough.
+- **Platform/failure path** — the operating system, Electron, IPC ordering,
+  asynchronous completion, filesystem, media process, cancellation, retry, or
+  recovery behavior can reach the state without contrived code changes.
+- **Internal invariant only** — a direct internal call or synthetic test can
+  represent the state, but no current, accepted-dependent, platform, or credible
+  failure path has been demonstrated.
+- **Not reachable under an enforced boundary** — a shared code boundary rejects
+  the state for every relevant entry point, and focused evidence covers that
+  enforcement. Use this label when recording why a concern is not actionable.
+
+Do not make a finding merge-blocking solely because an internal API can
+represent the state. Demonstrate a current product, accepted-dependent,
+platform, or credible failure path. If a state is intended to be impossible,
+prefer enforcing and testing that boundary over adding complexity to the core
+state machine.
+
+Visual UI assumptions are not enforced boundaries. Hidden or disabled controls
+do not by themselves constrain application menus, native window events, IPC
+messages, asynchronous completions, failure recovery, or accessibility paths.
+An interface restriction counts as enforced only when all relevant entry points
+converge on a checked boundary and the evidence covers it.
+
+## Finding contract
+
+Return findings first, ordered by severity. Each actionable finding must include:
+
+- **Severity and confidence** — distinguish demonstrated impact from uncertainty.
+- **Location** — exact file and line, or the smallest owning symbol when line
+  anchors are unstable.
+- **Reachability** — one label from the list above.
+- **Concrete trigger** — the smallest exact action, event, and completion order
+  that reaches the failure.
+- **Boundary evidence** — the call path, event path, or missing guard that makes
+  the trigger credible.
+- **Preventing invariant** — state whether prevention is mechanically enforced,
+  merely assumed by the current UI, or absent.
+- **Impact** — the resulting user or system harm, including data, security,
+  correctness, recovery, latency, or accessibility consequences.
+- **Smallest defensible correction** — say whether the fix belongs in core
+  handling or at the boundary that should prohibit the state.
+- **Required validation** — name the focused regression test or manual/platform
+  evidence that would prove the correction.
+
+A finding is merge-blocking when it demonstrates a credible correctness,
+security, data-integrity, accepted-behavior, or required-validation failure.
+Maintainability is actionable only when the reviewer identifies a concrete
+failure risk; style preferences and speculative future callers are not findings.
+
+For interactive timing, playback, and drag paths, evaluate both correctness and
+real-time responsiveness. A correction is not complete if it prevents a rare
+state by materially degrading the primary editing experience without measured
+justification.
+
+## Accepted residuals require an issue
+
+A confirmed finding remains unresolved until it is fixed or explicitly accepted
+by the maintainer. Residual acceptance requires a linked GitHub issue created
+before merge; prose in the pull request or a resolved review thread is not a
+ticket substitute. Use an existing matching issue rather than creating a
+duplicate.
+
+The issue must record:
+
+- the originating pull request and review thread;
+- the reachability label, concrete trigger, and boundary evidence;
+- impact, severity, and the reason deferral is acceptable now;
+- existing mitigations or enforced boundaries;
+- available reproduction evidence and any validation gap;
+- acceptance criteria for closing the residual; and
+- a target milestone, delivery dependency, or roadmap disposition.
+
+Use the **Accepted review residual** issue form when creating a new ticket and
+apply the `accepted-residual` label when that label exists. The review thread
+must link the issue, and the issue must link back to the pull request. The
+reviewer identifies the residual; only the maintainer can accept it.
+
+Security-sensitive details may instead use a private advisory or other
+restricted ticket, with a non-sensitive reference in the pull request.
+Unconfirmed theoretical concerns need no issue unless the team chooses to carry
+them forward as actionable work.
+
+## Review outcome
+
+After the findings, report:
+
+1. **Recommendation** — `PASS`, `NOT PASS`, or
+   `PASS WITH ACCEPTED RESIDUALS` followed by issue links. Do not use the latter
+   until the maintainer has explicitly accepted every linked residual.
+2. **Residual risk** — remaining uncertainty, even when it is not actionable.
+3. **Validation gaps** — exact environment-dependent or manual checks not
+   observed by the reviewer.
+
+If there are no actionable findings, say so explicitly. A clean static review
+does not claim that unrun gates passed.
+
+## Reusable review assignment
+
+Pass this compact instruction to an independent reviewer along with the branch
+or commit range:
+
+> Review `<base>...<head>` independently under `docs/REVIEWING.md`. Read
+> `AGENTS.md`, `docs/MVP.md`, `docs/ROADMAP.md`, `docs/SDLC.md`, and
+> `CONTRIBUTING.md` before judging the diff. Return findings first and use the
+> canonical finding fields and reachability labels. Do not block solely because
+> an internal API can represent a state; demonstrate a current,
+> accepted-dependent, platform, or credible failure path. Do not treat visual UI
+> restrictions as enforced boundaries. A confirmed residual can pass only after
+> explicit maintainer acceptance and a linked GitHub issue. Report residual risk
+> and unobserved validation even when there are no findings. Do not edit the
+> worktree or manage repository lifecycle.
