@@ -31,6 +31,10 @@ merge a checkpoint wholesale merely because its integrated test suite passed.
    limit: a documented invariant class may exceed it when splitting schema,
    trust-boundary, persistence, or renderer/export parity changes would make the
    result less safe or less reviewable.
+   Formatting never counts as a way to meet this target. A dedicated
+   whole-repository formatter pass may receive a complete-invariant exception
+   only after full behavior-preservation gates and an independent adversarial
+   review find no formatting-induced semantic change.
 4. Record scope, tests, manual checks, project-format impact, export or licensing
    impact, and deliberate exclusions in the pull request. For MVP work, record
    the observation from the real-song attempt and any supporting contract
