@@ -33,7 +33,11 @@ function profile(prefix: string) {
 describe('visual smoke launcher', () => {
   it('passes only the fixed production-smoke arguments to a bounded child', async () => {
     const output = await outputPath()
-    const runChild = vi.fn(async () => ({ code: 0, signal: null }))
+    const runChild = vi.fn(async () => ({
+      code: 0,
+      diagnostics: { fatal: false, overflow: false },
+      signal: null,
+    }))
     const validateResult = vi.fn(async () => ({ ok: true }))
     const created = [profile('user'), profile('session')]
     const outcome = await launcher.runLauncher(
@@ -53,8 +57,14 @@ describe('visual smoke launcher', () => {
     expect(runChild).toHaveBeenCalledWith(
       expect.objectContaining({
         executable: '/electron',
-        spawnOptions: { cwd: launcher.REPOSITORY_ROOT, stdio: 'ignore' },
+        spawnOptions: {
+          cwd: launcher.REPOSITORY_ROOT,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        },
       }),
+    )
+    expect(runChild.mock.calls[0][0].captureOutput.maxBytesPerStream).toBe(
+      launcher.MAX_DIAGNOSTIC_BYTES,
     )
     const args = runChild.mock.calls[0][0].args
     expect(args).toEqual([
@@ -94,6 +104,63 @@ describe('visual smoke launcher', () => {
       ok: false,
     })
     expect(JSON.stringify(writeFailure.mock.calls)).not.toContain('/private/electron')
+  })
+
+  it('rejects a zero-exit child with a captured fatal without leaking diagnostics', async () => {
+    const output = await outputPath()
+    const writeFailure = vi.fn(async () => 'created')
+    const validateResult = vi.fn()
+    const secret = 'TypeError: Object has been destroyed at /private/project/main.cjs:1'
+    const outcome = await launcher.runLauncher(
+      { argv: [output], executable: '/electron' },
+      {
+        createProfile: vi
+          .fn()
+          .mockResolvedValueOnce(profile('user'))
+          .mockResolvedValueOnce(profile('session')),
+        outputState: vi.fn(async () => ({ output, state: 'absent' })),
+        runChild: vi.fn(async ({ captureOutput }) => ({
+          code: 0,
+          diagnostics: {
+            fatal: captureOutput.classify(Buffer.alloc(0), Buffer.from(secret)),
+            overflow: false,
+          },
+          signal: null,
+        })),
+        validateResult,
+        verifyProfile: vi.fn(async () => ({ retained: true })),
+        writeFailure,
+      },
+    )
+    expect(outcome).toEqual({ code: 'VISUAL_SMOKE_CHILD_FAILED', ok: false })
+    expect(validateResult).not.toHaveBeenCalled()
+    expect(JSON.stringify(writeFailure.mock.calls)).not.toContain(secret)
+  })
+
+  it('rejects capture overflow even when the child otherwise exits cleanly', async () => {
+    const output = await outputPath()
+    const validateResult = vi.fn()
+    await expect(
+      launcher.runLauncher(
+        { argv: [output], executable: '/electron' },
+        {
+          createProfile: vi
+            .fn()
+            .mockResolvedValueOnce(profile('user'))
+            .mockResolvedValueOnce(profile('session')),
+          outputState: vi.fn(async () => ({ output, state: 'absent' })),
+          runChild: vi.fn(async () => ({
+            code: 0,
+            diagnostics: { fatal: false, overflow: true },
+            signal: null,
+          })),
+          validateResult,
+          verifyProfile: vi.fn(async () => ({ retained: true })),
+          writeFailure: vi.fn(async () => 'created'),
+        },
+      ),
+    ).resolves.toEqual({ code: 'VISUAL_SMOKE_CHILD_FAILED', ok: false })
+    expect(validateResult).not.toHaveBeenCalled()
   })
 
   it('rejects an existing output before creating profiles or starting Electron', async () => {

@@ -38,6 +38,69 @@ function ignoredStdioOptions(spawnOptions) {
   return { ...spawnOptions, stdio: ignoredArray ? [...stdio] : 'ignore' }
 }
 
+function captureOptions(value) {
+  if (value === undefined) return null
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    !Number.isSafeInteger(value.maxBytesPerStream) ||
+    value.maxBytesPerStream < 1 ||
+    value.maxBytesPerStream > 1024 * 1024 ||
+    typeof value.classify !== 'function'
+  )
+    return false
+  return {
+    classify: value.classify,
+    maxBytesPerStream: value.maxBytesPerStream,
+  }
+}
+
+function capturedStdioOptions(spawnOptions) {
+  if (!spawnOptions || typeof spawnOptions !== 'object' || Array.isArray(spawnOptions)) return null
+  const stdio = spawnOptions.stdio
+  const expected = ['ignore', 'pipe', 'pipe']
+  if (
+    stdio !== undefined &&
+    (!Array.isArray(stdio) ||
+      stdio.length !== expected.length ||
+      stdio.some((entry, index) => entry !== expected[index]))
+  )
+    return null
+  return { ...spawnOptions, stdio: expected }
+}
+
+function createOutputCapture(options) {
+  if (!options) return null
+  const buffers = { stderr: [], stdout: [] }
+  const byteCounts = { stderr: 0, stdout: 0 }
+  let overflow = false
+
+  const append = (stream, value) => {
+    const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value)
+    const remaining = options.maxBytesPerStream - byteCounts[stream]
+    if (bytes.length > remaining) overflow = true
+    if (remaining <= 0) return
+    const retained = bytes.length > remaining ? bytes.subarray(0, remaining) : bytes
+    buffers[stream].push(Buffer.from(retained))
+    byteCounts[stream] += retained.length
+  }
+  const outcome = () => {
+    let fatal = true
+    try {
+      fatal =
+        options.classify(
+          Buffer.concat(buffers.stdout, byteCounts.stdout),
+          Buffer.concat(buffers.stderr, byteCounts.stderr),
+        ) === true
+    } catch {
+      // A classifier failure cannot make captured diagnostics look clean.
+    }
+    return Object.freeze({ fatal, overflow })
+  }
+  return { append, outcome }
+}
+
 function validDuration(value) {
   return Number.isSafeInteger(value) && value >= 0
 }
@@ -70,9 +133,15 @@ function runBoundedChild(options) {
     processLike = process,
     setTimeoutImpl = setTimeout,
     clearTimeoutImpl = clearTimeout,
+    captureOutput,
   } = options
 
-  const safeSpawnOptions = ignoredStdioOptions(spawnOptions)
+  const captureConfig = captureOptions(captureOutput)
+  const safeSpawnOptions = captureConfig
+    ? capturedStdioOptions(spawnOptions)
+    : captureConfig === false
+      ? null
+      : ignoredStdioOptions(spawnOptions)
   if (
     !safeSpawnOptions || !validDuration(timeoutMs) ||
     !validDuration(killGraceMs) || !validDuration(forceSettleMs)
@@ -90,6 +159,8 @@ function runBoundedChild(options) {
     let postSpawnError = false
     let killFailed = false
     let terminationAttempted = false
+    const captured = createOutputCapture(captureConfig)
+    const capturedListeners = []
 
     const cleanup = () => {
       if (timeout !== null) clearTimeoutImpl(timeout)
@@ -97,19 +168,24 @@ function runBoundedChild(options) {
       if (forceSettle !== null) clearTimeoutImpl(forceSettle)
       processLike.removeListener('SIGINT', onInterrupt)
       processLike.removeListener('SIGTERM', onTermination)
+      for (const [stream, listener] of capturedListeners) stream.removeListener('data', listener)
     }
     const finish = (outcome) => {
       if (settled) return
       settled = true
       if (outcome.terminationUnconfirmed) {
         try {
+          if (captured) {
+            child.stdout?.destroy?.()
+            child.stderr?.destroy?.()
+          }
           child.unref()
         } catch {
           killFailed = true
         }
       }
       cleanup()
-      resolve({
+      const result = {
         forwardedSignal,
         killFailed,
         postSpawnError,
@@ -117,7 +193,9 @@ function runBoundedChild(options) {
         terminationAttempted,
         timedOut,
         ...outcome,
-      })
+      }
+      if (captured) result.diagnostics = captured.outcome()
+      resolve(result)
     }
     const attemptKill = (signal) => {
       if (!child || childHasExited(child)) return
@@ -186,13 +264,47 @@ function runBoundedChild(options) {
       postSpawnError = true
       requestTermination('SIGTERM')
     })
-    child.once('exit', (code, signal) => finish({
-      code,
-      signal,
-      startFailed: false,
-      terminationConfirmed: true,
-      terminationUnconfirmed: false,
-    }))
+    if (captured) {
+      const streams = [
+        ['stdout', child.stdout],
+        ['stderr', child.stderr],
+      ]
+      if (streams.some(([, stream]) => !stream || typeof stream.on !== 'function')) {
+        postSpawnError = true
+        requestTermination('SIGTERM')
+      } else {
+        for (const [name, stream] of streams) {
+          const listener = (value) => captured.append(name, value)
+          capturedListeners.push([stream, listener])
+          stream.on('data', listener)
+        }
+      }
+      child.once('exit', () => {
+        if (timeout !== null) {
+          clearTimeoutImpl(timeout)
+          timeout = null
+        }
+      })
+      child.once('close', (code, signal) =>
+        finish({
+          code,
+          signal,
+          startFailed: false,
+          terminationConfirmed: true,
+          terminationUnconfirmed: false,
+        }),
+      )
+    } else {
+      child.once('exit', (code, signal) =>
+        finish({
+          code,
+          signal,
+          startFailed: false,
+          terminationConfirmed: true,
+          terminationUnconfirmed: false,
+        }),
+      )
+    }
     timeout = setTimeoutImpl(() => {
       timedOut = true
       requestTermination('SIGTERM')
@@ -212,6 +324,9 @@ function publicChildOutcomeCode(prefix, outcome) {
   if (outcome.terminationUnconfirmed) return `${prefix}_TERMINATION_UNCONFIRMED`
   if (outcome.timedOut) return `${prefix}_TIMEOUT`
   if (outcome.signal) return `${prefix}_CHILD_SIGNAL`
+  if (outcome.diagnostics?.overflow || outcome.diagnostics?.fatal) {
+    return `${prefix}_CHILD_FAILED`
+  }
   if (outcome.postSpawnError || outcome.code !== 0) return `${prefix}_CHILD_FAILED`
   return null
 }

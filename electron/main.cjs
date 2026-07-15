@@ -49,6 +49,7 @@ const {
 const {
   VIEWPORT: VISUAL_SMOKE_VIEWPORT,
   configureVisualSmokeBeforeReady,
+  installVisualSmokeFatalObserver,
   parseVisualSmokeArguments,
   runVisualSmoke,
 } = require('./video-style-visual-smoke.cjs')
@@ -194,9 +195,11 @@ let mainWindow = null
 app.setName(APP_NAME)
 
 let visualSmokeConfig = null
+let visualSmokeFatalObserver = null
 let visualSmokeStartupFailed = false
 try {
   visualSmokeConfig = configureVisualSmokeBeforeReady(app, parseVisualSmokeArguments(process.argv))
+  if (visualSmokeConfig) visualSmokeFatalObserver = installVisualSmokeFatalObserver(process)
 } catch {
   visualSmokeStartupFailed = true
 }
@@ -1269,8 +1272,13 @@ if (visualSmokeStartupFailed) {
 
       const window = await createMainWindow()
       if (visualSmokeConfig) {
-        const outcome = await runVisualSmoke({ app, config: visualSmokeConfig, window })
-        app.exit(outcome.ok ? 0 : 1)
+        const outcome = await runVisualSmoke({
+          app,
+          config: visualSmokeConfig,
+          fatalObserver: visualSmokeFatalObserver,
+          window,
+        })
+        app.exit(outcome.ok && !visualSmokeFatalObserver.hasFatal() ? 0 : 1)
       }
     })
     .catch((error) => {

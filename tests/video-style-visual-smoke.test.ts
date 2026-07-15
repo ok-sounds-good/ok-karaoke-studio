@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module'
+import { EventEmitter } from 'node:events'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -108,6 +109,7 @@ describe('production-window visual smoke', () => {
   it('captures, validates, publishes baseline before result, and destroys the window', async () => {
     const window = fakeWindow(undefined, 2)
     const publish = vi.fn(async (_output, artifacts) => {
+      expect(window.isDestroyed()).toBe(true)
       expect(artifacts.map(({ name }: { name: string }) => name)).toEqual([
         '01-baseline.png',
         'result.json',
@@ -136,7 +138,9 @@ describe('production-window visual smoke', () => {
         throw new Error('/private/song.mp3')
       }),
     )
-    const writeFailure = vi.fn(async () => undefined)
+    const writeFailure = vi.fn(async () => {
+      expect(window.isDestroyed()).toBe(true)
+    })
     await expect(
       smoke.runVisualSmoke(
         {
@@ -155,6 +159,64 @@ describe('production-window visual smoke', () => {
     expect(window.destroy).toHaveBeenCalledOnce()
   })
 
+  it('cannot publish or report success when window teardown throws', async () => {
+    const window = fakeWindow()
+    window.destroy.mockImplementation(() => {
+      throw new Error('destroyed BrowserWindow access')
+    })
+    const publish = vi.fn()
+    const writeFailure = vi.fn(async () => undefined)
+
+    await expect(
+      smoke.runVisualSmoke(
+        { app: {}, config: { output: '/safe/evidence' }, window },
+        { focus: vi.fn(async () => true), publish, writeFailure },
+      ),
+    ).resolves.toEqual({ ok: false })
+    expect(publish).not.toHaveBeenCalled()
+    expect(writeFailure).toHaveBeenCalledWith('/safe/evidence', {
+      code: 'VISUAL_SMOKE_FAILED',
+      ok: false,
+    })
+  })
+
+  it.each(['uncaughtException', 'unhandledRejection'])(
+    'consumes a teardown %s without a default throw or success publication',
+    async (fatalEvent) => {
+      const stderr = { write: vi.fn(() => true) }
+      const processLike = Object.assign(new EventEmitter(), { stderr })
+      const fatalObserver = smoke.installVisualSmokeFatalObserver(processLike)
+      const window = fakeWindow()
+      const publish = vi.fn()
+      const writeFailure = vi.fn(async () => undefined)
+      const secret = '/private/teardown-stack'
+
+      await expect(
+        smoke.runVisualSmoke(
+          { app: {}, config: { output: '/safe/evidence' }, fatalObserver, window },
+          {
+            focus: vi.fn(async () => true),
+            publish,
+            settle: vi.fn(async () => {
+              expect(() => processLike.emit(fatalEvent, new Error(secret))).not.toThrow()
+            }),
+            writeFailure,
+          },
+        ),
+      ).resolves.toEqual({ ok: false })
+      expect(publish).not.toHaveBeenCalled()
+      expect(writeFailure).toHaveBeenCalledWith('/safe/evidence', {
+        code: 'VISUAL_SMOKE_FAILED',
+        ok: false,
+      })
+      expect(stderr.write).toHaveBeenCalledWith(smoke.FATAL_DIAGNOSTIC)
+      expect(JSON.stringify(stderr.write.mock.calls)).not.toContain(secret)
+      fatalObserver.dispose()
+      expect(processLike.listenerCount('uncaughtException')).toBe(0)
+      expect(processLike.listenerCount('unhandledRejection')).toBe(0)
+    },
+  )
+
   it('routes smoke mode through the built protocol without weakening window security', async () => {
     const source = await readFile(join(process.cwd(), 'electron/main.cjs'), 'utf8')
     expect(source.indexOf('configureVisualSmokeBeforeReady')).toBeLessThan(
@@ -162,6 +224,11 @@ describe('production-window visual smoke', () => {
     )
     expect(source).toContain('app.isPackaged || visualSmokeConfig !== null')
     expect(source).toContain('await window.loadURL(PACKAGED_APP_URL)')
+    expect(source).toContain(
+      'if (visualSmokeConfig) visualSmokeFatalObserver = installVisualSmokeFatalObserver(process)',
+    )
+    expect(source).toContain('createNativeCloseOwnershipCleanup(')
+    expect(source).toContain('clearNativeCloseOwnershipAfterWindowClosed()')
     for (const invariant of [
       'contextIsolation: true',
       'nodeIntegration: false',
