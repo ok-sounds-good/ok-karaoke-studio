@@ -20,7 +20,9 @@ const VIDEO_RESOLUTION_PRESETS = Object.freeze({
 const VIDEO_FRAME_RATES = Object.freeze([30, 60])
 const DEFAULT_VIDEO_RESOLUTION = '720p'
 const DEFAULT_VIDEO_FPS = 30
-const VIDEO_RENDER_FPS = DEFAULT_VIDEO_FPS
+// This controls only the hidden export compositor. Project and FFmpeg rates
+// remain the authored 30 or 60 fps selected above.
+const OFFSCREEN_CAPTURE_FPS = 240
 const MAX_VIDEO_DURATION_MS = 30 * 60 * 1000
 const MAX_VIDEO_FRAMES = Math.ceil(MAX_VIDEO_DURATION_MS * Math.max(...VIDEO_FRAME_RATES) / 1_000)
 function normalizeVideoSettings(value = {}) {
@@ -333,15 +335,37 @@ async function promoteVideoOutput(partialPath, outputPath, {
   onPromotionComplete?.()
 }
 
-function waitForNextPaint(contents, update, signal) {
+function encodeJpegFrame(image, settings) {
+  const size = image.getSize()
+  const frame = size.width === settings.width && size.height === settings.height
+    ? image
+    : image.resize({ width: settings.width, height: settings.height, quality: 'best' })
+  return frame.toJPEG(95)
+}
+
+function presentRequestedFrame(contents, update, settings, signal) {
   return new Promise((resolve, reject) => {
-    let updateFinished = false
+    let paintingStarted = false
+    let settled = false
     const cleanup = () => {
       clearTimeout(timeout)
       contents.off('paint', onPaint)
       signal?.removeEventListener('abort', onAbort)
     }
+    const stopPainting = () => {
+      if (!paintingStarted) return null
+      paintingStarted = false
+      try {
+        contents.stopPainting()
+        return null
+      } catch (error) {
+        return error
+      }
+    }
     const fail = (error) => {
+      if (settled) return
+      settled = true
+      stopPainting()
       cleanup()
       reject(error)
     }
@@ -349,9 +373,17 @@ function waitForNextPaint(contents, update, signal) {
       fail(new Error('Timed out while rendering a video frame'))
     }, 10_000)
     const onPaint = (_event, _dirtyRect, image) => {
-      if (!updateFinished || image.isEmpty()) return
-      cleanup()
-      resolve()
+      if (settled || image.isEmpty()) return
+      try {
+        const frame = encodeJpegFrame(image, settings)
+        settled = true
+        const stopError = stopPainting()
+        cleanup()
+        if (stopError) reject(stopError)
+        else resolve(frame)
+      } catch (error) {
+        fail(error)
+      }
     }
     const onAbort = () => fail(createAbortError())
     if (signal?.aborted) {
@@ -359,32 +391,19 @@ function waitForNextPaint(contents, update, signal) {
       return
     }
     signal?.addEventListener('abort', onAbort, { once: true })
-    contents.on('paint', onPaint)
     Promise.resolve()
-      .then(update)
+      .then(() => settled ? undefined : update())
       .then(() => {
-        throwIfAborted(signal)
-        updateFinished = true
-        // Offscreen rendering does not promise that capturePage observes the
-        // compositor state produced by the immediately preceding DOM update.
-        // Invalidate and consume the following paint so every encoded frame is
-        // tied to the requested lyric state.
-        contents.invalidate()
-      })
-      .catch(fail)
+        if (settled) return
+        try {
+          contents.on('paint', onPaint)
+          paintingStarted = true
+          contents.startPainting()
+        } catch (error) {
+          fail(error)
+        }
+      }, fail)
   })
-}
-
-async function captureRenderedPage(contents, update, signal) {
-  await waitForNextPaint(contents, update, signal)
-  throwIfAborted(signal)
-  // The paint event is the presentation barrier. capturePage then copies the
-  // fully composed surface instead of reusing Electron's offscreen paint image,
-  // whose backing storage may be recycled by a later frame.
-  const image = await contents.capturePage()
-  throwIfAborted(signal)
-  if (image.isEmpty()) throw new Error('Electron returned an empty video frame')
-  return image
 }
 
 function terminateChild(child) {
@@ -485,20 +504,16 @@ async function findFfmpeg(preferredPath, signal) {
   throw new Error('FFmpeg was not found. Install FFmpeg or set OKAY_KARAOKE_FFMPEG to its path.')
 }
 
-async function writeJpegFrame(stream, image, settings, signal) {
+async function writeJpegFrame(stream, frame, signal) {
   throwIfAborted(signal)
   if (stream.destroyed) throw new Error('FFmpeg stopped accepting video frames')
-  const size = image.getSize()
-  const frame = size.width === settings.width && size.height === settings.height
-    ? image
-    : image.resize({ width: settings.width, height: settings.height, quality: 'best' })
-  if (!stream.write(frame.toJPEG(95))) {
+  if (!stream.write(frame)) {
     await once(stream, 'drain', signal ? { signal } : undefined)
   }
   throwIfAborted(signal)
 }
 
-async function renderVideoFrames(BrowserWindow, index, timeline, stream, settings, onProgress, signal) {
+async function renderVideoFrames(BrowserWindow, project, timeline, stream, settings, onProgress, signal) {
   throwIfAborted(signal)
   const window = new BrowserWindow({
     show: false,
@@ -514,7 +529,7 @@ async function renderVideoFrames(BrowserWindow, index, timeline, stream, setting
       webSecurity: true,
     },
   })
-  window.webContents.setFrameRate(settings.fps)
+  window.webContents.setFrameRate(OFFSCREEN_CAPTURE_FPS)
   const onAbort = () => {
     if (!window.isDestroyed()) window.destroy()
   }
@@ -524,6 +539,8 @@ async function renderVideoFrames(BrowserWindow, index, timeline, stream, setting
     const documentUrl = `data:text/html;charset=utf-8,${encodeURIComponent(renderDocument(settings))}`
     await window.loadURL(documentUrl)
     throwIfAborted(signal)
+    window.webContents.stopPainting()
+    const index = createVideoIndex(project)
     const cursor = createFrameCursor(index)
     let lastProgressMs = Number.NEGATIVE_INFINITY
 
@@ -532,10 +549,14 @@ async function renderVideoFrames(BrowserWindow, index, timeline, stream, setting
       const currentMs = timeline.times[frameIndex]
       const state = frameStateAtIndex(index, currentMs, cursor)
       const stateJson = JSON.stringify(state)
-      const image = await captureRenderedPage(window.webContents, () =>
-        window.webContents.executeJavaScript(`window.renderKaraokeFrame(${stateJson},${frameIndex})`),
-      signal)
-      await writeJpegFrame(stream, image, settings, signal)
+      const frame = await presentRequestedFrame(window.webContents, () =>
+        window.webContents.executeJavaScript(
+          `(async()=>{const result=window.renderKaraokeFrame(${stateJson},${frameIndex});` +
+          'await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));' +
+          'return result})()',
+        ),
+      settings, signal)
+      await writeJpegFrame(stream, frame, signal)
       if (
         frameIndex === 0 ||
         frameIndex === timeline.times.length - 1 ||
@@ -607,7 +628,6 @@ async function exportKaraokeVideo({
   const audioStats = await fs.stat(resolvedAudioPath).catch(() => null)
   if (!audioStats?.isFile()) throw new Error('The linked audio file could not be read')
   const timeline = buildFrameTimelineForProject(project, durationMs, settings.fps)
-  const index = createVideoIndex(project)
   const executable = ffmpegPath || await findFfmpeg(undefined, signal)
   const parsedOutput = path.parse(resolvedOutputPath)
   const partialPath = path.join(
@@ -627,7 +647,7 @@ async function exportKaraokeVideo({
     ), {
       signal,
       inputWriter: async (stream) => {
-        await renderVideoFrames(BrowserWindow, index, timeline, stream, settings, onProgress, signal)
+        await renderVideoFrames(BrowserWindow, project, timeline, stream, settings, onProgress, signal)
         throwIfAborted(signal)
         onProgress?.({ phase: 'encoding', completed: 0, total: 1 })
       },
@@ -663,7 +683,6 @@ module.exports = {
   MAX_VIDEO_FRAMES,
   VIDEO_FRAME_RATES,
   VIDEO_RESOLUTION_PRESETS,
-  VIDEO_RENDER_FPS,
   buildFfmpegArguments,
   buildFrameTimeline,
   createVideoExportCommitState,
@@ -675,5 +694,6 @@ module.exports = {
   normalizeVideoSettings,
   parseProjectForVideo,
   promoteVideoOutput,
+  renderVideoFrames,
   renderDocument,
 }
