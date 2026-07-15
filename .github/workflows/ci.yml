@@ -26,13 +26,18 @@ jobs:
             runner: windows-latest
 
     env:
-      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
     steps:
       - name: Check out source
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
@@ -56,6 +61,21 @@ jobs:
 
       - name: Build renderer
         run: bun run build
+
+      - name: Capture production-window visual evidence
+        id: video-style-visual
+        env:
+          OKS_VISUAL_EVIDENCE_DIR: ${{ runner.temp }}/okay-karaoke-studio-video-style-visual
+        run: bun run test:visual
+
+      - name: Upload production-window visual evidence
+        if: ${{ always() && steps.video-style-visual.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: video-style-visual-${{ matrix.os-name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/okay-karaoke-studio-video-style-visual
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Package unpacked desktop app
         run: bunx electron-builder --dir --publish never
