@@ -20,6 +20,7 @@ const OPTIONS = Object.freeze({
 })
 const PACKAGED_APP_URL = 'studio-app://app/index.html'
 const PUBLIC_FAILURE = Object.freeze({ code: 'VISUAL_SMOKE_FAILED', ok: false })
+const FATAL_DIAGNOSTIC = '[oks-visual-smoke:fatal]\n'
 
 const STABLE_RENDERER_SCRIPT = `(() => {
   const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()))
@@ -64,6 +65,47 @@ function smokeError(code = 'VISUAL_SMOKE_FAILED') {
   const error = new Error(code)
   error.code = code
   return error
+}
+
+function installVisualSmokeFatalObserver(processLike = process) {
+  if (
+    !processLike ||
+    typeof processLike.on !== 'function' ||
+    typeof processLike.removeListener !== 'function'
+  )
+    throw smokeError('VISUAL_SMOKE_FATAL_OBSERVER_FAILED')
+  let fatal = false
+  const observeFatal = () => {
+    if (fatal) return
+    fatal = true
+    try {
+      processLike.stderr?.write?.(FATAL_DIAGNOSTIC)
+    } catch {
+      // Fatal state remains authoritative even when its fixed diagnostic cannot be written.
+    }
+  }
+  processLike.on('uncaughtException', observeFatal)
+  processLike.on('unhandledRejection', observeFatal)
+  return Object.freeze({
+    dispose() {
+      processLike.removeListener('uncaughtException', observeFatal)
+      processLike.removeListener('unhandledRejection', observeFatal)
+    },
+    hasFatal: () => fatal,
+  })
+}
+
+function fatalObserved(observer) {
+  if (!observer) return false
+  try {
+    return observer.hasFatal() === true
+  } catch {
+    return true
+  }
+}
+
+function settleTeardown() {
+  return new Promise((resolve) => setImmediate(resolve))
 }
 
 function parseOption(args, prefix) {
@@ -212,36 +254,65 @@ async function captureBaseline(window, app, options) {
 
 function destroyWindow(window) {
   try {
-    if (window && !window.isDestroyed()) window.destroy()
+    if (!window || typeof window.isDestroyed !== 'function' || typeof window.destroy !== 'function')
+      throw smokeError('VISUAL_SMOKE_TEARDOWN_FAILED')
+    if (window.isDestroyed()) return
+    window.destroy()
+    if (!window.isDestroyed()) throw smokeError('VISUAL_SMOKE_TEARDOWN_FAILED')
   } catch {
-    // Teardown is best effort after all evidence bytes are closed and published.
+    throw smokeError('VISUAL_SMOKE_TEARDOWN_FAILED')
   }
 }
 
-async function runVisualSmoke({ app, config, window }, dependencies = {}) {
+async function writeFailure(output, options) {
+  try {
+    await options.writeFailure(output, PUBLIC_FAILURE)
+  } catch {
+    // Preserve an existing or partially claimed output rather than replacing it.
+  }
+  return Object.freeze({ ok: false })
+}
+
+async function runVisualSmoke({ app, config, fatalObserver, window }, dependencies = {}) {
   const options = {
     createArtifacts: dependencies.createArtifacts || createResultArtifacts,
     focus: dependencies.focus || focusSmokeWindow,
     publish: dependencies.publish || publishArtifactBuffers,
+    settle: dependencies.settle || settleTeardown,
     writeFailure: dependencies.writeFailure || writeFreshLauncherFailure,
   }
+  let artifacts
+  let failed = fatalObserved(fatalObserver)
+  if (!failed) {
+    try {
+      artifacts = await captureBaseline(window, app, options)
+    } catch {
+      failed = true
+    }
+  }
   try {
-    const artifacts = await captureBaseline(window, app, options)
+    destroyWindow(window)
+  } catch {
+    failed = true
+  }
+  try {
+    await options.settle()
+  } catch {
+    failed = true
+  }
+  if (fatalObserved(fatalObserver)) failed = true
+  if (failed) return writeFailure(config.output, options)
+
+  try {
     await options.publish(config.output, artifacts)
     return Object.freeze({ ok: true })
   } catch {
-    try {
-      await options.writeFailure(config.output, PUBLIC_FAILURE)
-    } catch {
-      // Preserve an existing or partially claimed output rather than replacing it.
-    }
-    return Object.freeze({ ok: false })
-  } finally {
-    destroyWindow(window)
+    return writeFailure(config.output, options)
   }
 }
 
 module.exports = {
+  FATAL_DIAGNOSTIC,
   OPTIONS,
   PACKAGED_APP_URL,
   PUBLIC_FAILURE,
@@ -250,6 +321,7 @@ module.exports = {
   VIEWPORT,
   captureBaseline,
   configureVisualSmokeBeforeReady,
+  installVisualSmokeFatalObserver,
   parseVisualSmokeArguments,
   runVisualSmoke,
 }

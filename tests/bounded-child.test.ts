@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { EventEmitter, once } from 'node:events'
+import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const require = createRequire(import.meta.url)
@@ -13,6 +14,8 @@ const bounded = require('../scripts/bounded-child.cjs') as {
 class FakeChild extends EventEmitter {
   exitCode: number | null = null
   signalCode: string | null = null
+  stderr = new PassThrough()
+  stdout = new PassThrough()
   kills: string[] = []
   unrefs = 0
   killBehavior: 'exit-on-kill' | 'return-false' | 'throw' | 'ignore' = 'exit-on-kill'
@@ -28,14 +31,23 @@ class FakeChild extends EventEmitter {
     return true
   }
 
-  unref() { this.unrefs += 1; return this }
+  unref() {
+    this.unrefs += 1
+    return this
+  }
 
-  confirmSpawn() { this.emit('spawn') }
+  confirmSpawn() {
+    this.emit('spawn')
+  }
 
   exit(code = 0, signal: string | null = null) {
     this.exitCode = code
     this.signalCode = signal
     this.emit('exit', code, signal)
+  }
+
+  close(code = 0, signal: string | null = null) {
+    this.emit('close', code, signal)
   }
 }
 
@@ -249,6 +261,40 @@ describe('bounded child lifecycle', () => {
     expect(parent.listenerCount('SIGINT')).toBe(0)
     expect(parent.listenerCount('SIGTERM')).toBe(0)
     expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('caps private diagnostics and waits for close before settling captured output', async () => {
+    vi.useFakeTimers()
+    const child = new FakeChild()
+    const secret = 'fatal:/private/diagnostic-path'
+    const classify = vi.fn((_stdout: Buffer, stderr: Buffer) =>
+      stderr.toString('utf8').startsWith('fatal:'),
+    )
+    const { pending } = pendingChild(child, {
+      captureOutput: { classify, maxBytesPerStream: 8 },
+      spawnOptions: { stdio: ['ignore', 'pipe', 'pipe'] },
+    })
+    let settled = false
+    void pending.then(() => {
+      settled = true
+    })
+    child.stderr.write(secret)
+    child.exit(0)
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    child.close(0)
+    const outcome = await pending
+    expect(outcome).toMatchObject({
+      code: 0,
+      diagnostics: { fatal: true, overflow: true },
+      terminationConfirmed: true,
+    })
+    expect(classify).toHaveBeenCalledWith(Buffer.alloc(0), Buffer.from(secret.slice(0, 8)))
+    expect(JSON.stringify(outcome)).not.toContain('/private/diagnostic-path')
+    expect(bounded.publicChildOutcomeCode('VISUAL_SMOKE', outcome)).toBe(
+      'VISUAL_SMOKE_CHILD_FAILED',
+    )
   })
 
   it.each(['FONT_SMOKE', 'VISUAL_SMOKE'])(

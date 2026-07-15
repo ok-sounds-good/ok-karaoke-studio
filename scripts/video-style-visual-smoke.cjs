@@ -15,11 +15,30 @@ const {
 } = require('../electron/smoke-artifacts.cjs')
 const { publicChildOutcomeCode, publicStatusLine, runBoundedChild } = require('./bounded-child.cjs')
 const { validateVisualResultDirectory } = require('./visual-result-validation.cjs')
-const { OPTIONS, TRIGGER } = require('../electron/video-style-visual-smoke.cjs')
+const { FATAL_DIAGNOSTIC, OPTIONS, TRIGGER } = require('../electron/video-style-visual-smoke.cjs')
 
 const REPOSITORY_ROOT = path.resolve(__dirname, '..')
 const OUTPUT_ENVIRONMENT_KEY = 'OKS_VISUAL_EVIDENCE_DIR'
 const DEFAULT_TIMEOUT_MS = 45_000
+const MAX_DIAGNOSTIC_BYTES = 64 * 1024
+const FATAL_DIAGNOSTIC_PATTERNS = Object.freeze([
+  FATAL_DIAGNOSTIC.trim(),
+  'Uncaught Exception',
+  'UnhandledPromiseRejection',
+  'Unhandled Rejection',
+  'TypeError: Object has been destroyed',
+  'Fatal error',
+  'FATAL:',
+  'CHECK failed',
+])
+
+function capturedFatalDiagnostic(stdout, stderr) {
+  const captured = Buffer.concat([stdout, Buffer.from('\n'), stderr]).toString('utf8')
+  const normalized = captured.toLocaleLowerCase('en-US')
+  return FATAL_DIAGNOSTIC_PATTERNS.some((pattern) =>
+    normalized.includes(pattern.toLocaleLowerCase('en-US')),
+  )
+}
 
 function launcherError(code) {
   const error = new Error(code)
@@ -111,10 +130,20 @@ async function runLauncher(options = {}, supplied = {}) {
     const outcome = await dependencies.runChild({
       executable: options.executable || electronExecutable,
       args: childArguments(output, userProfile, sessionProfile),
-      spawnOptions: { cwd: REPOSITORY_ROOT, stdio: 'ignore' },
+      captureOutput: {
+        classify: capturedFatalDiagnostic,
+        maxBytesPerStream: MAX_DIAGNOSTIC_BYTES,
+      },
+      spawnOptions: { cwd: REPOSITORY_ROOT, stdio: ['ignore', 'pipe', 'pipe'] },
       timeoutMs: options.timeoutMs || DEFAULT_TIMEOUT_MS,
     })
     failureCode = publicChildOutcomeCode('VISUAL_SMOKE', outcome)
+    if (
+      !failureCode &&
+      (outcome?.diagnostics?.fatal !== false || outcome?.diagnostics?.overflow !== false)
+    ) {
+      failureCode = 'VISUAL_SMOKE_CHILD_FAILED'
+    }
     if (!(await retainProfiles(profiles, dependencies.verifyProfile))) {
       failureCode = 'VISUAL_SMOKE_PROFILE_IDENTITY_FAILED'
     }
@@ -166,6 +195,7 @@ if (require.main === module) {
 
 module.exports = {
   DEFAULT_TIMEOUT_MS,
+  MAX_DIAGNOSTIC_BYTES,
   OUTPUT_ENVIRONMENT_KEY,
   REPOSITORY_ROOT,
   childArguments,
