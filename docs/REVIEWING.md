@@ -11,8 +11,8 @@ boundaries already make impossible.
 Before reviewing:
 
 1. Identify the exact base and head commits and inspect the complete diff.
-2. Read the pull request's acceptance criteria, deliberate exclusions, and
-   validation record.
+2. Read the delivery Issue and pull request's acceptance criteria, deliberate
+   exclusions, and validation record.
 3. Trace each changed path through the relevant renderer, preload, main-process,
    filesystem, platform, or media boundary.
 4. Check the normal path, one realistic failure or recovery path, and one
@@ -23,6 +23,11 @@ Before reviewing:
    existing-file word diff. Identify unrelated edits and opportunistic cleanup.
 7. Verify that implementation, tests, documentation, agent instructions,
    configuration, and pull-request claims describe the same behavior.
+
+The Orchestrator must provide local access to the exact commits or diff plus a
+snapshot of the Issue/PR record. Review does not require GitHub, a connector, a
+browser, `gh`, or direct network access. The Reviewer returns GitHub-ready text;
+the role-marker and transparent-relay rules in `SDLC.md` govern its transport.
 
 ## Protect scope and contract meaning
 
@@ -170,8 +175,17 @@ The issue must record:
 - acceptance criteria for closing the residual; and
 - a target milestone, delivery dependency, or roadmap disposition.
 
-Use the **Accepted review residual** issue form when creating a new ticket and
-apply the `accepted-residual` label when that label exists. The review thread
+The **Accepted review residual** issue form is the evidence-field contract for a
+new residual ticket: its required and conditional fields implement the issue
+contents above. A human may submit the form directly. Because GitHub's generated
+form output cannot place an agent role marker first, an agent-authored equivalent
+must instead start with the substantive author's role marker as its first
+nonblank line and reproduce every applicable form field and tracking attestation
+without omission. Conditional runtime reachability remains required only for a
+runtime/path finding; an agent must not invent runtime evidence for a
+scope-integrity finding.
+
+Apply the `accepted-residual` label when that label exists. The review thread
 must link the issue, and the issue must link back to the pull request. The
 reviewer identifies the residual; only the maintainer can accept it.
 
@@ -194,6 +208,20 @@ After the findings, report:
 If there are no actionable findings, say so explicitly. A clean static review
 does not claim that unrun gates passed.
 
+The GitHub-ready review starts with `## Reviewer` as its first nonblank line and
+identifies the exact head commit it evaluates. A recommendation applies only to
+that head; any implementation or contract change after review requires a
+Reviewer rereview and a new exact-head recommendation. Developer responses or
+rebuttals and Reviewer rereviews remain in role-marked PR comments or reviews so
+the finding history is not replaced by a summary.
+
+When GitHub forbids self-approval, submit the exact-head recommendation as a
+pull-request review with the `COMMENT` event. That `## Reviewer` COMMENT review,
+containing `PASS`, `NOT PASS`, or `PASS WITH ACCEPTED RESIDUALS`, is the
+canonical recommendation record; an unavailable `APPROVE` event is not a
+validation gap. The Orchestrator may relay the review under `SDLC.md`, but the
+relay does not convert Reviewer analysis into Orchestrator judgment.
+
 ## Reusable review assignment
 
 Pass this compact instruction to an independent reviewer along with the branch
@@ -214,4 +242,6 @@ or commit range:
 > Verify that code, tests, documentation, configuration, and PR claims agree. A
 > confirmed residual can pass only after explicit maintainer acceptance and a
 > linked GitHub issue. Report residual risk and unobserved validation even when
-> there are no findings. Do not edit the worktree or manage repository lifecycle.
+> there are no findings. Start the GitHub-ready handoff with `## Reviewer`, name
+> the exact reviewed head, and do not depend on GitHub or network access. Do not
+> edit the worktree or manage repository lifecycle.
