@@ -67,6 +67,37 @@ describe('range-formatting algorithm', () => {
     )
   })
 
+  it('falls back when a changed block depends on its async function context', async () => {
+    const source = [
+      'async function save() {',
+      '  {',
+      '    handle = await open( )',
+      '  }',
+      '}',
+      'const legacy={alpha:1,beta:2}',
+      '',
+    ].join('\n')
+
+    const result = await formatChangedRanges({
+      source,
+      filePath: 'example.cjs',
+      ranges: [{ startLine: 2, lineCount: 2 }],
+      options: { parser: 'babel', semi: false, singleQuote: true },
+    })
+
+    expect(result.formatted).toBe(
+      [
+        'async function save() {',
+        '  {',
+        '    handle = await open()',
+        '  }',
+        '}',
+        'const legacy={alpha:1,beta:2}',
+        '',
+      ].join('\n'),
+    )
+  })
+
   it('derives disjoint syntax edits from the original source instead of stale offsets', async () => {
     const source = 'function f(\na ,\nb,\nc ,\n){}\nconst legacyBottom={z:9}\n'
     const result = await formatChangedRanges({

@@ -335,9 +335,9 @@ export async function formatChangedRanges({ source, filePath, ranges, options = 
 
   let formatted
   if (SYNTAX_RANGE_PARSERS.has(effectiveOptions.parser)) {
-    const candidate = await formatSyntaxRanges(source, filePath, normalized, effectiveOptions)
-    const prettierOptions = { ...effectiveOptions, filepath: filePath }
     try {
+      const candidate = await formatSyntaxRanges(source, filePath, normalized, effectiveOptions)
+      const prettierOptions = { ...effectiveOptions, filepath: filePath }
       const sourceCanonical = await prettier.format(source, prettierOptions)
       const candidateCanonical = await prettier.format(candidate, prettierOptions)
       if (candidateCanonical === sourceCanonical) formatted = candidate
