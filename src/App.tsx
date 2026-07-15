@@ -10,17 +10,31 @@ import {
   serializeProject,
   validateProject,
 } from './lib/model'
-import { cloneVocalStyle } from './lib/video-style'
+import {
+  cloneFontFace,
+  cloneTypeface,
+  cloneVocalStyle,
+  type LyricTextStyle,
+} from './lib/video-style'
 import { TopBar } from './components/TopBar'
 import { InspectorPanel } from './components/InspectorPanel'
 import { KaraokePreview } from './components/KaraokePreview'
+import { ProjectActionDecisionDialog } from './components/ProjectActionDecisionDialog'
+import { ProjectTypographyEditor } from './components/ProjectTypographyEditor'
 import { SyncCueStrip } from './components/SyncCueStrip'
 import { Timeline } from './components/Timeline'
 import { TransportBar } from './components/TransportBar'
 import { ExportDialog, LyricsEditorDialog, ValidationDialog, WorkflowGuideDialog } from './components/Dialogs'
 import { usePlayback } from './hooks/usePlayback'
+import { useInstalledFonts } from './hooks/useInstalledFonts'
 import { useWaveform } from './hooks/useWaveform'
 import { useProjectActionArbiter } from './hooks/useProjectActionArbiter'
+import {
+  sameLyricTextStyle,
+  useProjectTypographySession,
+  type ProjectTypographyCommitResult,
+  type ProjectTypographyOwnerKey,
+} from './hooks/useProjectTypographySession'
 import type { ProjectActionKind, ProjectActionRequest } from './lib/project-action-arbiter'
 import {
   downloadText,
@@ -290,6 +304,8 @@ export default function App() {
   const [toast, setToast] = useState<ToastState | null>(null)
   const [projectAuthorityWarning, setProjectAuthorityWarning] = useState<string | null>(null)
   const [timingDraft, setTimingDraft] = useState<ActiveTimingDraft | null>(null)
+  const [timelineGestureActive, setTimelineGestureActive] = useState(false)
+  const [projectTransitionActive, setProjectTransitionActive] = useState(false)
   const projectInputRef = useRef<HTMLInputElement>(null)
   const audioInputRef = useRef<HTMLInputElement>(null)
   const lrcInputRef = useRef<HTMLInputElement>(null)
@@ -306,7 +322,10 @@ export default function App() {
   const projectAuthorityCertainRef = useRef(true)
   const saveRequestSequenceRef = useRef(0)
   const videoExportActiveRef = useRef(false)
+  const timelineGestureActiveRef = useRef(false)
+  const projectRef = useRef(project)
   const lastReviewIssuesRef = useRef<ValidationIssue[]>([])
+  projectRef.current = project
 
   const projectMutationIsBlocked = useCallback(() => projectTransitionRef.current, [])
 
@@ -360,6 +379,68 @@ export default function App() {
   const updateTimingDraft = useCallback((timings: ProjectTimingDraft | null) => {
     setTimingDraft(timings ? { revision: history.revision, timings } : null)
   }, [history.revision])
+
+  const installedFonts = useInstalledFonts()
+  const handleTimelineGestureActiveChange = useCallback((active: boolean) => {
+    timelineGestureActiveRef.current = active
+    setTimelineGestureActive(active)
+  }, [])
+  const canInteractWithProjectTypography = useCallback(
+    () =>
+      !projectTransitionRef.current &&
+      !videoExportActiveRef.current &&
+      !timelineGestureActiveRef.current &&
+      !syncMode &&
+      !lyricsDialogOpen &&
+      !exportDialogOpen &&
+      !validationDialogOpen &&
+      !workflowGuideOpen,
+    [exportDialogOpen, lyricsDialogOpen, syncMode, validationDialogOpen, workflowGuideOpen],
+  )
+  const commitProjectTypography = useCallback(
+    (ownerKey: ProjectTypographyOwnerKey, draft: LyricTextStyle): ProjectTypographyCommitResult => {
+      const current = projectRef.current
+      if (
+        ownerKey.projectId !== current.id ||
+        ownerKey.lifecycle !== projectLifecycleSequenceRef.current
+      ) {
+        return 'stale'
+      }
+      if (projectMutationIsBlocked()) return 'blocked'
+      if (sameLyricTextStyle(current.stageStyle.lyrics, draft)) return 'noop'
+
+      const lyrics = {
+        ...draft,
+        typeface: cloneTypeface(draft.typeface),
+        fontStyle: cloneFontFace(draft.fontStyle),
+      }
+      commitHistory((latest) => {
+        if (
+          ownerKey.projectId !== latest.id ||
+          ownerKey.lifecycle !== projectLifecycleSequenceRef.current ||
+          sameLyricTextStyle(latest.stageStyle.lyrics, lyrics)
+        ) {
+          return latest
+        }
+        return {
+          ...latest,
+          stageStyle: { ...latest.stageStyle, lyrics },
+        }
+      })
+      return 'applied'
+    },
+    [commitHistory, projectMutationIsBlocked],
+  )
+  const typographySession = useProjectTypographySession({
+    ownerKey: {
+      projectId: project.id,
+      lifecycle: projectLifecycleSequenceRef.current,
+    },
+    source: project.stageStyle.lyrics,
+    canInteract: canInteractWithProjectTypography,
+    requestFonts: installedFonts.request,
+    commitDraft: commitProjectTypography,
+  })
 
   useEffect(() => {
     if (!toast) return
@@ -418,6 +499,7 @@ export default function App() {
       return false
     }
     projectTransitionRef.current = true
+    setProjectTransitionActive(true)
     return true
   }, [showToast])
 
@@ -545,6 +627,7 @@ export default function App() {
         await Promise.resolve()
       } finally {
         projectTransitionRef.current = false
+        setProjectTransitionActive(false)
       }
 
       if (!next.audioPath) {
@@ -628,6 +711,7 @@ export default function App() {
       return true
     } finally {
       projectTransitionRef.current = false
+      setProjectTransitionActive(false)
     }
   }, [
     beginProjectTransition,
@@ -928,8 +1012,21 @@ export default function App() {
     }
   }, [])
 
-  const { request: arbitrateProjectAction } = useProjectActionArbiter({
+  const {
+    request: arbitrateProjectAction,
+    pending: pendingProjectAction,
+    phase: projectActionPhase,
+    error: projectActionError,
+    apply: applyPendingProjectAction,
+    discard: discardPendingProjectAction,
+    keep: keepPendingProjectAction,
+  } = useProjectActionArbiter({
     nativeClose: nativeCloseBridge,
+    draftGuard: {
+      needsResolution: () => typographySession.blocksProjectActions,
+      settle: (decision) =>
+        decision === 'apply' ? typographySession.apply() : typographySession.cancel(),
+    },
     executors: {
       new: handleNew,
       open: handleOpen,
@@ -1033,7 +1130,7 @@ export default function App() {
 
   useEffect(() => {
     const keyDown = (event: KeyboardEvent) => {
-      if (document.querySelector('[role="dialog"]')) return
+      if (document.querySelector('.modal-backdrop')) return
       if (inputHasTypingFocus()) return
       if (event.code === 'Escape' && syncMode) {
         event.preventDefault()
@@ -1043,6 +1140,7 @@ export default function App() {
         return
       }
       if (
+        !typographySession.isOpen &&
         event.code === 'KeyA' &&
         (event.metaKey || event.ctrlKey) &&
         !event.altKey &&
@@ -1052,7 +1150,11 @@ export default function App() {
         selectAllActiveTrackWords()
         return
       }
-      if ((event.code === 'Backspace' || event.code === 'Delete') && selectedWordIds.size) {
+      if (
+        !typographySession.isOpen &&
+        (event.code === 'Backspace' || event.code === 'Delete') &&
+        selectedWordIds.size
+      ) {
         event.preventDefault()
         const patches = new Map(
           [...selectedWordIds].map((id) => [id, { startMs: null, endMs: null }]),
@@ -1130,7 +1232,7 @@ export default function App() {
     }
 
     const keyUp = (event: KeyboardEvent) => {
-      if (document.querySelector('[role="dialog"]')) {
+      if (document.querySelector('.modal-backdrop')) {
         if (event.code === 'Space') {
           cancelHeldSync()
         }
@@ -1196,6 +1298,7 @@ export default function App() {
     syncItems,
     syncMode,
     syncWords,
+    typographySession.isOpen,
   ])
 
   useEffect(() => {
@@ -1235,12 +1338,14 @@ export default function App() {
   }, [cancelHeldSync])
 
   const workflowGuideActions = createWorkflowGuideActions({
-    canStartSync: syncWords.length > 0,
+    canStartSync: syncWords.length > 0 && !typographySession.isOpen,
     close: () => setWorkflowGuideOpen(false),
     startNew: () => requestProjectAction('new'),
     open: () => requestProjectAction('open'),
     attachAudio: () => requestProjectAction('import-audio'),
-    editLyrics: () => setLyricsDialogOpen(true),
+    editLyrics: () => {
+      if (!typographySession.isOpen) setLyricsDialogOpen(true)
+    },
     importLrc: () => requestProjectAction('import-lrc'),
     startSync: toggleSyncMode,
     save: () => requestProjectAction('save'),
@@ -1248,6 +1353,25 @@ export default function App() {
   })
 
   const syncWordId = syncMode ? syncWords[syncCursor]?.id ?? null : null
+  const styleDisabledReason = typographySession.isOpen
+    ? 'The Style editor is already open.'
+    : timelineGestureActive
+      ? 'Finish the active timing gesture first.'
+      : projectTransitionActive
+        ? 'Wait for the current project action to finish.'
+        : videoExportProgress !== null
+          ? 'Finish or cancel the active video export first.'
+          : syncMode
+            ? 'Exit lyric synchronization first.'
+            : lyricsDialogOpen
+              ? 'Close the lyric editor first.'
+              : exportDialogOpen
+                ? 'Close Export first.'
+                : validationDialogOpen
+                  ? 'Close timing review first.'
+                  : workflowGuideOpen
+                    ? 'Close Workflow first.'
+                    : null
 
   return (
     <div className="app-shell">
@@ -1258,73 +1382,96 @@ export default function App() {
         canRedo={history.canRedo}
         issueCount={reviewIssues.length}
         hasLyrics={projectHasLyrics}
+        styleDisabledReason={styleDisabledReason}
+        workflowDisabled={typographySession.isOpen}
+        validationDisabled={typographySession.isOpen}
+        onStyle={typographySession.start}
         onNew={() => requestProjectAction('new')}
         onOpen={() => requestProjectAction('open')}
         onSave={() => requestProjectAction('save')}
         onUndo={() => requestProjectAction('undo')}
         onRedo={() => requestProjectAction('redo')}
-        onShowWorkflow={() => setWorkflowGuideOpen(true)}
+        onShowWorkflow={() => {
+          if (!typographySession.isOpen) setWorkflowGuideOpen(true)
+        }}
         onValidate={() => setValidationDialogOpen(true)}
         onExport={() => requestProjectAction('export')}
       />
 
-      <main className="studio-main">
-        <InspectorPanel
+      {typographySession.draft ? (
+        <ProjectTypographyEditor
           project={project}
-          activeTrackId={activeTrackId}
-          onSelectTrack={handleSelectTrack}
-          onUpdateProject={updateProject}
-          onUpdateTrack={updateTrack}
-          onImportAudio={() => requestProjectAction('import-audio')}
-          onImportLrc={() => requestProjectAction('import-lrc')}
+          playbackMs={playback.currentMs}
+          draft={typographySession.draft}
+          fonts={installedFonts}
+          onDraftChange={typographySession.change}
+          onRetryFonts={installedFonts.request}
+          onTogglePlayback={playback.toggle}
+          onCancel={typographySession.cancel}
+          onApply={typographySession.apply}
         />
-
-        <div className={`unified-workspace ${syncMode ? 'is-syncing' : ''}`}>
-          <div className="workspace-top">
-            {syncMode && activeTrack ? (
-              <SyncCueStrip
-                track={activeTrack}
-                syncCursor={syncCursor}
-                onEditLyrics={() => setLyricsDialogOpen(true)}
-              />
-            ) : (
-              <KaraokePreview
-                project={previewProject}
-                playbackMs={playback.currentMs}
-                lyricMs={lyricTimeMs}
-                selectedWordIds={selectedWordIds}
-                onUpdateLyricDisplay={updateLyricDisplay}
-                onEditLyrics={() => setLyricsDialogOpen(true)}
-              />
-            )}
-          </div>
-
-          <Timeline
+      ) : (
+        <main className="studio-main">
+          <InspectorPanel
             project={project}
-            peaks={waveform.peaks}
-            isAnalyzing={waveform.isAnalyzing}
-            durationMs={playback.durationMs}
-            currentMs={playback.currentMs}
-            zoom={zoom}
             activeTrackId={activeTrackId}
-            selectedWordIds={selectedWordIds}
-            syncWordId={syncWordId}
-            syncMode={syncMode}
-            onSeek={playback.seek}
-            onZoom={setZoom}
-            onSelectWord={handleSelectWordId}
-            onSelectWords={setSelectedWordIds}
-            onShiftWords={(ids, deltaMs) => commit((current) => shiftWords(current, ids, deltaMs))}
-            onResizeWord={(wordId, startMs, endMs) =>
-              commit((current) => patchWord(current, wordId, { startMs, endMs }))
-            }
-            onTimingDraftChange={updateTimingDraft}
-            onToggleSync={toggleSyncMode}
-            onClearTiming={handleClearTiming}
-            onClearTimingAfterCursor={handleClearTimingAfterCursor}
+            onSelectTrack={handleSelectTrack}
+            onUpdateProject={updateProject}
+            onUpdateTrack={updateTrack}
+            onImportAudio={() => requestProjectAction('import-audio')}
+            onImportLrc={() => requestProjectAction('import-lrc')}
           />
-        </div>
-      </main>
+
+          <div className={`unified-workspace ${syncMode ? 'is-syncing' : ''}`}>
+            <div className="workspace-top">
+              {syncMode && activeTrack ? (
+                <SyncCueStrip
+                  track={activeTrack}
+                  syncCursor={syncCursor}
+                  onEditLyrics={() => setLyricsDialogOpen(true)}
+                />
+              ) : (
+                <KaraokePreview
+                  project={previewProject}
+                  playbackMs={playback.currentMs}
+                  lyricMs={lyricTimeMs}
+                  selectedWordIds={selectedWordIds}
+                  onUpdateLyricDisplay={updateLyricDisplay}
+                  onEditLyrics={() => setLyricsDialogOpen(true)}
+                />
+              )}
+            </div>
+
+            <Timeline
+              project={project}
+              peaks={waveform.peaks}
+              isAnalyzing={waveform.isAnalyzing}
+              durationMs={playback.durationMs}
+              currentMs={playback.currentMs}
+              zoom={zoom}
+              activeTrackId={activeTrackId}
+              selectedWordIds={selectedWordIds}
+              syncWordId={syncWordId}
+              syncMode={syncMode}
+              onSeek={playback.seek}
+              onZoom={setZoom}
+              onSelectWord={handleSelectWordId}
+              onSelectWords={setSelectedWordIds}
+              onShiftWords={(ids, deltaMs) =>
+                commit((current) => shiftWords(current, ids, deltaMs))
+              }
+              onResizeWord={(wordId, startMs, endMs) =>
+                commit((current) => patchWord(current, wordId, { startMs, endMs }))
+              }
+              onTimingDraftChange={updateTimingDraft}
+              onGestureActiveChange={handleTimelineGestureActiveChange}
+              onToggleSync={toggleSyncMode}
+              onClearTiming={handleClearTiming}
+              onClearTimingAfterCursor={handleClearTimingAfterCursor}
+            />
+          </div>
+        </main>
+      )}
 
       <TransportBar
         currentMs={playback.currentMs}
@@ -1335,6 +1482,7 @@ export default function App() {
         syncMode={syncMode}
         syncPosition={syncCursor}
         syncTotal={syncWords.length}
+        syncDisabled={typographySession.isOpen}
         hasAudio={playback.hasAudio}
         onToggle={playback.toggle}
         onStop={handleStop}
@@ -1415,6 +1563,17 @@ export default function App() {
       )}
       {validationDialogOpen && (
         <ValidationDialog issues={reviewIssues} onClose={() => setValidationDialogOpen(false)} />
+      )}
+      {pendingProjectAction && (
+        <ProjectActionDecisionDialog
+          request={pendingProjectAction}
+          phase={projectActionPhase}
+          error={projectActionError}
+          hasDraft={typographySession.blocksProjectActions}
+          onApply={applyPendingProjectAction}
+          onDiscard={discardPendingProjectAction}
+          onKeep={keepPendingProjectAction}
+        />
       )}
       {projectAuthorityWarning && (
         <div className="toast toast--warning" role="alert">

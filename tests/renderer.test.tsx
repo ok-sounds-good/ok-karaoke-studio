@@ -547,6 +547,10 @@ describe('first-time workflow', () => {
         canRedo={false}
         issueCount={0}
         hasLyrics={false}
+        styleDisabledReason={null}
+        workflowDisabled={false}
+        validationDisabled={false}
+        onStyle={() => undefined}
         onNew={() => undefined}
         onOpen={() => undefined}
         onSave={() => undefined}
@@ -559,6 +563,7 @@ describe('first-time workflow', () => {
     )
 
     expect(markup).toContain('Workflow')
+    expect(markup).toMatch(/topbar__brand[\s\S]*Style[\s\S]*topbar__document/u)
     expect(markup).toContain('aria-label="Project actions"')
   })
 

@@ -11,6 +11,7 @@ interface TransportBarProps {
   syncMode: boolean
   syncPosition: number
   syncTotal: number
+  syncDisabled?: boolean
   hasAudio: boolean
   onToggle: () => void
   onStop: () => void
@@ -29,6 +30,7 @@ export function TransportBar({
   syncMode,
   syncPosition,
   syncTotal,
+  syncDisabled = false,
   hasAudio,
   onToggle,
   onStop,
@@ -42,25 +44,47 @@ export function TransportBar({
       <div className="transport__sync">
         <button
           className={`sync-button ${syncMode ? 'is-active' : ''}`}
-          title={syncMode ? 'Exit lyric synchronization (Escape)' : 'Start lyric synchronization from the playhead'}
-          disabled={!syncTotal}
+          title={
+            syncMode
+              ? 'Exit lyric synchronization (Escape)'
+              : 'Start lyric synchronization from the playhead'
+          }
+          disabled={syncDisabled || !syncTotal}
           onClick={onToggleSync}
         >
-          <span><Zap size={17} fill="currentColor" /></span>
+          <span>
+            <Zap size={17} fill="currentColor" />
+          </span>
           <div>
             <strong>{syncMode ? 'Syncing words' : 'Start sync'}</strong>
-            <small>{syncMode ? `${Math.min(syncPosition + 1, syncTotal)} of ${syncTotal}` : syncTotal ? 'Time lyrics by feel' : 'Add lyrics first'}</small>
+            <small>
+              {syncMode
+                ? `${Math.min(syncPosition + 1, syncTotal)} of ${syncTotal}`
+                : syncTotal
+                  ? 'Time lyrics by feel'
+                  : 'Add lyrics first'}
+            </small>
           </div>
           <KeyboardKey>Space</KeyboardKey>
         </button>
       </div>
 
       <div className="transport__controls">
-        <button className="transport-button" aria-label="Skip back five seconds" title="Skip back 5 seconds" onClick={() => onSeek(currentMs - 5000)}>
+        <button
+          className="transport-button"
+          aria-label="Skip back five seconds"
+          title="Skip back 5 seconds"
+          onClick={() => onSeek(currentMs - 5000)}
+        >
           <RotateCcw size={18} />
           <small>5</small>
         </button>
-        <button className="transport-button" aria-label="Stop" title="Stop and return to the start" onClick={onStop}>
+        <button
+          className="transport-button"
+          aria-label="Stop"
+          title="Stop and return to the start"
+          onClick={onStop}
+        >
           <Square size={15} fill="currentColor" />
         </button>
         <button
@@ -69,9 +93,18 @@ export function TransportBar({
           title={`${isPlaying ? 'Pause' : 'Play'} (Shift+Space)`}
           onClick={onToggle}
         >
-          {isPlaying ? <Pause size={23} fill="currentColor" /> : <Play size={23} fill="currentColor" />}
+          {isPlaying ? (
+            <Pause size={23} fill="currentColor" />
+          ) : (
+            <Play size={23} fill="currentColor" />
+          )}
         </button>
-        <button className="transport-button" aria-label="Skip forward five seconds" title="Skip forward 5 seconds" onClick={() => onSeek(currentMs + 5000)}>
+        <button
+          className="transport-button"
+          aria-label="Skip forward five seconds"
+          title="Skip forward 5 seconds"
+          onClick={() => onSeek(currentMs + 5000)}
+        >
           <RotateCw size={18} />
           <small>5</small>
         </button>
@@ -89,7 +122,12 @@ export function TransportBar({
         </div>
         <label className="speed-control">
           <Gauge size={15} />
-          <select aria-label="Playback speed" title="Set playback speed" value={rate} onChange={(event) => onRate(Number(event.target.value))}>
+          <select
+            aria-label="Playback speed"
+            title="Set playback speed"
+            value={rate}
+            onChange={(event) => onRate(Number(event.target.value))}
+          >
             <option value="0.5">0.5×</option>
             <option value="0.75">0.75×</option>
             <option value="0.9">0.9×</option>

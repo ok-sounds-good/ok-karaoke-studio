@@ -231,6 +231,26 @@
   background: var(--panel);
 }
 
+.project-action-decision {
+  display: grid;
+  gap: 10px;
+}
+
+.project-action-decision p {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.project-action-decision [role='status'] {
+  color: var(--muted);
+}
+
+.project-action-decision [role='alert'] {
+  color: var(--danger);
+}
+
 @media (max-width: 1240px) {
   .style-workspace {
     grid-template-columns: 330px minmax(0, 1fr);
