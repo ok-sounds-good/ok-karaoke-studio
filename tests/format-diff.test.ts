@@ -9,6 +9,7 @@ import { runCli } from '../scripts/format-diff.mjs'
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const formatterScript = path.join(repositoryRoot, 'scripts', 'format-diff.mjs')
+const hookScript = path.join(repositoryRoot, 'scripts', 'codex-format-post-write.mjs')
 const ZERO_SHA = '0000000000000000000000000000000000000000'
 
 function git(root: string, ...args: string[]) {
@@ -417,6 +418,49 @@ describe('Codex hook path extraction', () => {
     expect(output?.systemMessage).toContain('changed.ts (changed lines 1)')
     expect(await readFile(path.join(root, 'changed.ts'), 'utf8')).toBe(
       'const changed = { alpha: 1, beta: 2 }\n',
+    )
+  })
+
+  it('runs its CLI entry point from outside the script directory', async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), 'oks-format-hook-cwd-'))
+    const result = spawnSync(process.execPath, [hookScript], {
+      cwd,
+      input: '{',
+      encoding: 'utf8',
+    })
+
+    expect(result.status).toBe(2)
+    expect(result.stderr).toContain('JSON')
+  })
+
+  it('reports a formatter that exits successfully without producing a result', async () => {
+    const root = await createRepository()
+    await writeFile(
+      path.join(root, 'package.json'),
+      JSON.stringify({
+        name: 'okay-karaoke-studio',
+        scripts: { format: 'bun scripts/format-diff.mjs --write' },
+      }),
+    )
+    await writeFile(path.join(root, 'changed.ts'), 'const changed = true\n')
+    git(root, 'add', '.')
+    git(root, 'commit', '-qm', 'baseline')
+    await writeFile(path.join(root, 'changed.ts'), 'const changed={alpha:1}\n')
+    const silentFormatter = path.join(root, 'silent-formatter.mjs')
+    await writeFile(silentFormatter, '')
+
+    await expect(
+      runHook(
+        JSON.stringify({
+          cwd: root,
+          hook_event_name: 'PostToolUse',
+          tool_name: 'apply_patch',
+          tool_input: { command: '*** Update File: changed.ts' },
+        }),
+        { formatterPath: silentFormatter },
+      ),
+    ).rejects.toThrow(
+      'Changed-range formatting failed: formatter exited successfully without reporting a result',
     )
   })
 })

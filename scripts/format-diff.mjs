@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
-import { constants } from 'node:fs'
+import { constants, realpathSync } from 'node:fs'
 import { lstat, open, readFile, realpath } from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath } from 'node:url'
 import { diffChars } from 'diff'
 import * as prettier from 'prettier'
 import {
@@ -25,6 +25,17 @@ const SYNTAX_RANGE_PARSERS = new Set([
   'meriyah',
   'typescript',
 ])
+
+function isMainModule(meta) {
+  if (typeof meta.main === 'boolean') return meta.main
+  if (!process.argv[1]) return false
+
+  try {
+    return realpathSync(fileURLToPath(meta.url)) === realpathSync(process.argv[1])
+  } catch {
+    return false
+  }
+}
 
 export function normalizeLineRanges(ranges, lineCount) {
   if (lineCount === 0) return []
@@ -524,8 +535,7 @@ export async function runCli(argv = process.argv.slice(2), cwd = process.cwd(), 
   }
 }
 
-const isEntryPoint = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
-if (isEntryPoint) {
+if (isMainModule(import.meta)) {
   runCli().then((code) => {
     process.exitCode = code
   })

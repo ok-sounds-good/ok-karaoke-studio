@@ -4,7 +4,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath } from 'node:url'
 
 function readStdin() {
   return new Promise((resolve, reject) => {
@@ -16,6 +16,17 @@ function readStdin() {
     process.stdin.on('end', () => resolve(value))
     process.stdin.on('error', reject)
   })
+}
+
+function isMainModule(meta) {
+  if (typeof meta.main === 'boolean') return meta.main
+  if (!process.argv[1]) return false
+
+  try {
+    return realpathSync(fileURLToPath(meta.url)) === realpathSync(process.argv[1])
+  } catch {
+    return false
+  }
 }
 
 export function collectToolPaths(toolInput = {}) {
@@ -92,17 +103,25 @@ export async function runHook(rawInput, { formatterPath = null } = {}) {
     { cwd: root, encoding: 'utf8' },
   )
 
-  if (result.status !== 0) {
-    const detail = result.stderr.trim() || result.stdout.trim() || 'unknown formatter error'
+  if (result.error || result.status !== 0) {
+    const detail =
+      result.error?.message ||
+      result.stderr?.trim() ||
+      result.stdout?.trim() ||
+      (result.signal ? `formatter stopped by ${result.signal}` : 'unknown formatter error')
     throw new Error(`Changed-range formatting failed: ${detail}`)
   }
 
-  const summary = result.stdout.trim()
-  return summary ? { systemMessage: summary } : null
+  const summary = result.stdout?.trim()
+  if (!summary) {
+    throw new Error(
+      'Changed-range formatting failed: formatter exited successfully without reporting a result',
+    )
+  }
+  return { systemMessage: summary }
 }
 
-const isEntryPoint = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
-if (isEntryPoint) {
+if (isMainModule(import.meta)) {
   readStdin()
     .then(runHook)
     .then((output) => {
