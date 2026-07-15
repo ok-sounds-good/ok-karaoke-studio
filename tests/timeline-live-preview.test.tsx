@@ -16,6 +16,8 @@ import { patchWord, shiftWords, type ProjectTimingDraft } from '../src/utils'
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 const captures = new WeakMap<HTMLElement, Set<number>>()
+const rejectedCaptureIds = new Set<number>()
+const ignoredCaptureIds = new Set<number>()
 let root: Root | null = null
 let container: HTMLDivElement | null = null
 
@@ -24,6 +26,8 @@ beforeAll(() => {
     setPointerCapture: {
       configurable: true,
       value(pointerId: number) {
+        if (rejectedCaptureIds.delete(pointerId)) throw new DOMException('Pointer capture rejected')
+        if (ignoredCaptureIds.delete(pointerId)) return
         const pointers = captures.get(this) ?? new Set<number>()
         pointers.add(pointerId)
         captures.set(this, pointers)
@@ -49,6 +53,8 @@ beforeAll(() => {
 afterEach(() => {
   if (root) act(() => root!.unmount())
   container?.remove()
+  rejectedCaptureIds.clear()
+  ignoredCaptureIds.clear()
   root = null
   container = null
 })
@@ -69,8 +75,9 @@ function initialProject() {
   })
 }
 
-function Harness() {
+function Harness({ onGestureActiveChange }: { onGestureActiveChange?: (active: boolean) => void }) {
   const [project, setProject] = useState<KaraokeProject>(initialProject)
+  const [activeTrackId, setActiveTrackId] = useState('lead')
   const [revision, setRevision] = useState(0)
   const [draft, setDraft] = useState<ActiveTimingDraft | null>(null)
   const previewProject = projectForTimingPreview(project, revision, draft)
@@ -96,7 +103,7 @@ function Harness() {
         durationMs={30_000}
         currentMs={1_500}
         zoom={1}
-        activeTrackId="lead"
+        activeTrackId={activeTrackId}
         selectedWordIds={new Set(['hold'])}
         syncWordId={null}
         syncMode={false}
@@ -104,13 +111,16 @@ function Harness() {
         onZoom={() => undefined}
         onSelectWord={() => undefined}
         onSelectWords={() => undefined}
-        onShiftWords={(ids, deltaMs) => replaceProject((current) => shiftWords(current, ids, deltaMs))}
-        onResizeWord={(wordId, startMs, endMs) => (
+        onShiftWords={(ids, deltaMs) =>
+          replaceProject((current) => shiftWords(current, ids, deltaMs))
+        }
+        onResizeWord={(wordId, startMs, endMs) =>
           replaceProject((current) => patchWord(current, wordId, { startMs, endMs }))
-        )}
-        onTimingDraftChange={(timings: ProjectTimingDraft | null) => (
+        }
+        onTimingDraftChange={(timings: ProjectTimingDraft | null) =>
           setDraft(timings ? { revision, timings } : null)
-        )}
+        }
+        onGestureActiveChange={onGestureActiveChange}
         onToggleSync={() => undefined}
         onClearTiming={() => undefined}
         onClearTimingAfterCursor={() => undefined}
@@ -119,19 +129,54 @@ function Harness() {
       <output data-testid="draft-state">{draft ? 'draft' : 'committed'}</output>
       <button
         data-testid="untime-held-word"
-        onClick={() => replaceProject((current) => patchWord(current, 'hold', { startMs: null, endMs: null }))}
-      >Untime held word</button>
+        onClick={() =>
+          replaceProject((current) => patchWord(current, 'hold', { startMs: null, endMs: null }))
+        }
+      >
+        Untime held word
+      </button>
       <button
         data-testid="refresh-metadata"
-        onClick={() => replaceProject((current) => ({
-          ...current,
-          durationMs: (current.durationMs ?? 0) + 1,
-        }))}
-      >Refresh metadata</button>
+        onClick={() =>
+          replaceProject((current) => ({
+            ...current,
+            durationMs: (current.durationMs ?? 0) + 1,
+          }))
+        }
+      >
+        Refresh metadata
+      </button>
       <button
         data-testid="change-held-timing"
         onClick={() => replaceProject((current) => patchWord(current, 'hold', { startMs: 1_100 }))}
-      >Change held timing</button>
+      >
+        Change held timing
+      </button>
+      <button
+        data-testid="replace-project"
+        onClick={() =>
+          replaceProject((current) => ({ ...current, id: `${current.id}-replacement` }))
+        }
+      >
+        Replace project
+      </button>
+      <button
+        data-testid="replace-line"
+        onClick={() =>
+          replaceProject((current) => ({
+            ...current,
+            tracks: current.tracks.map((track) => ({
+              ...track,
+              lines: track.lines.map((line) => ({ ...line, id: `${line.id}-replacement` })),
+            })),
+          }))
+        }
+      >
+        Replace line
+      </button>
+      <button data-testid="replace-active-track" onClick={() => setActiveTrackId('missing-track')}>
+        Replace active track
+      </button>
     </>
   )
 }
@@ -185,18 +230,24 @@ function ShortBlockHarness() {
   )
 }
 
-function MarqueeHarness() {
+function MarqueeHarness({
+  onGestureActiveChange,
+}: {
+  onGestureActiveChange?: (active: boolean) => void
+}) {
+  const [project, setProject] = useState<KaraokeProject>(initialProject)
+  const [activeTrackId, setActiveTrackId] = useState('lead')
   const [selectedWordIds, setSelectedWordIds] = useState(new Set(['hold']))
   return (
     <>
       <Timeline
-        project={initialProject()}
+        project={project}
         peaks={[]}
         isAnalyzing={false}
         durationMs={30_000}
         currentMs={0}
         zoom={1}
-        activeTrackId="lead"
+        activeTrackId={activeTrackId}
         selectedWordIds={selectedWordIds}
         syncWordId={null}
         syncMode={false}
@@ -207,11 +258,87 @@ function MarqueeHarness() {
         onShiftWords={() => undefined}
         onResizeWord={() => undefined}
         onTimingDraftChange={() => undefined}
+        onGestureActiveChange={onGestureActiveChange}
         onToggleSync={() => undefined}
         onClearTiming={() => undefined}
         onClearTimingAfterCursor={() => undefined}
       />
       <output data-testid="marquee-selection">{[...selectedWordIds].sort().join(',')}</output>
+      <button
+        data-testid="replace-project"
+        onClick={() => setProject((current) => ({ ...current, id: `${current.id}-replacement` }))}
+      >
+        Replace project
+      </button>
+      <button
+        data-testid="replace-line"
+        onClick={() =>
+          setProject((current) => ({
+            ...current,
+            tracks: current.tracks.map((track) => ({
+              ...track,
+              lines: track.lines.map((line) => ({ ...line, id: `${line.id}-replacement` })),
+            })),
+          }))
+        }
+      >
+        Replace line
+      </button>
+      <button data-testid="replace-active-track" onClick={() => setActiveTrackId('missing-track')}>
+        Replace active track
+      </button>
+    </>
+  )
+}
+
+function CaptureFailureHarness({
+  onGestureActiveChange,
+  onTimingDraftChange,
+  onShiftWords,
+  onResizeWord,
+}: {
+  onGestureActiveChange: (active: boolean) => void
+  onTimingDraftChange: (draft: ProjectTimingDraft | null) => void
+  onShiftWords: (wordIds: Set<string>, deltaMs: number) => void
+  onResizeWord: (wordId: string, startMs: number, endMs: number) => void
+}) {
+  const [project] = useState<KaraokeProject>(initialProject)
+  const [selectedWordIds, setSelectedWordIds] = useState(new Set<string>())
+  const heldWord = project.tracks[0].lines[0].words[0]
+
+  return (
+    <>
+      <Timeline
+        project={project}
+        peaks={[]}
+        isAnalyzing={false}
+        durationMs={30_000}
+        currentMs={1_500}
+        zoom={1}
+        activeTrackId="lead"
+        selectedWordIds={selectedWordIds}
+        syncWordId={null}
+        syncMode={false}
+        onSeek={() => undefined}
+        onZoom={() => undefined}
+        onSelectWord={(wordId, add) =>
+          setSelectedWordIds((current) => {
+            const next = add ? new Set(current) : new Set<string>()
+            next.add(wordId)
+            return next
+          })
+        }
+        onSelectWords={setSelectedWordIds}
+        onShiftWords={onShiftWords}
+        onResizeWord={onResizeWord}
+        onTimingDraftChange={onTimingDraftChange}
+        onGestureActiveChange={onGestureActiveChange}
+        onToggleSync={() => undefined}
+        onClearTiming={() => undefined}
+        onClearTimingAfterCursor={() => undefined}
+      />
+      <output data-testid="capture-selection">{[...selectedWordIds].sort().join(',')}</output>
+      <output data-testid="capture-saved-timing">{`${heldWord.startMs}:${heldWord.endMs}`}</output>
     </>
   )
 }
@@ -252,11 +379,27 @@ function KeyboardSelectionHarness({ syncMode = false }: { syncMode?: boolean }) 
   )
 }
 
-function renderHarness() {
+function renderHarness(onGestureActiveChange?: (active: boolean) => void) {
   container = document.createElement('div')
   document.body.append(container)
   root = createRoot(container)
-  act(() => root!.render(<Harness />))
+  act(() => root!.render(<Harness onGestureActiveChange={onGestureActiveChange} />))
+  return container
+}
+
+function renderMarqueeHarness(onGestureActiveChange?: (active: boolean) => void) {
+  container = document.createElement('div')
+  document.body.append(container)
+  root = createRoot(container)
+  act(() => root!.render(<MarqueeHarness onGestureActiveChange={onGestureActiveChange} />))
+  return container
+}
+
+function renderCaptureFailureHarness(props: Parameters<typeof CaptureFailureHarness>[0]) {
+  container = document.createElement('div')
+  document.body.append(container)
+  root = createRoot(container)
+  act(() => root!.render(<CaptureFailureHarness {...props} />))
   return container
 }
 
@@ -407,20 +550,31 @@ describe('mounted Timeline live-preview wiring', () => {
   })
 
   it('selects by visible marquee, adds with a modifier, and cleans up cancelled capture', () => {
-    container = document.createElement('div')
-    document.body.append(container)
-    root = createRoot(container)
-    act(() => root!.render(<MarqueeHarness />))
-    const lane = container.querySelector<HTMLElement>('.timeline-lane')!
-    const selection = () => container!.querySelector('[data-testid="marquee-selection"]')?.textContent
+    const activity: boolean[] = []
+    let capturedBeforeActivation = false
+    let marqueeVisibleAtActivation = false
+    const scope = renderMarqueeHarness((active) => {
+      activity.push(active)
+      if (!active) return
+      const activeLane = scope.querySelector<HTMLElement>('.timeline-lane')!
+      capturedBeforeActivation = captures.get(activeLane)?.has(71) ?? false
+      marqueeVisibleAtActivation = scope.querySelector('.timeline-marquee') !== null
+    })
+    const lane = scope.querySelector<HTMLElement>('.timeline-lane')!
+    const selection = () => scope.querySelector('[data-testid="marquee-selection"]')?.textContent
 
     dispatchPointer(lane, 'pointerdown', 71, 200, 20)
+    expect(activity).toEqual([true])
+    expect(capturedBeforeActivation).toBe(true)
+    expect(marqueeVisibleAtActivation).toBe(false)
     dispatchPointer(lane, 'pointermove', 71, 300, 50)
+    expect(activity).toEqual([true])
     expect(container.querySelector('.timeline-marquee')).not.toBeNull()
     dispatchPointer(lane, 'pointerup', 71, 300, 50)
     expect(container.querySelector('.timeline-marquee')).toBeNull()
     expect(selection()).toBe('next')
     expect(captures.get(lane)?.has(71)).toBe(false)
+    expect(activity).toEqual([true, false])
 
     dispatchPointer(lane, 'pointerdown', 72, 60, 20, { shiftKey: true })
     dispatchPointer(lane, 'pointermove', 72, 150, 50)
@@ -433,6 +587,7 @@ describe('mounted Timeline live-preview wiring', () => {
     dispatchPointer(lane, 'pointercancel', 73, 500, 50)
     expect(container.querySelector('.timeline-marquee')).toBeNull()
     expect(selection()).toBe('hold,next')
+    expect(activity.slice(-2)).toEqual([true, false])
 
     dispatchPointer(lane, 'pointerdown', 74, 400, 10)
     dispatchPointer(lane, 'pointermove', 74, 500, 50)
@@ -440,6 +595,172 @@ describe('mounted Timeline live-preview wiring', () => {
     dispatchPointer(lane, 'lostpointercapture', 74, 500, 50)
     expect(container.querySelector('.timeline-marquee')).toBeNull()
     expect(selection()).toBe('hold,next')
+    expect(activity.slice(-2)).toEqual([true, false])
+  })
+
+  it('reports timing activity after capture and once across movement and pointer-up', () => {
+    const activity: boolean[] = []
+    let capturedBeforeActivation = false
+    let draftAtActivation = ''
+    const scope = renderHarness((active) => {
+      activity.push(active)
+      if (!active) return
+      const activeWord = timelineWord(scope)
+      capturedBeforeActivation = captures.get(activeWord)?.has(91) ?? false
+      draftAtActivation = scope.querySelector('[data-testid="draft-state"]')?.textContent ?? ''
+    })
+    const word = timelineWord(scope)
+
+    dispatchPointer(word, 'pointerdown', 91, 100)
+    expect(activity).toEqual([true])
+    expect(capturedBeforeActivation).toBe(true)
+    expect(draftAtActivation).toBe('committed')
+    dispatchPointer(word, 'pointermove', 91, 120)
+    dispatchPointer(word, 'pointermove', 91, 136)
+    expect(activity).toEqual([true])
+    dispatchPointer(word, 'pointerup', 91, 136)
+    dispatchPointer(word, 'pointerup', 91, 136)
+    expect(activity).toEqual([true, false])
+  })
+
+  it.each([
+    { failure: 'throws', failedIds: rejectedCaptureIds },
+    { failure: 'does not retain capture', failedIds: ignoredCaptureIds },
+  ])('selects without timing activity when pointer capture $failure', ({ failedIds }) => {
+    const activity: boolean[] = []
+    const timingDraftChange = vi.fn()
+    const shift = vi.fn()
+    const resize = vi.fn()
+    const scope = renderCaptureFailureHarness({
+      onGestureActiveChange: (active) => activity.push(active),
+      onTimingDraftChange: timingDraftChange,
+      onShiftWords: shift,
+      onResizeWord: resize,
+    })
+    let word = timelineWord(scope)
+    expect(word.getAttribute('aria-pressed')).toBe('false')
+    expect(scope.querySelector('[data-testid="capture-selection"]')?.textContent).toBe('')
+
+    failedIds.add(92)
+    dispatchPointer(word, 'pointerdown', 92, 100)
+    dispatchPointer(word, 'pointermove', 92, 136)
+    dispatchPointer(word, 'pointerup', 92, 136)
+    word = timelineWord(scope)
+    expect(word.getAttribute('aria-pressed')).toBe('true')
+    expect(scope.querySelector('[data-testid="capture-selection"]')?.textContent).toBe('hold')
+    expect(activity).toEqual([])
+    expect(captures.get(word)?.has(92) ?? false).toBe(false)
+    expect(timingDraftChange).not.toHaveBeenCalled()
+    expect(shift).not.toHaveBeenCalled()
+    expect(resize).not.toHaveBeenCalled()
+    expect(scope.querySelector('[data-testid="capture-saved-timing"]')?.textContent).toBe(
+      '1000:2000',
+    )
+
+    word = timelineWord(scope)
+    dispatchPointer(word, 'pointerdown', 93, 100)
+    dispatchPointer(word, 'pointerup', 93, 100)
+    expect(activity).toEqual([true, false])
+  })
+
+  it('does not activate marquee when pointer capture fails and remains usable afterward', () => {
+    const activity: boolean[] = []
+    const scope = renderMarqueeHarness((active) => activity.push(active))
+    const lane = scope.querySelector<HTMLElement>('.timeline-lane')!
+
+    ignoredCaptureIds.add(94)
+    dispatchPointer(lane, 'pointerdown', 94, 100, 20)
+    dispatchPointer(lane, 'pointermove', 94, 200, 50)
+    expect(activity).toEqual([])
+    expect(captures.get(lane)?.has(94) ?? false).toBe(false)
+    expect(scope.querySelector('.timeline-marquee')).toBeNull()
+
+    dispatchPointer(lane, 'pointerdown', 95, 100, 20)
+    dispatchPointer(lane, 'pointercancel', 95, 100, 20)
+    expect(activity).toEqual([true, false])
+  })
+
+  it('does not allow timing and marquee gestures to overlap', () => {
+    const activity: boolean[] = []
+    const scope = renderHarness((active) => activity.push(active))
+    let word = timelineWord(scope)
+    const lane = scope.querySelector<HTMLElement>('.timeline-lane')!
+
+    dispatchPointer(word, 'pointerdown', 96, 100)
+    dispatchPointer(lane, 'pointerdown', 97, 300, 30)
+    expect(activity).toEqual([true])
+    expect(scope.querySelector('.timeline-marquee')).toBeNull()
+    expect(captures.get(lane)?.has(97) ?? false).toBe(false)
+    dispatchPointer(word, 'pointercancel', 96, 100)
+    expect(activity).toEqual([true, false])
+
+    word = timelineWord(scope)
+    dispatchPointer(lane, 'pointerdown', 98, 300, 30)
+    dispatchPointer(word, 'pointerdown', 99, 100)
+    expect(activity).toEqual([true, false, true])
+    expect(captures.get(word)?.has(99) ?? false).toBe(false)
+    dispatchPointer(lane, 'pointercancel', 98, 300, 30)
+    expect(activity).toEqual([true, false, true, false])
+  })
+
+  it.each([
+    ['project', 'replace-project'],
+    ['active track', 'replace-active-track'],
+    ['line', 'replace-line'],
+  ])('ends timing activity once on incompatible %s replacement', (_scopeName, controlId) => {
+    const activity: boolean[] = []
+    const scope = renderHarness((active) => activity.push(active))
+    const word = timelineWord(scope)
+
+    dispatchPointer(word, 'pointerdown', 101, 100)
+    dispatchPointer(word, 'pointermove', 101, 136)
+    expect(activity).toEqual([true])
+    act(() => scope.querySelector<HTMLButtonElement>(`[data-testid="${controlId}"]`)!.click())
+    expect(activity).toEqual([true, false])
+    expect(scope.querySelector('[data-testid="draft-state"]')?.textContent).toBe('committed')
+  })
+
+  it.each([
+    ['project', 'replace-project'],
+    ['active track', 'replace-active-track'],
+    ['line', 'replace-line'],
+  ])('ends marquee activity once on incompatible %s replacement', (_scopeName, controlId) => {
+    const activity: boolean[] = []
+    const scope = renderMarqueeHarness((active) => activity.push(active))
+    const lane = scope.querySelector<HTMLElement>('.timeline-lane')!
+
+    dispatchPointer(lane, 'pointerdown', 102, 100, 20)
+    dispatchPointer(lane, 'pointermove', 102, 200, 50)
+    expect(activity).toEqual([true])
+    act(() => scope.querySelector<HTMLButtonElement>(`[data-testid="${controlId}"]`)!.click())
+    expect(activity).toEqual([true, false])
+    expect(scope.querySelector('.timeline-marquee')).toBeNull()
+  })
+
+  it('ends active timing once on unmount without publishing another draft', () => {
+    const activity: boolean[] = []
+    const scope = renderHarness((active) => activity.push(active))
+    const word = timelineWord(scope)
+
+    dispatchPointer(word, 'pointerdown', 103, 100)
+    dispatchPointer(word, 'pointermove', 103, 136)
+    expect(activity).toEqual([true])
+    act(() => root!.unmount())
+    root = null
+    expect(activity).toEqual([true, false])
+  })
+
+  it('ends active marquee once on unmount without a post-unmount render', () => {
+    const activity: boolean[] = []
+    const scope = renderMarqueeHarness((active) => activity.push(active))
+    const lane = scope.querySelector<HTMLElement>('.timeline-lane')!
+
+    dispatchPointer(lane, 'pointerdown', 104, 100, 20)
+    dispatchPointer(lane, 'pointermove', 104, 200, 50)
+    expect(activity).toEqual([true])
+    act(() => root!.unmount())
+    root = null
+    expect(activity).toEqual([true, false])
   })
 
   it('wires discoverable timing controls and orders timeline navigation by intent', () => {
@@ -449,30 +770,32 @@ describe('mounted Timeline live-preview wiring', () => {
     container = document.createElement('div')
     document.body.append(container)
     root = createRoot(container)
-    act(() => root!.render(
-      <Timeline
-        project={initialProject()}
-        peaks={[]}
-        isAnalyzing={false}
-        durationMs={30_000}
-        currentMs={1_500}
-        zoom={1}
-        activeTrackId="lead"
-        selectedWordIds={new Set()}
-        syncWordId={null}
-        syncMode={false}
-        onSeek={() => undefined}
-        onZoom={() => undefined}
-        onSelectWord={() => undefined}
-        onSelectWords={() => undefined}
-        onShiftWords={() => undefined}
-        onResizeWord={() => undefined}
-        onTimingDraftChange={() => undefined}
-        onToggleSync={onToggleSync}
-        onClearTiming={onClearTiming}
-        onClearTimingAfterCursor={onClearTimingAfterCursor}
-      />,
-    ))
+    act(() =>
+      root!.render(
+        <Timeline
+          project={initialProject()}
+          peaks={[]}
+          isAnalyzing={false}
+          durationMs={30_000}
+          currentMs={1_500}
+          zoom={1}
+          activeTrackId="lead"
+          selectedWordIds={new Set()}
+          syncWordId={null}
+          syncMode={false}
+          onSeek={() => undefined}
+          onZoom={() => undefined}
+          onSelectWord={() => undefined}
+          onSelectWords={() => undefined}
+          onShiftWords={() => undefined}
+          onResizeWord={() => undefined}
+          onTimingDraftChange={() => undefined}
+          onToggleSync={onToggleSync}
+          onClearTiming={onClearTiming}
+          onClearTimingAfterCursor={onClearTimingAfterCursor}
+        />,
+      ),
+    )
 
     const controls = [...container.querySelectorAll<HTMLButtonElement>('.timeline-sync-tools button')]
     expect(controls.map((button) => button.textContent?.trim())).toEqual([
@@ -505,28 +828,44 @@ describe('mounted Timeline live-preview wiring', () => {
 
   it.each([
     { mode: 'move', selector: null, moveX: 136, expectedProgress: '0%', committed: '1500:2500' },
-    { mode: 'start resize', selector: '.timeline-word__handle--start', moveX: 136, expectedProgress: '0%', committed: '1500:2000' },
-    { mode: 'end resize', selector: '.timeline-word__handle--end', moveX: 172, expectedProgress: '25%', committed: '1000:3000' },
-  ])('updates preview during $mode while committed project stays unchanged', ({ selector, moveX, expectedProgress, committed }) => {
-    const scope = renderHarness()
-    const word = timelineWord(scope)
-    const pointerDownTarget = selector ? word.querySelector<HTMLElement>(selector)! : word
+    {
+      mode: 'start resize',
+      selector: '.timeline-word__handle--start',
+      moveX: 136,
+      expectedProgress: '0%',
+      committed: '1500:2000',
+    },
+    {
+      mode: 'end resize',
+      selector: '.timeline-word__handle--end',
+      moveX: 172,
+      expectedProgress: '25%',
+      committed: '1000:3000',
+    },
+  ])(
+    'updates preview during $mode while committed project stays unchanged',
+    ({ selector, moveX, expectedProgress, committed }) => {
+      const scope = renderHarness()
+      const word = timelineWord(scope)
+      const pointerDownTarget = selector ? word.querySelector<HTMLElement>(selector)! : word
 
-    expect(previewProgress(scope)).toBe('50%')
-    dispatchPointer(pointerDownTarget, 'pointerdown', 21, 100)
-    dispatchPointer(word, 'pointermove', 21, moveX)
+      expect(previewProgress(scope)).toBe('50%')
+      dispatchPointer(pointerDownTarget, 'pointerdown', 21, 100)
+      dispatchPointer(word, 'pointermove', 21, moveX)
 
-    expect(scope.querySelector('[data-testid="draft-state"]')?.textContent).toBe('draft')
-    expect(scope.querySelector('[data-testid="saved-timing"]')?.textContent).toBe('1000:2000')
-    expect(previewProgress(scope)).toBe(expectedProgress)
+      expect(scope.querySelector('[data-testid="draft-state"]')?.textContent).toBe('draft')
+      expect(scope.querySelector('[data-testid="saved-timing"]')?.textContent).toBe('1000:2000')
+      expect(previewProgress(scope)).toBe(expectedProgress)
 
-    dispatchPointer(word, 'pointerup', 21, moveX)
-    expect(scope.querySelector('[data-testid="draft-state"]')?.textContent).toBe('committed')
-    expect(scope.querySelector('[data-testid="saved-timing"]')?.textContent).toBe(committed)
-  })
+      dispatchPointer(word, 'pointerup', 21, moveX)
+      expect(scope.querySelector('[data-testid="draft-state"]')?.textContent).toBe('committed')
+      expect(scope.querySelector('[data-testid="saved-timing"]')?.textContent).toBe(committed)
+    },
+  )
 
   it('clears draft state on pointer cancel and target-level capture loss', () => {
-    const scope = renderHarness()
+    const activity: boolean[] = []
+    const scope = renderHarness((active) => activity.push(active))
     const word = timelineWord(scope)
 
     dispatchPointer(word, 'pointerdown', 31, 100)
@@ -535,6 +874,7 @@ describe('mounted Timeline live-preview wiring', () => {
     dispatchPointer(word, 'pointercancel', 31, 136)
     expect(previewProgress(scope)).toBe('50%')
     expect(scope.querySelector('[data-testid="saved-timing"]')?.textContent).toBe('1000:2000')
+    expect(activity).toEqual([true, false])
 
     dispatchPointer(word, 'pointerdown', 32, 100)
     dispatchPointer(word, 'pointermove', 32, 136)
@@ -542,10 +882,12 @@ describe('mounted Timeline live-preview wiring', () => {
     dispatchPointer(word, 'lostpointercapture', 32, 136)
     expect(previewProgress(scope)).toBe('50%')
     expect(scope.querySelector('[data-testid="draft-state"]')?.textContent).toBe('committed')
+    expect(activity).toEqual([true, false, true, false])
   })
 
   it('clears a disconnected capture from document and permits another gesture', () => {
-    const scope = renderHarness()
+    const activity: boolean[] = []
+    const scope = renderHarness((active) => activity.push(active))
     const held = timelineWord(scope)
 
     dispatchPointer(held, 'pointerdown', 41, 100)
@@ -557,12 +899,14 @@ describe('mounted Timeline live-preview wiring', () => {
     dispatchPointer(document, 'lostpointercapture', 41, 136)
     expect(scope.querySelector('[data-testid="draft-state"]')?.textContent).toBe('committed')
     expect(scope.querySelector('[data-testid="saved-timing"]')?.textContent).toBe('1000:2000')
+    expect(activity).toEqual([true, false])
 
     const next = timelineWord(scope, 'Next')
     dispatchPointer(next, 'pointerdown', 42, 100)
     dispatchPointer(next, 'pointermove', 42, 136)
     expect(scope.querySelector('[data-testid="draft-state"]')?.textContent).toBe('draft')
     dispatchPointer(next, 'pointercancel', 42, 136)
+    expect(activity).toEqual([true, false, true, false])
   })
 
   it('invalidates an active gesture when the project makes its word untimed', () => {
@@ -585,7 +929,8 @@ describe('mounted Timeline live-preview wiring', () => {
   })
 
   it('keeps a draft through metadata-only project replacement and commits on pointer-up', () => {
-    const scope = renderHarness()
+    const activity: boolean[] = []
+    const scope = renderHarness((active) => activity.push(active))
     const held = timelineWord(scope)
 
     dispatchPointer(held, 'pointerdown', 61, 100)
@@ -598,14 +943,17 @@ describe('mounted Timeline live-preview wiring', () => {
     expect(scope.querySelector('[data-testid="draft-state"]')?.textContent).toBe('draft')
     expect(previewProgress(scope)).toBe('0%')
     expect(scope.querySelector('[data-testid="saved-timing"]')?.textContent).toBe('1000:2000')
+    expect(activity).toEqual([true])
 
     dispatchPointer(held, 'pointerup', 61, 136)
     expect(scope.querySelector('[data-testid="draft-state"]')?.textContent).toBe('committed')
     expect(scope.querySelector('[data-testid="saved-timing"]')?.textContent).toBe('1500:2500')
+    expect(activity).toEqual([true, false])
   })
 
   it('cancels when an affected timing changes during the gesture', () => {
-    const scope = renderHarness()
+    const activity: boolean[] = []
+    const scope = renderHarness((active) => activity.push(active))
     const held = timelineWord(scope)
 
     dispatchPointer(held, 'pointerdown', 62, 100)
@@ -616,8 +964,10 @@ describe('mounted Timeline live-preview wiring', () => {
     act(() => changeTiming.click())
     expect(scope.querySelector('[data-testid="draft-state"]')?.textContent).toBe('committed')
     expect(scope.querySelector('[data-testid="saved-timing"]')?.textContent).toBe('1100:2000')
+    expect(activity).toEqual([true, false])
 
     dispatchPointer(held, 'pointerup', 62, 136)
     expect(scope.querySelector('[data-testid="saved-timing"]')?.textContent).toBe('1100:2000')
+    expect(activity).toEqual([true, false])
   })
 })
