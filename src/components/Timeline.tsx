@@ -113,9 +113,6 @@ function createTimelineGestureActivity(getOnChange: () => ((active: boolean) => 
       getOnChange()?.(false)
       return true
     },
-    owns(source: TimelineGestureSource) {
-      return activeSource === source
-    },
     clear() {
       if (activeSource === null) return false
       activeSource = null
@@ -833,30 +830,27 @@ export function Timeline({
     }
     if (!gestureSessionRef.current!.begin(drag)) return
     timingGestureScopeRef.current = activeGestureScopeKey
+    if (!selectedWordIds.has(word.id))
+      onSelectWord(word.id, event.shiftKey || event.metaKey || event.ctrlKey)
+    if (!gestureSessionRef.current!.owns(event.pointerId, event.currentTarget)) return
     try {
       event.currentTarget.setPointerCapture(event.pointerId)
     } catch {
-      gestureSessionRef.current!.cancel(event.pointerId, event.currentTarget)
+      gestureSessionRef.current!.abandon()
       timingGestureScopeRef.current = null
       return
     }
     if (!safelyHasPointerCapture(event.currentTarget, event.pointerId)) {
-      gestureSessionRef.current!.cancel(event.pointerId, event.currentTarget)
+      gestureSessionRef.current!.abandon()
       timingGestureScopeRef.current = null
       return
     }
     if (!gestureActivityRef.current!.begin('timing')) {
-      gestureSessionRef.current!.cancel(event.pointerId, event.currentTarget)
+      gestureSessionRef.current!.abandon()
       timingGestureScopeRef.current = null
       safelyReleasePointerCapture(event.currentTarget, event.pointerId)
       return
     }
-    if (
-      mountedRef.current &&
-      gestureActivityRef.current!.owns('timing') &&
-      !selectedWordIds.has(word.id)
-    )
-      onSelectWord(word.id, event.shiftKey || event.metaKey || event.ctrlKey)
   }
 
   const pointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
