@@ -51,7 +51,7 @@ body:
     id: class-evidence
     attributes:
       label: Class-specific evidence
-      description: For runtime, give the event order, boundary path, and missing guard. For scope integrity, give the exact diff and consistency evidence without inventing a runtime path.
+      description: For runtime/path findings, give the concrete trigger and event order, boundary evidence, and preventing invariant. For scope-integrity findings, give the exact diff evidence, integrity failure, and consistency evidence without inventing a runtime trigger.
     validations:
       required: true
   - type: textarea

@@ -38,16 +38,39 @@ describe('reviewer infrastructure contract', () => {
     expect(contract).toContain('Do not add a runtime reachability label')
     expect(contract).toContain('**Declared scope or contract**')
     expect(contract).toContain('**Diff evidence**')
+    expect(contract).toContain('**Integrity failure**')
     expect(contract).toContain('**Consistency evidence**')
   })
 
-  it('lets accepted-residual issues represent either finding class', () => {
+  it('requires each residual finding class to supply its canonical evidence', () => {
     const issueForm = source('.github/ISSUE_TEMPLATE/accepted-residual.yml')
+    const sdlc = source('docs/SDLC.md')
 
     expect(issueForm).toContain('label: Finding class')
     expect(issueForm).toContain('- Runtime/path finding')
     expect(issueForm).toContain('- Scope-integrity finding')
     expect(issueForm).toContain('leave blank for a scope-integrity finding')
     expect(issueForm).toContain('label: Class-specific evidence')
+
+    for (const runtimeEvidence of [
+      'concrete trigger and event order',
+      'boundary evidence',
+      'preventing invariant',
+    ]) {
+      expect(issueForm).toContain(runtimeEvidence)
+    }
+
+    for (const scopeEvidence of [
+      'declared scope and obligation',
+      'exact diff evidence',
+      'integrity failure',
+      'consistency evidence',
+    ]) {
+      expect(issueForm).toContain(scopeEvidence)
+    }
+
+    expect(issueForm).toContain('without inventing a runtime trigger')
+    expect(sdlc).toContain('finding class and class-specific evidence')
+    expect(sdlc).not.toContain('records its trigger')
   })
 })

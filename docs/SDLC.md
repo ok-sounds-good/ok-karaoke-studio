@@ -84,7 +84,8 @@ A change is done when:
   binary policy without explicit user direction.
 - Documentation and the relevant release or roadmap status are updated.
 - Every accepted review residual links to its GitHub issue, and that issue
-  records its trigger, impact, deferral rationale, and closure criteria.
+  records its finding class and class-specific evidence, impact, deferral
+  rationale, and closure criteria.
 
 ## Recommended `main` ruleset
 
