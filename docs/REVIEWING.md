@@ -19,6 +19,39 @@ Before reviewing:
    cross-boundary integration edge when the change has such a boundary.
 5. Apply the validation matrix in `AGENTS.md` and `SDLC.md`; static inspection
    does not substitute for required tests or hands-on evidence.
+6. Compare the pull request's stated scope with every changed file and the
+   existing-file word diff. Identify unrelated edits and opportunistic cleanup.
+7. Verify that implementation, tests, documentation, agent instructions,
+   configuration, and pull-request claims describe the same behavior.
+
+## Protect scope and contract meaning
+
+Code is not the only source of behavioral change. Documentation, agent prompts,
+CI configuration, issue forms, and pull-request templates can alter product,
+review, validation, or delivery obligations. Review those changes with the same
+care as implementation.
+
+For every deletion or rewording of an existing contract, description, or
+instruction, verify that it is:
+
+- necessary to the declared purpose of the pull request;
+- disclosed in the pull-request description;
+- justified by an accepted decision or concrete evidence; and
+- reflected consistently in the authoritative documentation, implementation,
+  and tests that depend on it.
+
+Flag unrelated changes, semantic edits presented as formatting or line-length
+cleanup, and unjustified narrowing or broadening of product scope, platform or
+compatibility promises, trust boundaries, validation requirements, review
+obligations, or user-held acceptance gates. An implementation change that lacks
+required documentation is the same class of scope-integrity problem as a
+documentation change that no longer matches the implementation.
+
+Scope-integrity findings are evidenced by the diff and the pull request's stated
+purpose; they do not require a synthetic runtime trigger to be actionable. When
+such a finding also changes reachable behavior, classify that behavior using the
+reachability labels below. Otherwise, identify it explicitly as a
+scope-integrity finding rather than forcing it into a runtime category.
 
 ## Classify reachability first
 
@@ -136,7 +169,11 @@ or commit range:
 > canonical finding fields and reachability labels. Do not block solely because
 > an internal API can represent a state; demonstrate a current,
 > accepted-dependent, platform, or credible failure path. Do not treat visual UI
-> restrictions as enforced boundaries. A confirmed residual can pass only after
+> restrictions as enforced boundaries. Audit the stated scope against every
+> changed file and the existing-file word diff; flag unrelated changes, semantic
+> edits disguised as formatting, undocumented contract changes, and unjustified
+> narrowing or broadening of obligations. Verify that code, tests, documentation,
+> configuration, and PR claims agree. A confirmed residual can pass only after
 > explicit maintainer acceptance and a linked GitHub issue. Report residual risk
 > and unobserved validation even when there are no findings. Do not edit the
 > worktree or manage repository lifecycle.
