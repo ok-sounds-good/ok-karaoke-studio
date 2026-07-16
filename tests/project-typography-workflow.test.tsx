@@ -13,6 +13,8 @@ const captures = new WeakMap<HTMLElement, Set<number>>()
 interface StudioHarness {
   studio: StudioApi
   emitClose: (request: StudioWindowCloseRequest) => void
+  importAudio: ReturnType<typeof vi.fn>
+  importLrc: ReturnType<typeof vi.fn>
   openProject: ReturnType<typeof vi.fn>
   resetProjectScope: ReturnType<typeof vi.fn>
   resolveWindowClose: ReturnType<typeof vi.fn>
@@ -50,6 +52,8 @@ function createStudioHarness(): StudioHarness {
   let closeListener: ((request: StudioWindowCloseRequest) => void) | null = null
   let pendingClose: StudioWindowCloseRequest | null = null
   const openProject = vi.fn(async () => null)
+  const importAudio = vi.fn(async () => null)
+  const importLrc = vi.fn(async () => null)
   const resetProjectScope = vi.fn(async () => true)
   const saveProject = vi.fn(async () => ({ path: '/saved/project.oks' }))
   const resolveWindowClose = vi.fn(async (requestId: string) => {
@@ -62,10 +66,10 @@ function createStudioHarness(): StudioHarness {
     settleProjectOpen: vi.fn(async () => true),
     resetProjectScope,
     saveProject,
-    importAudio: vi.fn(async () => null),
+    importAudio,
     resolveProjectAudio: vi.fn(async () => null),
     releaseAudio: vi.fn(async () => undefined),
-    importLrc: vi.fn(async () => null),
+    importLrc,
     exportText: vi.fn(async () => ({ path: '/exports/project.oks' })),
     exportVideo: vi.fn(async () => null),
     cancelVideoExport: vi.fn(async () => true),
@@ -87,11 +91,23 @@ function createStudioHarness(): StudioHarness {
       pendingClose = request
       closeListener?.(request)
     },
+    importAudio,
+    importLrc,
     openProject,
     resetProjectScope,
     resolveWindowClose,
     saveProject,
   }
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, reject, resolve }
 }
 
 function buttonByText(label: string) {
@@ -105,6 +121,18 @@ function buttonByText(label: string) {
 function buttonByLabel(label: string) {
   const button = document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)
   if (!button) throw new Error(`Could not find labelled button: ${label}`)
+  return button
+}
+
+function fileInputByAccept(accept: string) {
+  const input = document.querySelector<HTMLInputElement>(`input[type="file"][accept="${accept}"]`)
+  if (!input) throw new Error(`Could not find file input: ${accept}`)
+  return input
+}
+
+function audioImportButton() {
+  const button = document.querySelector<HTMLButtonElement>('.audio-source')
+  if (!button) throw new Error('Could not find audio import button')
   return button
 }
 
@@ -197,6 +225,47 @@ describe('project typography App integration', () => {
     })
     await click(buttonByLabel('Open project'))
     expect(document.querySelectorAll('.timeline-word').length).toBeGreaterThan(0)
+  }
+
+  async function renderBrowserApp() {
+    await act(async () => root.unmount())
+    Object.defineProperty(window, 'studio', { configurable: true, value: undefined })
+    root = createRoot(container)
+    await act(async () => root.render(<App />))
+    await settle()
+  }
+
+  async function chooseBrowserFile(input: HTMLInputElement, file: File) {
+    Object.defineProperty(input, 'files', { configurable: true, value: [file] })
+    await act(async () => {
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    await settle()
+  }
+
+  async function cancelBrowserFileSelection(input: HTMLInputElement) {
+    await act(async () => {
+      input.dispatchEvent(new Event('cancel', { bubbles: true }))
+    })
+    await settle()
+  }
+
+  async function expectStyleBlocked(reason: string) {
+    const style = buttonByText('Style')
+    expect(style.disabled).toBe(false)
+    expect(style.getAttribute('aria-disabled')).toBe('true')
+    expect(style.getAttribute('aria-label')).toBe(`Style unavailable: ${reason}`)
+    style.focus()
+    expect(document.activeElement).toBe(style)
+    await click(style)
+    expect(document.querySelector('.style-workspace')).toBeNull()
+  }
+
+  function expectStyleAvailable() {
+    const style = buttonByText('Style')
+    expect(style.disabled).toBe(false)
+    expect(style.getAttribute('aria-disabled')).toBe('false')
+    expect(style.getAttribute('aria-label')).toBe('Edit project lyric style')
   }
 
   it('opens beside the identity, replaces the editing workspace, and keeps playback available', async () => {
@@ -344,6 +413,170 @@ describe('project typography App integration', () => {
     expect(style.getAttribute('aria-label')).toContain('active video export')
     await click(style)
     expect(document.querySelector('.style-workspace')).toBeNull()
+  })
+
+  it('owns deferred desktop Open before reactive paint and clears on cancel or completion', async () => {
+    const canceled = deferred<StudioOpenProjectResult | null>()
+    harness.openProject.mockImplementationOnce(() => canceled.promise)
+    const style = buttonByText('Style')
+    await act(async () => {
+      buttonByLabel('Open project').click()
+      style.click()
+    })
+    await settle()
+
+    expect(document.querySelector('.style-workspace')).toBeNull()
+    await expectStyleBlocked('Wait for project selection and opening to finish.')
+    await act(async () => canceled.resolve(null))
+    await settle()
+    expectStyleAvailable()
+
+    const completed = deferred<StudioOpenProjectResult | null>()
+    const openedProject = {
+      ...createDemoProject(),
+      title: 'Deferred desktop project',
+      audioPath: null,
+    }
+    harness.openProject.mockImplementationOnce(() => completed.promise)
+    await click(buttonByLabel('Open project'))
+    await expectStyleBlocked('Wait for project selection and opening to finish.')
+    expect(document.querySelector('.topbar__document')?.textContent).not.toContain(
+      openedProject.title,
+    )
+
+    await act(async () => {
+      completed.resolve({
+        requestId: 'deferred-desktop-open',
+        path: '/projects/deferred.oks',
+        contents: serializeProject(openedProject),
+      })
+      await completed.promise
+    })
+    await settle()
+
+    expect(document.querySelector('.topbar__document')?.textContent).toContain(openedProject.title)
+    expectStyleAvailable()
+  })
+
+  it('owns deferred desktop audio import through failure and successful apply', async () => {
+    const failed = deferred<StudioAudioImportResult | null>()
+    harness.importAudio.mockImplementationOnce(() => failed.promise)
+    await click(audioImportButton())
+    await expectStyleBlocked('Wait for audio selection and import to finish.')
+
+    await act(async () => {
+      failed.reject(new Error('Desktop audio picker failed'))
+      await failed.promise.catch(() => undefined)
+    })
+    await settle()
+    expectStyleAvailable()
+
+    const completed = deferred<StudioAudioImportResult | null>()
+    harness.importAudio.mockImplementationOnce(() => completed.promise)
+    await click(audioImportButton())
+    await expectStyleBlocked('Wait for audio selection and import to finish.')
+    await act(async () => {
+      completed.resolve({ path: '/music/deferred.mp3', name: 'deferred.mp3', url: '' })
+      await completed.promise
+    })
+    await settle()
+
+    expectStyleAvailable()
+    await click(buttonByLabel('Save project'))
+    expect(parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents).audioPath).toBe(
+      '/music/deferred.mp3',
+    )
+  })
+
+  it('owns deferred desktop LRC import until its lyrics are applied', async () => {
+    const completed = deferred<StudioLrcImportResult | null>()
+    harness.importLrc.mockImplementationOnce(() => completed.promise)
+    await click(buttonByText('Import LRC lyrics'))
+    await expectStyleBlocked('Wait for LRC selection and import to finish.')
+    expect(document.body.textContent).not.toContain('Desktop deferred lyric')
+
+    await act(async () => {
+      completed.resolve({
+        path: '/lyrics/deferred.lrc',
+        name: 'deferred.lrc',
+        contents: '[00:01.00]Desktop deferred lyric',
+      })
+      await completed.promise
+    })
+    await settle()
+
+    expect(document.body.textContent).toContain('Desktop deferred lyric')
+    expectStyleAvailable()
+  })
+
+  it('owns browser project File.text through read failure and successful replacement', async () => {
+    await renderBrowserApp()
+    const failedRead = deferred<string>()
+    await click(buttonByLabel('Open project'))
+    await chooseBrowserFile(fileInputByAccept('.oks,.json,application/json'), {
+      name: 'failed.oks',
+      text: vi.fn(() => failedRead.promise),
+    } as unknown as File)
+    await expectStyleBlocked('Wait for project selection and opening to finish.')
+
+    await act(async () => {
+      failedRead.reject(new Error('Browser project read failed'))
+      await failedRead.promise.catch(() => undefined)
+    })
+    await settle()
+    expectStyleAvailable()
+
+    const completedRead = deferred<string>()
+    const openedProject = {
+      ...createDemoProject(),
+      title: 'Deferred browser project',
+      audioPath: null,
+    }
+    await click(buttonByLabel('Open project'))
+    await chooseBrowserFile(fileInputByAccept('.oks,.json,application/json'), {
+      name: 'browser.oks',
+      text: vi.fn(() => completedRead.promise),
+    } as unknown as File)
+    await expectStyleBlocked('Wait for project selection and opening to finish.')
+    expect(document.querySelector('.topbar__document')?.textContent).not.toContain(
+      openedProject.title,
+    )
+
+    await act(async () => {
+      completedRead.resolve(serializeProject(openedProject))
+      await completedRead.promise
+    })
+    await settle()
+
+    expect(document.querySelector('.topbar__document')?.textContent).toContain(openedProject.title)
+    expectStyleAvailable()
+  })
+
+  it('owns browser LRC File.text and clears a canceled picker without applying data', async () => {
+    await renderBrowserApp()
+    const completedRead = deferred<string>()
+    await click(buttonByText('Import LRC lyrics'))
+    await chooseBrowserFile(fileInputByAccept('.lrc,text/plain'), {
+      name: 'browser.lrc',
+      text: vi.fn(() => completedRead.promise),
+    } as unknown as File)
+    await expectStyleBlocked('Wait for LRC selection and import to finish.')
+    expect(document.body.textContent).not.toContain('Browser deferred lyric')
+
+    await act(async () => {
+      completedRead.resolve('[00:01.00]Browser deferred lyric')
+      await completedRead.promise
+    })
+    await settle()
+
+    expect(document.body.textContent).toContain('Browser deferred lyric')
+    expectStyleAvailable()
+
+    await click(buttonByText('Import LRC lyrics'))
+    await expectStyleBlocked('Wait for LRC selection and import to finish.')
+    await cancelBrowserFileSelection(fileInputByAccept('.lrc,text/plain'))
+    expectStyleAvailable()
+    expect(document.body.textContent).toContain('Browser deferred lyric')
   })
 
   it('preserves exact native request IDs for Keep and Discard', async () => {

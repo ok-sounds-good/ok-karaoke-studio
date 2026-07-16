@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import type { KaraokeProject, LyricDisplaySettings, LyricWord, ValidationIssue, VocalTrack } from './lib/model'
 import {
   createProject,
@@ -54,6 +54,18 @@ import {
 interface HistoryEntry {
   project: KaraokeProject
   revision: number
+}
+
+type ProjectActionLifetimeKind = 'open' | 'import-audio' | 'import-lrc'
+
+interface ProjectActionLifetimeOwner {
+  readonly kind: ProjectActionLifetimeKind
+}
+
+const projectActionStyleDisabledReasons: Record<ProjectActionLifetimeKind, string> = {
+  open: 'Wait for project selection and opening to finish.',
+  'import-audio': 'Wait for audio selection and import to finish.',
+  'import-lrc': 'Wait for LRC selection and import to finish.',
 }
 
 function useProjectHistory(initialProject: KaraokeProject | (() => KaraokeProject)) {
@@ -306,6 +318,8 @@ export default function App() {
   const [timingDraft, setTimingDraft] = useState<ActiveTimingDraft | null>(null)
   const [timelineGestureActive, setTimelineGestureActive] = useState(false)
   const [projectTransitionActive, setProjectTransitionActive] = useState(false)
+  const [projectActionLifetimeKind, setProjectActionLifetimeKind] =
+    useState<ProjectActionLifetimeKind | null>(null)
   const projectInputRef = useRef<HTMLInputElement>(null)
   const audioInputRef = useRef<HTMLInputElement>(null)
   const lrcInputRef = useRef<HTMLInputElement>(null)
@@ -319,6 +333,7 @@ export default function App() {
   const projectRestoreSequenceRef = useRef(0)
   const projectLifecycleSequenceRef = useRef(0)
   const projectTransitionRef = useRef(false)
+  const projectActionLifetimeRef = useRef<ProjectActionLifetimeOwner | null>(null)
   const projectAuthorityCertainRef = useRef(true)
   const saveRequestSequenceRef = useRef(0)
   const videoExportActiveRef = useRef(false)
@@ -388,6 +403,7 @@ export default function App() {
   const canInteractWithProjectTypography = useCallback(
     () =>
       !projectTransitionRef.current &&
+      !projectActionLifetimeRef.current &&
       !videoExportActiveRef.current &&
       !timelineGestureActiveRef.current &&
       !syncMode &&
@@ -492,6 +508,51 @@ export default function App() {
   }, [reviewProject])
 
   const showToast = useCallback((message: string, tone: ToastState['tone'] = 'neutral') => setToast({ message, tone }), [])
+
+  const beginProjectActionLifetime = useCallback(
+    (kind: ProjectActionLifetimeKind): ProjectActionLifetimeOwner | null => {
+      if (projectActionLifetimeRef.current || projectTransitionRef.current) {
+        showToast('Wait for the current project action to finish.', 'warning')
+        return null
+      }
+      const owner = { kind }
+      projectActionLifetimeRef.current = owner
+      setProjectActionLifetimeKind(kind)
+      return owner
+    },
+    [showToast],
+  )
+
+  const finishProjectActionLifetime = useCallback((owner: ProjectActionLifetimeOwner) => {
+    if (projectActionLifetimeRef.current !== owner) return
+    projectActionLifetimeRef.current = null
+    setProjectActionLifetimeKind(null)
+  }, [])
+
+  const finishProjectActionLifetimeKind = useCallback(
+    (kind: ProjectActionLifetimeKind) => {
+      const owner = projectActionLifetimeRef.current
+      if (owner?.kind === kind) finishProjectActionLifetime(owner)
+    },
+    [finishProjectActionLifetime],
+  )
+
+  useEffect(() => {
+    const projectInput = projectInputRef.current
+    const audioInput = audioInputRef.current
+    const lrcInput = lrcInputRef.current
+    const cancelProject = () => finishProjectActionLifetimeKind('open')
+    const cancelAudio = () => finishProjectActionLifetimeKind('import-audio')
+    const cancelLrc = () => finishProjectActionLifetimeKind('import-lrc')
+    projectInput?.addEventListener('cancel', cancelProject)
+    audioInput?.addEventListener('cancel', cancelAudio)
+    lrcInput?.addEventListener('cancel', cancelLrc)
+    return () => {
+      projectInput?.removeEventListener('cancel', cancelProject)
+      audioInput?.removeEventListener('cancel', cancelAudio)
+      lrcInput?.removeEventListener('cancel', cancelLrc)
+    }
+  }, [finishProjectActionLifetimeKind])
 
   const beginProjectTransition = useCallback(() => {
     if (projectTransitionRef.current) {
@@ -725,17 +786,27 @@ export default function App() {
   ])
 
   const handleOpen = useCallback(async () => {
-    if (projectTransitionRef.current) {
-      showToast('Wait for the current project change to finish.', 'warning')
+    const owner = beginProjectActionLifetime('open')
+    if (!owner) return false
+    const studio = window.studio
+    if (!studio) {
+      const input = projectInputRef.current
+      if (!input) finishProjectActionLifetime(owner)
+      else input.click()
       return false
     }
-    if (!window.studio) {
-      projectInputRef.current?.click()
-      return false
-    }
-    let result: StudioOpenProjectResult | null
     try {
-      result = await window.studio.openProject()
+      const result = await studio.openProject()
+      if (result && (typeof result.requestId !== 'string' || !result.requestId)) {
+        showToast(
+          'The selected project did not include a valid access handle. Open it again.',
+          'warning',
+        )
+        return false
+      }
+      return result
+        ? await openProjectContents(result.contents, result.path, result.requestId)
+        : false
     } catch (error) {
       const message =
         error instanceof Error && error.message.trim()
@@ -743,16 +814,10 @@ export default function App() {
           : 'Project could not be opened.'
       showToast(message, 'warning')
       return false
+    } finally {
+      finishProjectActionLifetime(owner)
     }
-    if (result && (typeof result.requestId !== 'string' || !result.requestId)) {
-      showToast(
-        'The selected project did not include a valid access handle. Open it again.',
-        'warning',
-      )
-      return false
-    }
-    return result ? openProjectContents(result.contents, result.path, result.requestId) : false
-  }, [openProjectContents, showToast])
+  }, [beginProjectActionLifetime, finishProjectActionLifetime, openProjectContents, showToast])
 
   const handleSave = useCallback(
     async (saveAs = false) => {
@@ -806,13 +871,22 @@ export default function App() {
 
   const handleImportAudio = useCallback(async () => {
     if (blockProjectSideEffect()) return
-    if (window.studio) {
-      const result = await window.studio.importAudio()
-      if (result && !blockProjectSideEffect()) applyAudio(result.path, result.url, result.name)
-    } else {
-      audioInputRef.current?.click()
+    const owner = beginProjectActionLifetime('import-audio')
+    if (!owner) return
+    const studio = window.studio
+    if (!studio) {
+      const input = audioInputRef.current
+      if (!input) finishProjectActionLifetime(owner)
+      else input.click()
+      return
     }
-  }, [applyAudio, blockProjectSideEffect])
+    try {
+      const result = await studio.importAudio()
+      if (result && !blockProjectSideEffect()) applyAudio(result.path, result.url, result.name)
+    } finally {
+      finishProjectActionLifetime(owner)
+    }
+  }, [applyAudio, beginProjectActionLifetime, blockProjectSideEffect, finishProjectActionLifetime])
 
   const applyLrc = useCallback((contents: string) => {
     if (!activeTrack) return
@@ -835,13 +909,100 @@ export default function App() {
 
   const handleImportLrc = useCallback(async () => {
     if (blockProjectSideEffect()) return
-    if (window.studio) {
-      const result = await window.studio.importLrc()
-      if (result && !blockProjectSideEffect()) applyLrc(result.contents)
-    } else {
-      lrcInputRef.current?.click()
+    const owner = beginProjectActionLifetime('import-lrc')
+    if (!owner) return
+    const studio = window.studio
+    if (!studio) {
+      const input = lrcInputRef.current
+      if (!input) finishProjectActionLifetime(owner)
+      else input.click()
+      return
     }
-  }, [applyLrc, blockProjectSideEffect])
+    try {
+      const result = await studio.importLrc()
+      if (result && !blockProjectSideEffect()) applyLrc(result.contents)
+    } finally {
+      finishProjectActionLifetime(owner)
+    }
+  }, [applyLrc, beginProjectActionLifetime, blockProjectSideEffect, finishProjectActionLifetime])
+
+  const handleProjectFileChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0]
+      event.currentTarget.value = ''
+      const owner = projectActionLifetimeRef.current
+      if (owner?.kind !== 'open') return
+      if (!file) {
+        finishProjectActionLifetime(owner)
+        return
+      }
+      void (async () => {
+        try {
+          await openProjectContents(await file.text(), null)
+        } catch (error) {
+          showToast(
+            error instanceof Error && error.message.trim()
+              ? error.message
+              : 'Project file could not be read.',
+            'warning',
+          )
+        } finally {
+          finishProjectActionLifetime(owner)
+        }
+      })()
+    },
+    [finishProjectActionLifetime, openProjectContents, showToast],
+  )
+
+  const handleAudioFileChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0]
+      event.currentTarget.value = ''
+      const owner = projectActionLifetimeRef.current
+      if (owner?.kind !== 'import-audio') return
+      try {
+        if (file) applyAudio(file.name, URL.createObjectURL(file), file.name)
+      } catch (error) {
+        showToast(
+          error instanceof Error && error.message.trim()
+            ? error.message
+            : 'Audio file could not be imported.',
+          'warning',
+        )
+      } finally {
+        finishProjectActionLifetime(owner)
+      }
+    },
+    [applyAudio, finishProjectActionLifetime, showToast],
+  )
+
+  const handleLrcFileChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0]
+      event.currentTarget.value = ''
+      const owner = projectActionLifetimeRef.current
+      if (owner?.kind !== 'import-lrc') return
+      if (!file) {
+        finishProjectActionLifetime(owner)
+        return
+      }
+      void (async () => {
+        try {
+          applyLrc(await file.text())
+        } catch (error) {
+          showToast(
+            error instanceof Error && error.message.trim()
+              ? error.message
+              : 'LRC file could not be read.',
+            'warning',
+          )
+        } finally {
+          finishProjectActionLifetime(owner)
+        }
+      })()
+    },
+    [applyLrc, finishProjectActionLifetime, showToast],
+  )
 
   const exportText = useCallback(
     async (format: StudioExportFormat) => {
@@ -1355,23 +1516,25 @@ export default function App() {
   const syncWordId = syncMode ? syncWords[syncCursor]?.id ?? null : null
   const styleDisabledReason = typographySession.isOpen
     ? 'The Style editor is already open.'
-    : timelineGestureActive
-      ? 'Finish the active timing gesture first.'
-      : projectTransitionActive
-        ? 'Wait for the current project action to finish.'
-        : videoExportProgress !== null
-          ? 'Finish or cancel the active video export first.'
-          : syncMode
-            ? 'Exit lyric synchronization first.'
-            : lyricsDialogOpen
-              ? 'Close the lyric editor first.'
-              : exportDialogOpen
-                ? 'Close Export first.'
-                : validationDialogOpen
-                  ? 'Close timing review first.'
-                  : workflowGuideOpen
-                    ? 'Close Workflow first.'
-                    : null
+    : projectActionLifetimeKind
+      ? projectActionStyleDisabledReasons[projectActionLifetimeKind]
+      : timelineGestureActive
+        ? 'Finish the active timing gesture first.'
+        : projectTransitionActive
+          ? 'Wait for the current project action to finish.'
+          : videoExportProgress !== null
+            ? 'Finish or cancel the active video export first.'
+            : syncMode
+              ? 'Exit lyric synchronization first.'
+              : lyricsDialogOpen
+                ? 'Close the lyric editor first.'
+                : exportDialogOpen
+                  ? 'Close Export first.'
+                  : validationDialogOpen
+                    ? 'Close timing review first.'
+                    : workflowGuideOpen
+                      ? 'Close Workflow first.'
+                      : null
 
   return (
     <div className="app-shell">
@@ -1497,33 +1660,21 @@ export default function App() {
         hidden
         type="file"
         accept=".oks,.json,application/json"
-        onChange={(event) => {
-          const file = event.target.files?.[0]
-          if (file) void file.text().then((contents) => openProjectContents(contents, null))
-          event.currentTarget.value = ''
-        }}
+        onChange={handleProjectFileChange}
       />
       <input
         ref={audioInputRef}
         hidden
         type="file"
         accept="audio/*,.mp3,.wav,.m4a,.flac,.aac,.ogg"
-        onChange={(event) => {
-          const file = event.target.files?.[0]
-          if (file) applyAudio(file.name, URL.createObjectURL(file), file.name)
-          event.currentTarget.value = ''
-        }}
+        onChange={handleAudioFileChange}
       />
       <input
         ref={lrcInputRef}
         hidden
         type="file"
         accept=".lrc,text/plain"
-        onChange={(event) => {
-          const file = event.target.files?.[0]
-          if (file) void file.text().then(applyLrc)
-          event.currentTarget.value = ''
-        }}
+        onChange={handleLrcFileChange}
       />
 
       {lyricsDialogOpen && activeTrack && (
