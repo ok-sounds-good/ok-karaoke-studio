@@ -209,8 +209,12 @@ describe('project typography session', () => {
 
     allowed = false
     await change(lyricStyle('Blocked replacement'))
-    await act(async () => currentSession.apply())
+    let settled = true
+    await act(async () => {
+      settled = currentSession.apply()
+    })
 
+    expect(settled).toBe(false)
     expect(currentSession.draft).toEqual(heldDraft)
     expect(currentSession.isOpen).toBe(true)
     expect(currentSession.blocksProjectActions).toBe(true)
@@ -247,11 +251,15 @@ describe('project typography session', () => {
         return result
       })
 
+      let firstResult = false
+      let repeatedResult = true
       await act(async () => {
-        currentSession.apply()
-        currentSession.apply()
+        firstResult = currentSession.apply()
+        repeatedResult = currentSession.apply()
       })
 
+      expect(firstResult).toBe(true)
+      expect(repeatedResult).toBe(false)
       expect(commitDraft).toHaveBeenCalledOnce()
       expect(commitDraft).toHaveBeenCalledWith(ownerKey, expect.any(Object))
       expect(currentSession).toMatchObject({
@@ -278,9 +286,13 @@ describe('project typography session', () => {
       return 'blocked'
     })
 
-    await act(async () => currentSession.apply())
+    let settled = true
+    await act(async () => {
+      settled = currentSession.apply()
+    })
     await flushFocus()
 
+    expect(settled).toBe(false)
     expect(commitDraft).toHaveBeenCalledOnce()
     expect(currentSession.draft).toEqual(heldDraft)
     expect(currentSession.isOpen).toBe(true)
@@ -294,9 +306,13 @@ describe('project typography session', () => {
     const focus = vi.spyOn(button, 'focus')
     commitDraft.mockReturnValueOnce('stale')
 
-    await act(async () => currentSession.apply())
+    let settled = true
+    await act(async () => {
+      settled = currentSession.apply()
+    })
     await flushFocus()
 
+    expect(settled).toBe(false)
     expect(commitDraft).toHaveBeenCalledOnce()
     expect(currentSession.isOpen).toBe(false)
     expect(currentSession.draft).toBeNull()
@@ -351,7 +367,11 @@ describe('project typography session', () => {
   it('cancel never commits and focuses only a connected same-owner trigger', async () => {
     const connected = await start()
     const connectedFocus = vi.spyOn(connected, 'focus')
-    await act(async () => currentSession.cancel())
+    let canceled = false
+    await act(async () => {
+      canceled = currentSession.cancel()
+    })
+    expect(canceled).toBe(true)
     expect(connectedFocus).not.toHaveBeenCalled()
     await flushFocus()
     expect(connectedFocus).toHaveBeenCalledOnce()

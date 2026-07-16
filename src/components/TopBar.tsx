@@ -1,4 +1,14 @@
-import { CheckCircle2, CircleHelp, Download, FilePlus2, FolderOpen, Redo2, Save, Undo2 } from 'lucide-react'
+import {
+  CheckCircle2,
+  CircleHelp,
+  Download,
+  FilePlus2,
+  FolderOpen,
+  Redo2,
+  Save,
+  Type,
+  Undo2,
+} from 'lucide-react'
 import { Button, IconButton, LogoMark } from './ui'
 
 interface TopBarProps {
@@ -8,6 +18,10 @@ interface TopBarProps {
   canRedo: boolean
   issueCount: number
   hasLyrics: boolean
+  styleDisabledReason: string | null
+  workflowDisabled: boolean
+  validationDisabled: boolean
+  onStyle: (trigger: HTMLButtonElement) => void
   onNew: () => void
   onOpen: () => void
   onSave: () => void
@@ -25,6 +39,10 @@ export function TopBar({
   canRedo,
   issueCount,
   hasLyrics,
+  styleDisabledReason,
+  workflowDisabled,
+  validationDisabled,
+  onStyle,
   onNew,
   onOpen,
   onSave,
@@ -38,10 +56,27 @@ export function TopBar({
     <header className="topbar">
       <div className="topbar__brand">
         <LogoMark />
-        <div>
+        <div className="topbar__identity">
           <strong>Okay</strong>
           <span>Karaoke Studio</span>
         </div>
+        <Button
+          className="style-button"
+          size="sm"
+          variant="ghost"
+          aria-disabled={styleDisabledReason !== null}
+          aria-label={
+            styleDisabledReason
+              ? `Style unavailable: ${styleDisabledReason}`
+              : 'Edit project lyric style'
+          }
+          title={styleDisabledReason ?? 'Edit project lyric style'}
+          onClick={(event) => {
+            if (!styleDisabledReason) onStyle(event.currentTarget)
+          }}
+        >
+          <Type size={15} /> Style
+        </Button>
       </div>
 
       <div className="topbar__document">
@@ -52,22 +87,44 @@ export function TopBar({
 
       <nav className="topbar__actions" aria-label="Project actions">
         <div className="toolbar-group">
-          <IconButton aria-label="New project" title="New project" onClick={onNew}><FilePlus2 size={17} /></IconButton>
-          <IconButton aria-label="Open project" title="Open project" onClick={onOpen}><FolderOpen size={17} /></IconButton>
-          <IconButton aria-label="Save project" title="Save project (⌘S)" onClick={onSave}><Save size={17} /></IconButton>
+          <IconButton aria-label="New project" title="New project" onClick={onNew}>
+            <FilePlus2 size={17} />
+          </IconButton>
+          <IconButton aria-label="Open project" title="Open project" onClick={onOpen}>
+            <FolderOpen size={17} />
+          </IconButton>
+          <IconButton aria-label="Save project" title="Save project (⌘S)" onClick={onSave}>
+            <Save size={17} />
+          </IconButton>
         </div>
         <span className="toolbar-divider" />
         <div className="toolbar-group">
-          <IconButton aria-label="Undo" title="Undo (⌘Z)" disabled={!canUndo} onClick={onUndo}><Undo2 size={17} /></IconButton>
-          <IconButton aria-label="Redo" title="Redo (⇧⌘Z)" disabled={!canRedo} onClick={onRedo}><Redo2 size={17} /></IconButton>
+          <IconButton aria-label="Undo" title="Undo (⌘Z)" disabled={!canUndo} onClick={onUndo}>
+            <Undo2 size={17} />
+          </IconButton>
+          <IconButton aria-label="Redo" title="Redo (⇧⌘Z)" disabled={!canRedo} onClick={onRedo}>
+            <Redo2 size={17} />
+          </IconButton>
         </div>
         <span className="toolbar-divider" />
-        <Button className="workflow-button" variant="ghost" onClick={onShowWorkflow}>
+        <Button
+          className="workflow-button"
+          variant="ghost"
+          disabled={workflowDisabled}
+          onClick={onShowWorkflow}
+        >
           <CircleHelp size={15} /> Workflow
         </Button>
         <button
           className={`validation-button ${issueCount ? 'has-issues' : ''}`}
-          title={issueCount ? 'Review timing issues' : hasLyrics ? 'No timing issues found' : 'Add lyrics to begin timing'}
+          title={
+            issueCount
+              ? 'Review timing issues'
+              : hasLyrics
+                ? 'No timing issues found'
+                : 'Add lyrics to begin timing'
+          }
+          disabled={validationDisabled}
           onClick={onValidate}
         >
           <CheckCircle2 size={15} />

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import type { KaraokeProject, LyricDisplaySettings, LyricWord, ValidationIssue, VocalTrack } from './lib/model'
 import {
   createProject,
@@ -10,17 +10,31 @@ import {
   serializeProject,
   validateProject,
 } from './lib/model'
-import { cloneVocalStyle } from './lib/video-style'
+import {
+  cloneFontFace,
+  cloneTypeface,
+  cloneVocalStyle,
+  type LyricTextStyle,
+} from './lib/video-style'
 import { TopBar } from './components/TopBar'
 import { InspectorPanel } from './components/InspectorPanel'
 import { KaraokePreview } from './components/KaraokePreview'
+import { ProjectActionDecisionDialog } from './components/ProjectActionDecisionDialog'
+import { ProjectTypographyEditor } from './components/ProjectTypographyEditor'
 import { SyncCueStrip } from './components/SyncCueStrip'
 import { Timeline } from './components/Timeline'
 import { TransportBar } from './components/TransportBar'
 import { ExportDialog, LyricsEditorDialog, ValidationDialog, WorkflowGuideDialog } from './components/Dialogs'
 import { usePlayback } from './hooks/usePlayback'
+import { useInstalledFonts } from './hooks/useInstalledFonts'
 import { useWaveform } from './hooks/useWaveform'
 import { useProjectActionArbiter } from './hooks/useProjectActionArbiter'
+import {
+  sameLyricTextStyle,
+  useProjectTypographySession,
+  type ProjectTypographyCommitResult,
+  type ProjectTypographyOwnerKey,
+} from './hooks/useProjectTypographySession'
 import type { ProjectActionKind, ProjectActionRequest } from './lib/project-action-arbiter'
 import {
   downloadText,
@@ -40,6 +54,18 @@ import {
 interface HistoryEntry {
   project: KaraokeProject
   revision: number
+}
+
+type ProjectActionLifetimeKind = 'open' | 'import-audio' | 'import-lrc'
+
+interface ProjectActionLifetimeOwner {
+  readonly kind: ProjectActionLifetimeKind
+}
+
+const projectActionStyleDisabledReasons: Record<ProjectActionLifetimeKind, string> = {
+  open: 'Wait for project selection and opening to finish.',
+  'import-audio': 'Wait for audio selection and import to finish.',
+  'import-lrc': 'Wait for LRC selection and import to finish.',
 }
 
 function useProjectHistory(initialProject: KaraokeProject | (() => KaraokeProject)) {
@@ -290,6 +316,10 @@ export default function App() {
   const [toast, setToast] = useState<ToastState | null>(null)
   const [projectAuthorityWarning, setProjectAuthorityWarning] = useState<string | null>(null)
   const [timingDraft, setTimingDraft] = useState<ActiveTimingDraft | null>(null)
+  const [timelineGestureActive, setTimelineGestureActive] = useState(false)
+  const [projectTransitionActive, setProjectTransitionActive] = useState(false)
+  const [projectActionLifetimeKind, setProjectActionLifetimeKind] =
+    useState<ProjectActionLifetimeKind | null>(null)
   const projectInputRef = useRef<HTMLInputElement>(null)
   const audioInputRef = useRef<HTMLInputElement>(null)
   const lrcInputRef = useRef<HTMLInputElement>(null)
@@ -303,10 +333,14 @@ export default function App() {
   const projectRestoreSequenceRef = useRef(0)
   const projectLifecycleSequenceRef = useRef(0)
   const projectTransitionRef = useRef(false)
+  const projectActionLifetimeRef = useRef<ProjectActionLifetimeOwner | null>(null)
   const projectAuthorityCertainRef = useRef(true)
   const saveRequestSequenceRef = useRef(0)
   const videoExportActiveRef = useRef(false)
+  const timelineGestureActiveRef = useRef(false)
+  const projectRef = useRef(project)
   const lastReviewIssuesRef = useRef<ValidationIssue[]>([])
+  projectRef.current = project
 
   const projectMutationIsBlocked = useCallback(() => projectTransitionRef.current, [])
 
@@ -361,6 +395,69 @@ export default function App() {
     setTimingDraft(timings ? { revision: history.revision, timings } : null)
   }, [history.revision])
 
+  const installedFonts = useInstalledFonts()
+  const handleTimelineGestureActiveChange = useCallback((active: boolean) => {
+    timelineGestureActiveRef.current = active
+    setTimelineGestureActive(active)
+  }, [])
+  const canInteractWithProjectTypography = useCallback(
+    () =>
+      !projectTransitionRef.current &&
+      !projectActionLifetimeRef.current &&
+      !videoExportActiveRef.current &&
+      !timelineGestureActiveRef.current &&
+      !syncMode &&
+      !lyricsDialogOpen &&
+      !exportDialogOpen &&
+      !validationDialogOpen &&
+      !workflowGuideOpen,
+    [exportDialogOpen, lyricsDialogOpen, syncMode, validationDialogOpen, workflowGuideOpen],
+  )
+  const commitProjectTypography = useCallback(
+    (ownerKey: ProjectTypographyOwnerKey, draft: LyricTextStyle): ProjectTypographyCommitResult => {
+      const current = projectRef.current
+      if (
+        ownerKey.projectId !== current.id ||
+        ownerKey.lifecycle !== projectLifecycleSequenceRef.current
+      ) {
+        return 'stale'
+      }
+      if (projectMutationIsBlocked()) return 'blocked'
+      if (sameLyricTextStyle(current.stageStyle.lyrics, draft)) return 'noop'
+
+      const lyrics = {
+        ...draft,
+        typeface: cloneTypeface(draft.typeface),
+        fontStyle: cloneFontFace(draft.fontStyle),
+      }
+      commitHistory((latest) => {
+        if (
+          ownerKey.projectId !== latest.id ||
+          ownerKey.lifecycle !== projectLifecycleSequenceRef.current ||
+          sameLyricTextStyle(latest.stageStyle.lyrics, lyrics)
+        ) {
+          return latest
+        }
+        return {
+          ...latest,
+          stageStyle: { ...latest.stageStyle, lyrics },
+        }
+      })
+      return 'applied'
+    },
+    [commitHistory, projectMutationIsBlocked],
+  )
+  const typographySession = useProjectTypographySession({
+    ownerKey: {
+      projectId: project.id,
+      lifecycle: projectLifecycleSequenceRef.current,
+    },
+    source: project.stageStyle.lyrics,
+    canInteract: canInteractWithProjectTypography,
+    requestFonts: installedFonts.request,
+    commitDraft: commitProjectTypography,
+  })
+
   useEffect(() => {
     if (!toast) return
     const timer = window.setTimeout(() => setToast(null), 3200)
@@ -412,12 +509,58 @@ export default function App() {
 
   const showToast = useCallback((message: string, tone: ToastState['tone'] = 'neutral') => setToast({ message, tone }), [])
 
+  const beginProjectActionLifetime = useCallback(
+    (kind: ProjectActionLifetimeKind): ProjectActionLifetimeOwner | null => {
+      if (projectActionLifetimeRef.current || projectTransitionRef.current) {
+        showToast('Wait for the current project action to finish.', 'warning')
+        return null
+      }
+      const owner = { kind }
+      projectActionLifetimeRef.current = owner
+      setProjectActionLifetimeKind(kind)
+      return owner
+    },
+    [showToast],
+  )
+
+  const finishProjectActionLifetime = useCallback((owner: ProjectActionLifetimeOwner) => {
+    if (projectActionLifetimeRef.current !== owner) return
+    projectActionLifetimeRef.current = null
+    setProjectActionLifetimeKind(null)
+  }, [])
+
+  const finishProjectActionLifetimeKind = useCallback(
+    (kind: ProjectActionLifetimeKind) => {
+      const owner = projectActionLifetimeRef.current
+      if (owner?.kind === kind) finishProjectActionLifetime(owner)
+    },
+    [finishProjectActionLifetime],
+  )
+
+  useEffect(() => {
+    const projectInput = projectInputRef.current
+    const audioInput = audioInputRef.current
+    const lrcInput = lrcInputRef.current
+    const cancelProject = () => finishProjectActionLifetimeKind('open')
+    const cancelAudio = () => finishProjectActionLifetimeKind('import-audio')
+    const cancelLrc = () => finishProjectActionLifetimeKind('import-lrc')
+    projectInput?.addEventListener('cancel', cancelProject)
+    audioInput?.addEventListener('cancel', cancelAudio)
+    lrcInput?.addEventListener('cancel', cancelLrc)
+    return () => {
+      projectInput?.removeEventListener('cancel', cancelProject)
+      audioInput?.removeEventListener('cancel', cancelAudio)
+      lrcInput?.removeEventListener('cancel', cancelLrc)
+    }
+  }, [finishProjectActionLifetimeKind])
+
   const beginProjectTransition = useCallback(() => {
     if (projectTransitionRef.current) {
       showToast('Wait for the current project change to finish.', 'warning')
       return false
     }
     projectTransitionRef.current = true
+    setProjectTransitionActive(true)
     return true
   }, [showToast])
 
@@ -545,6 +688,7 @@ export default function App() {
         await Promise.resolve()
       } finally {
         projectTransitionRef.current = false
+        setProjectTransitionActive(false)
       }
 
       if (!next.audioPath) {
@@ -628,6 +772,7 @@ export default function App() {
       return true
     } finally {
       projectTransitionRef.current = false
+      setProjectTransitionActive(false)
     }
   }, [
     beginProjectTransition,
@@ -641,17 +786,27 @@ export default function App() {
   ])
 
   const handleOpen = useCallback(async () => {
-    if (projectTransitionRef.current) {
-      showToast('Wait for the current project change to finish.', 'warning')
+    const owner = beginProjectActionLifetime('open')
+    if (!owner) return false
+    const studio = window.studio
+    if (!studio) {
+      const input = projectInputRef.current
+      if (!input) finishProjectActionLifetime(owner)
+      else input.click()
       return false
     }
-    if (!window.studio) {
-      projectInputRef.current?.click()
-      return false
-    }
-    let result: StudioOpenProjectResult | null
     try {
-      result = await window.studio.openProject()
+      const result = await studio.openProject()
+      if (result && (typeof result.requestId !== 'string' || !result.requestId)) {
+        showToast(
+          'The selected project did not include a valid access handle. Open it again.',
+          'warning',
+        )
+        return false
+      }
+      return result
+        ? await openProjectContents(result.contents, result.path, result.requestId)
+        : false
     } catch (error) {
       const message =
         error instanceof Error && error.message.trim()
@@ -659,16 +814,10 @@ export default function App() {
           : 'Project could not be opened.'
       showToast(message, 'warning')
       return false
+    } finally {
+      finishProjectActionLifetime(owner)
     }
-    if (result && (typeof result.requestId !== 'string' || !result.requestId)) {
-      showToast(
-        'The selected project did not include a valid access handle. Open it again.',
-        'warning',
-      )
-      return false
-    }
-    return result ? openProjectContents(result.contents, result.path, result.requestId) : false
-  }, [openProjectContents, showToast])
+  }, [beginProjectActionLifetime, finishProjectActionLifetime, openProjectContents, showToast])
 
   const handleSave = useCallback(
     async (saveAs = false) => {
@@ -722,13 +871,22 @@ export default function App() {
 
   const handleImportAudio = useCallback(async () => {
     if (blockProjectSideEffect()) return
-    if (window.studio) {
-      const result = await window.studio.importAudio()
-      if (result && !blockProjectSideEffect()) applyAudio(result.path, result.url, result.name)
-    } else {
-      audioInputRef.current?.click()
+    const owner = beginProjectActionLifetime('import-audio')
+    if (!owner) return
+    const studio = window.studio
+    if (!studio) {
+      const input = audioInputRef.current
+      if (!input) finishProjectActionLifetime(owner)
+      else input.click()
+      return
     }
-  }, [applyAudio, blockProjectSideEffect])
+    try {
+      const result = await studio.importAudio()
+      if (result && !blockProjectSideEffect()) applyAudio(result.path, result.url, result.name)
+    } finally {
+      finishProjectActionLifetime(owner)
+    }
+  }, [applyAudio, beginProjectActionLifetime, blockProjectSideEffect, finishProjectActionLifetime])
 
   const applyLrc = useCallback((contents: string) => {
     if (!activeTrack) return
@@ -751,13 +909,100 @@ export default function App() {
 
   const handleImportLrc = useCallback(async () => {
     if (blockProjectSideEffect()) return
-    if (window.studio) {
-      const result = await window.studio.importLrc()
-      if (result && !blockProjectSideEffect()) applyLrc(result.contents)
-    } else {
-      lrcInputRef.current?.click()
+    const owner = beginProjectActionLifetime('import-lrc')
+    if (!owner) return
+    const studio = window.studio
+    if (!studio) {
+      const input = lrcInputRef.current
+      if (!input) finishProjectActionLifetime(owner)
+      else input.click()
+      return
     }
-  }, [applyLrc, blockProjectSideEffect])
+    try {
+      const result = await studio.importLrc()
+      if (result && !blockProjectSideEffect()) applyLrc(result.contents)
+    } finally {
+      finishProjectActionLifetime(owner)
+    }
+  }, [applyLrc, beginProjectActionLifetime, blockProjectSideEffect, finishProjectActionLifetime])
+
+  const handleProjectFileChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0]
+      event.currentTarget.value = ''
+      const owner = projectActionLifetimeRef.current
+      if (owner?.kind !== 'open') return
+      if (!file) {
+        finishProjectActionLifetime(owner)
+        return
+      }
+      void (async () => {
+        try {
+          await openProjectContents(await file.text(), null)
+        } catch (error) {
+          showToast(
+            error instanceof Error && error.message.trim()
+              ? error.message
+              : 'Project file could not be read.',
+            'warning',
+          )
+        } finally {
+          finishProjectActionLifetime(owner)
+        }
+      })()
+    },
+    [finishProjectActionLifetime, openProjectContents, showToast],
+  )
+
+  const handleAudioFileChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0]
+      event.currentTarget.value = ''
+      const owner = projectActionLifetimeRef.current
+      if (owner?.kind !== 'import-audio') return
+      try {
+        if (file) applyAudio(file.name, URL.createObjectURL(file), file.name)
+      } catch (error) {
+        showToast(
+          error instanceof Error && error.message.trim()
+            ? error.message
+            : 'Audio file could not be imported.',
+          'warning',
+        )
+      } finally {
+        finishProjectActionLifetime(owner)
+      }
+    },
+    [applyAudio, finishProjectActionLifetime, showToast],
+  )
+
+  const handleLrcFileChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0]
+      event.currentTarget.value = ''
+      const owner = projectActionLifetimeRef.current
+      if (owner?.kind !== 'import-lrc') return
+      if (!file) {
+        finishProjectActionLifetime(owner)
+        return
+      }
+      void (async () => {
+        try {
+          applyLrc(await file.text())
+        } catch (error) {
+          showToast(
+            error instanceof Error && error.message.trim()
+              ? error.message
+              : 'LRC file could not be read.',
+            'warning',
+          )
+        } finally {
+          finishProjectActionLifetime(owner)
+        }
+      })()
+    },
+    [applyLrc, finishProjectActionLifetime, showToast],
+  )
 
   const exportText = useCallback(
     async (format: StudioExportFormat) => {
@@ -928,8 +1173,21 @@ export default function App() {
     }
   }, [])
 
-  const { request: arbitrateProjectAction } = useProjectActionArbiter({
+  const {
+    request: arbitrateProjectAction,
+    pending: pendingProjectAction,
+    phase: projectActionPhase,
+    error: projectActionError,
+    apply: applyPendingProjectAction,
+    discard: discardPendingProjectAction,
+    keep: keepPendingProjectAction,
+  } = useProjectActionArbiter({
     nativeClose: nativeCloseBridge,
+    draftGuard: {
+      needsResolution: () => typographySession.blocksProjectActions,
+      settle: (decision) =>
+        decision === 'apply' ? typographySession.apply() : typographySession.cancel(),
+    },
     executors: {
       new: handleNew,
       open: handleOpen,
@@ -1033,7 +1291,7 @@ export default function App() {
 
   useEffect(() => {
     const keyDown = (event: KeyboardEvent) => {
-      if (document.querySelector('[role="dialog"]')) return
+      if (document.querySelector('.modal-backdrop')) return
       if (inputHasTypingFocus()) return
       if (event.code === 'Escape' && syncMode) {
         event.preventDefault()
@@ -1043,6 +1301,7 @@ export default function App() {
         return
       }
       if (
+        !typographySession.isOpen &&
         event.code === 'KeyA' &&
         (event.metaKey || event.ctrlKey) &&
         !event.altKey &&
@@ -1052,7 +1311,11 @@ export default function App() {
         selectAllActiveTrackWords()
         return
       }
-      if ((event.code === 'Backspace' || event.code === 'Delete') && selectedWordIds.size) {
+      if (
+        !typographySession.isOpen &&
+        (event.code === 'Backspace' || event.code === 'Delete') &&
+        selectedWordIds.size
+      ) {
         event.preventDefault()
         const patches = new Map(
           [...selectedWordIds].map((id) => [id, { startMs: null, endMs: null }]),
@@ -1130,7 +1393,7 @@ export default function App() {
     }
 
     const keyUp = (event: KeyboardEvent) => {
-      if (document.querySelector('[role="dialog"]')) {
+      if (document.querySelector('.modal-backdrop')) {
         if (event.code === 'Space') {
           cancelHeldSync()
         }
@@ -1196,6 +1459,7 @@ export default function App() {
     syncItems,
     syncMode,
     syncWords,
+    typographySession.isOpen,
   ])
 
   useEffect(() => {
@@ -1235,12 +1499,14 @@ export default function App() {
   }, [cancelHeldSync])
 
   const workflowGuideActions = createWorkflowGuideActions({
-    canStartSync: syncWords.length > 0,
+    canStartSync: syncWords.length > 0 && !typographySession.isOpen,
     close: () => setWorkflowGuideOpen(false),
     startNew: () => requestProjectAction('new'),
     open: () => requestProjectAction('open'),
     attachAudio: () => requestProjectAction('import-audio'),
-    editLyrics: () => setLyricsDialogOpen(true),
+    editLyrics: () => {
+      if (!typographySession.isOpen) setLyricsDialogOpen(true)
+    },
     importLrc: () => requestProjectAction('import-lrc'),
     startSync: toggleSyncMode,
     save: () => requestProjectAction('save'),
@@ -1248,6 +1514,27 @@ export default function App() {
   })
 
   const syncWordId = syncMode ? syncWords[syncCursor]?.id ?? null : null
+  const styleDisabledReason = typographySession.isOpen
+    ? 'The Style editor is already open.'
+    : projectActionLifetimeKind
+      ? projectActionStyleDisabledReasons[projectActionLifetimeKind]
+      : timelineGestureActive
+        ? 'Finish the active timing gesture first.'
+        : projectTransitionActive
+          ? 'Wait for the current project action to finish.'
+          : videoExportProgress !== null
+            ? 'Finish or cancel the active video export first.'
+            : syncMode
+              ? 'Exit lyric synchronization first.'
+              : lyricsDialogOpen
+                ? 'Close the lyric editor first.'
+                : exportDialogOpen
+                  ? 'Close Export first.'
+                  : validationDialogOpen
+                    ? 'Close timing review first.'
+                    : workflowGuideOpen
+                      ? 'Close Workflow first.'
+                      : null
 
   return (
     <div className="app-shell">
@@ -1258,73 +1545,96 @@ export default function App() {
         canRedo={history.canRedo}
         issueCount={reviewIssues.length}
         hasLyrics={projectHasLyrics}
+        styleDisabledReason={styleDisabledReason}
+        workflowDisabled={typographySession.isOpen}
+        validationDisabled={typographySession.isOpen}
+        onStyle={typographySession.start}
         onNew={() => requestProjectAction('new')}
         onOpen={() => requestProjectAction('open')}
         onSave={() => requestProjectAction('save')}
         onUndo={() => requestProjectAction('undo')}
         onRedo={() => requestProjectAction('redo')}
-        onShowWorkflow={() => setWorkflowGuideOpen(true)}
+        onShowWorkflow={() => {
+          if (!typographySession.isOpen) setWorkflowGuideOpen(true)
+        }}
         onValidate={() => setValidationDialogOpen(true)}
         onExport={() => requestProjectAction('export')}
       />
 
-      <main className="studio-main">
-        <InspectorPanel
+      {typographySession.draft ? (
+        <ProjectTypographyEditor
           project={project}
-          activeTrackId={activeTrackId}
-          onSelectTrack={handleSelectTrack}
-          onUpdateProject={updateProject}
-          onUpdateTrack={updateTrack}
-          onImportAudio={() => requestProjectAction('import-audio')}
-          onImportLrc={() => requestProjectAction('import-lrc')}
+          playbackMs={playback.currentMs}
+          draft={typographySession.draft}
+          fonts={installedFonts}
+          onDraftChange={typographySession.change}
+          onRetryFonts={installedFonts.request}
+          onTogglePlayback={playback.toggle}
+          onCancel={typographySession.cancel}
+          onApply={typographySession.apply}
         />
-
-        <div className={`unified-workspace ${syncMode ? 'is-syncing' : ''}`}>
-          <div className="workspace-top">
-            {syncMode && activeTrack ? (
-              <SyncCueStrip
-                track={activeTrack}
-                syncCursor={syncCursor}
-                onEditLyrics={() => setLyricsDialogOpen(true)}
-              />
-            ) : (
-              <KaraokePreview
-                project={previewProject}
-                playbackMs={playback.currentMs}
-                lyricMs={lyricTimeMs}
-                selectedWordIds={selectedWordIds}
-                onUpdateLyricDisplay={updateLyricDisplay}
-                onEditLyrics={() => setLyricsDialogOpen(true)}
-              />
-            )}
-          </div>
-
-          <Timeline
+      ) : (
+        <main className="studio-main">
+          <InspectorPanel
             project={project}
-            peaks={waveform.peaks}
-            isAnalyzing={waveform.isAnalyzing}
-            durationMs={playback.durationMs}
-            currentMs={playback.currentMs}
-            zoom={zoom}
             activeTrackId={activeTrackId}
-            selectedWordIds={selectedWordIds}
-            syncWordId={syncWordId}
-            syncMode={syncMode}
-            onSeek={playback.seek}
-            onZoom={setZoom}
-            onSelectWord={handleSelectWordId}
-            onSelectWords={setSelectedWordIds}
-            onShiftWords={(ids, deltaMs) => commit((current) => shiftWords(current, ids, deltaMs))}
-            onResizeWord={(wordId, startMs, endMs) =>
-              commit((current) => patchWord(current, wordId, { startMs, endMs }))
-            }
-            onTimingDraftChange={updateTimingDraft}
-            onToggleSync={toggleSyncMode}
-            onClearTiming={handleClearTiming}
-            onClearTimingAfterCursor={handleClearTimingAfterCursor}
+            onSelectTrack={handleSelectTrack}
+            onUpdateProject={updateProject}
+            onUpdateTrack={updateTrack}
+            onImportAudio={() => requestProjectAction('import-audio')}
+            onImportLrc={() => requestProjectAction('import-lrc')}
           />
-        </div>
-      </main>
+
+          <div className={`unified-workspace ${syncMode ? 'is-syncing' : ''}`}>
+            <div className="workspace-top">
+              {syncMode && activeTrack ? (
+                <SyncCueStrip
+                  track={activeTrack}
+                  syncCursor={syncCursor}
+                  onEditLyrics={() => setLyricsDialogOpen(true)}
+                />
+              ) : (
+                <KaraokePreview
+                  project={previewProject}
+                  playbackMs={playback.currentMs}
+                  lyricMs={lyricTimeMs}
+                  selectedWordIds={selectedWordIds}
+                  onUpdateLyricDisplay={updateLyricDisplay}
+                  onEditLyrics={() => setLyricsDialogOpen(true)}
+                />
+              )}
+            </div>
+
+            <Timeline
+              project={project}
+              peaks={waveform.peaks}
+              isAnalyzing={waveform.isAnalyzing}
+              durationMs={playback.durationMs}
+              currentMs={playback.currentMs}
+              zoom={zoom}
+              activeTrackId={activeTrackId}
+              selectedWordIds={selectedWordIds}
+              syncWordId={syncWordId}
+              syncMode={syncMode}
+              onSeek={playback.seek}
+              onZoom={setZoom}
+              onSelectWord={handleSelectWordId}
+              onSelectWords={setSelectedWordIds}
+              onShiftWords={(ids, deltaMs) =>
+                commit((current) => shiftWords(current, ids, deltaMs))
+              }
+              onResizeWord={(wordId, startMs, endMs) =>
+                commit((current) => patchWord(current, wordId, { startMs, endMs }))
+              }
+              onTimingDraftChange={updateTimingDraft}
+              onGestureActiveChange={handleTimelineGestureActiveChange}
+              onToggleSync={toggleSyncMode}
+              onClearTiming={handleClearTiming}
+              onClearTimingAfterCursor={handleClearTimingAfterCursor}
+            />
+          </div>
+        </main>
+      )}
 
       <TransportBar
         currentMs={playback.currentMs}
@@ -1335,6 +1645,7 @@ export default function App() {
         syncMode={syncMode}
         syncPosition={syncCursor}
         syncTotal={syncWords.length}
+        syncDisabled={typographySession.isOpen}
         hasAudio={playback.hasAudio}
         onToggle={playback.toggle}
         onStop={handleStop}
@@ -1349,33 +1660,21 @@ export default function App() {
         hidden
         type="file"
         accept=".oks,.json,application/json"
-        onChange={(event) => {
-          const file = event.target.files?.[0]
-          if (file) void file.text().then((contents) => openProjectContents(contents, null))
-          event.currentTarget.value = ''
-        }}
+        onChange={handleProjectFileChange}
       />
       <input
         ref={audioInputRef}
         hidden
         type="file"
         accept="audio/*,.mp3,.wav,.m4a,.flac,.aac,.ogg"
-        onChange={(event) => {
-          const file = event.target.files?.[0]
-          if (file) applyAudio(file.name, URL.createObjectURL(file), file.name)
-          event.currentTarget.value = ''
-        }}
+        onChange={handleAudioFileChange}
       />
       <input
         ref={lrcInputRef}
         hidden
         type="file"
         accept=".lrc,text/plain"
-        onChange={(event) => {
-          const file = event.target.files?.[0]
-          if (file) void file.text().then(applyLrc)
-          event.currentTarget.value = ''
-        }}
+        onChange={handleLrcFileChange}
       />
 
       {lyricsDialogOpen && activeTrack && (
@@ -1415,6 +1714,17 @@ export default function App() {
       )}
       {validationDialogOpen && (
         <ValidationDialog issues={reviewIssues} onClose={() => setValidationDialogOpen(false)} />
+      )}
+      {pendingProjectAction && (
+        <ProjectActionDecisionDialog
+          request={pendingProjectAction}
+          phase={projectActionPhase}
+          error={projectActionError}
+          hasDraft={typographySession.blocksProjectActions}
+          onApply={applyPendingProjectAction}
+          onDiscard={discardPendingProjectAction}
+          onKeep={keepPendingProjectAction}
+        />
       )}
       {projectAuthorityWarning && (
         <div className="toast toast--warning" role="alert">

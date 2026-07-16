@@ -605,25 +605,44 @@ function executeBeforeDeadline(operation, timeoutMs) {
   return Promise.race([pending, deadline]).finally(() => clearTimeout(timer))
 }
 
-function sendTrustedStyleActivation(contents, target) {
-  if (!contents || typeof contents.sendInputEvent !== 'function' || !validStyleTarget(target)) {
+function sendTrustedStyleActivation(contents, target, displayScale) {
+  if (
+    !contents ||
+    typeof contents.sendInputEvent !== 'function' ||
+    !validStyleTarget(target) ||
+    (displayScale !== 1 && displayScale !== 2)
+  ) {
+    throw smokeError('VISUAL_SMOKE_ACTIVATION_INVALID')
+  }
+  const x = Math.round(target.x / displayScale)
+  const y = Math.round(target.y / displayScale)
+  const contentWidth = VIEWPORT.width / displayScale
+  const contentHeight = VIEWPORT.height / displayScale
+  if (
+    !Number.isSafeInteger(x) ||
+    x < 0 ||
+    x >= contentWidth ||
+    !Number.isSafeInteger(y) ||
+    y < 0 ||
+    y >= contentHeight
+  ) {
     throw smokeError('VISUAL_SMOKE_ACTIVATION_INVALID')
   }
   try {
-    contents.sendInputEvent({ type: 'mouseMove', x: target.x, y: target.y })
+    contents.sendInputEvent({ type: 'mouseMove', x, y })
     contents.sendInputEvent({
       button: 'left',
       clickCount: 1,
       type: 'mouseDown',
-      x: target.x,
-      y: target.y,
+      x,
+      y,
     })
     contents.sendInputEvent({
       button: 'left',
       clickCount: 1,
       type: 'mouseUp',
-      x: target.x,
-      y: target.y,
+      x,
+      y,
     })
   } catch {
     throw smokeError('VISUAL_SMOKE_ACTIVATION_INVALID')
@@ -637,7 +656,7 @@ async function captureProjectTypography(window, app, options) {
     options.readinessTimeoutMs,
   )
   if (!validStyleTarget(target)) throw smokeError('VISUAL_SMOKE_ACTIVATION_INVALID')
-  sendTrustedStyleActivation(window.webContents, target)
+  sendTrustedStyleActivation(window.webContents, target, displayScale)
 
   const pngs = []
   for (const viewport of PROJECT_TYPOGRAPHY_VIEWPORTS) {

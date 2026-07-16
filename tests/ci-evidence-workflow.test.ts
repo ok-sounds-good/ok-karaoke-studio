@@ -1,8 +1,14 @@
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
+const require = createRequire(import.meta.url)
+const visualResults = require('../scripts/visual-result-validation.cjs') as {
+  PROJECT_TYPOGRAPHY_SCENARIO: string
+  expectedFilesForScenario: (scenario: string) => readonly string[]
+}
 const ACTIVE_WORKFLOW = '.circleci/config.yml'
 const INACTIVE_GITHUB_WORKFLOW = '.github/workflows/ci.yml.disabled'
 const INACTIVE_GITHUB_WORKFLOW_SHA256 =
@@ -11,6 +17,17 @@ const MAIN_PUSH_CLAUSE = '(pipeline.event.name == "push" and pipeline.git.branch
 const MAIN_PULL_REQUEST_CLAUSE =
   '(pipeline.event.name == "pull_request" and ' +
   'pipeline.event.github.pull_request.base.ref == "main")'
+const BASELINE_EVIDENCE_PATH = '.ci-artifacts/video-style-visual'
+const PROJECT_TYPOGRAPHY_EVIDENCE_PATH = '.ci-artifacts/project-typography-visual'
+const PROJECT_TYPOGRAPHY_EVIDENCE_LEAVES = [
+  '01-project-typography-1280x720.png',
+  '02-project-typography-1440x900.png',
+  'result.json',
+]
+const VISUAL_TEST_INVOCATIONS = [
+  'bun run test:visual',
+  'bun run test:visual -- --scenario=project-typography',
+]
 
 interface PipelineEvent {
   branch?: string
@@ -45,6 +62,13 @@ function workflowWhenExpression(workflow: string) {
     .trim()
     .replace(/^(?:>|\|)[+-]?\s*/u, '')
     .replace(/\s+/gu, ' ')
+}
+
+function trimmedLines(value: string, predicate: (line: string) => boolean) {
+  return value
+    .split(/\r?\n/gu)
+    .map((line) => line.trim())
+    .filter(predicate)
 }
 
 function pipelineValue(event: PipelineEvent, name: string) {
@@ -210,22 +234,51 @@ describe('CI visual evidence contract', () => {
     expect(await repositoryFile('vite.config.ts')).not.toContain('format-diff-core.test.ts')
   })
 
-  it('captures and stores only each attempted visual-evidence leaf', async () => {
+  it('captures and separately stores baseline and project-typography evidence', async () => {
     const workflow = await repositoryFile(ACTIVE_WORKFLOW)
     for (const platform of ['macOS', 'Windows'] as const) {
       const job = jobBlock(workflow, platform)
       const build = job.indexOf('name: Build renderer')
-      const capture = job.indexOf('name: Capture production-window visual evidence')
-      const store = job.indexOf('store_artifacts:')
+      const baselineCapture = job.indexOf('name: Capture production-window visual evidence')
+      const baselineStore = job.indexOf(`path: ${BASELINE_EVIDENCE_PATH}`)
+      const typographyCapture = job.indexOf('name: Capture project-typography visual evidence')
+      const typographyStore = job.indexOf(`path: ${PROJECT_TYPOGRAPHY_EVIDENCE_PATH}`)
       const packageStep = job.indexOf('name: Package unpacked desktop app')
-      expect(build).toBeLessThan(capture)
-      expect(capture).toBeLessThan(store)
-      expect(store).toBeLessThan(packageStep)
-      expect(job).toContain('OKS_VISUAL_EVIDENCE_DIR')
-      expect(job).toContain('path: .ci-artifacts/video-style-visual')
+      expect(build).toBeGreaterThan(-1)
+      expect(build).toBeLessThan(baselineCapture)
+      expect(baselineCapture).toBeLessThan(baselineStore)
+      expect(baselineStore).toBeLessThan(typographyCapture)
+      expect(typographyCapture).toBeLessThan(typographyStore)
+      expect(typographyStore).toBeLessThan(packageStep)
+
+      expect(trimmedLines(job, (line) => line.startsWith('bun run test:visual'))).toEqual(
+        VISUAL_TEST_INVOCATIONS,
+      )
+      expect(trimmedLines(job, (line) => line.includes('OKS_VISUAL_EVIDENCE_DIR'))).toEqual(
+        platform === 'macOS'
+          ? [
+              'export OKS_VISUAL_EVIDENCE_DIR="$evidence_root/video-style-visual"',
+              'export OKS_VISUAL_EVIDENCE_DIR="$evidence_root/project-typography-visual"',
+            ]
+          : [
+              '$env:OKS_VISUAL_EVIDENCE_DIR = Join-Path $evidenceRoot "video-style-visual"',
+              '$env:OKS_VISUAL_EVIDENCE_DIR = Join-Path $evidenceRoot "project-typography-visual"',
+            ],
+      )
+      expect(trimmedLines(job, (line) => line.startsWith('path: .ci-artifacts/'))).toEqual([
+        `path: ${BASELINE_EVIDENCE_PATH}`,
+        `path: ${PROJECT_TYPOGRAPHY_EVIDENCE_PATH}`,
+      ])
+      expect(trimmedLines(job, (line) => line.startsWith('destination:'))).toEqual([
+        `destination: video-style-visual-${platform}`,
+        `destination: project-typography-visual-${platform}`,
+      ])
     }
 
     const packageJson = JSON.parse(await repositoryFile('package.json'))
     expect(packageJson.scripts['test:visual']).toBe('node scripts/video-style-visual-smoke.cjs')
+    expect(
+      visualResults.expectedFilesForScenario(visualResults.PROJECT_TYPOGRAPHY_SCENARIO),
+    ).toEqual(PROJECT_TYPOGRAPHY_EVIDENCE_LEAVES)
   })
 })

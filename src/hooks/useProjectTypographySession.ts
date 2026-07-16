@@ -36,8 +36,8 @@ export interface ProjectTypographySession {
   readonly isDirty: boolean
   start: (trigger: HTMLElement) => void
   change: (change: ProjectTypographyDraftChange) => void
-  apply: () => void
-  cancel: () => void
+  apply: () => boolean
+  cancel: () => boolean
 }
 
 interface ActiveSession {
@@ -173,7 +173,7 @@ export function useProjectTypographySession({
   const apply = useCallback(() => {
     const active = currentSession()
     if (!active || applyingRef.current === active || !canInteractRef.current()) {
-      return
+      return false
     }
 
     applyingRef.current = active
@@ -186,20 +186,24 @@ export function useProjectTypographySession({
     }
 
     if (result === 'applied' || result === 'noop') {
-      if (abandon(active)) restoreFocus(active)
-      return
+      const settled = abandon(active)
+      if (settled) restoreFocus(active)
+      return settled
     }
     if (result === 'stale') {
       abandon(active)
-      return
+      return false
     }
     if (applyingRef.current === active) applyingRef.current = null
+    return false
   }, [abandon, currentSession, restoreFocus])
 
   const cancel = useCallback(() => {
     const active = currentSession()
-    if (!active) return
-    if (abandon(active)) restoreFocus(active)
+    if (!active) return false
+    const settled = abandon(active)
+    if (settled) restoreFocus(active)
+    return settled
   }, [abandon, currentSession, restoreFocus])
 
   const active =
