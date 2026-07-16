@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import * as fileSystem from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -22,11 +23,14 @@ afterEach(async () =>
   ),
 )
 
-async function freshResult() {
+async function freshResult(scenario = results.BASELINE_SCENARIO) {
   const root = await mkdtemp(join(tmpdir(), 'oks-visual-result-'))
   roots.push(root)
   const output = join(root, 'evidence')
-  const created = results.createResultArtifacts(validPng(1280, 720))
+  const created =
+    scenario === results.BASELINE_SCENARIO
+      ? results.createResultArtifacts(validPng(1280, 720))
+      : results.createScenarioResultArtifacts(scenario, [validPng(1280, 720), validPng(1440, 900)])
   await publishArtifactBuffers(output, created.artifacts)
   return { output, root }
 }
@@ -67,6 +71,50 @@ describe('visual result validation', () => {
       ok: true,
       schemaVersion: 1,
     })
+  })
+
+  it('accepts the exact ordered project typography capture contract', async () => {
+    const { output } = await freshResult(results.PROJECT_TYPOGRAPHY_SCENARIO)
+    await expect(
+      results.validateVisualResultDirectory(output, {
+        scenario: results.PROJECT_TYPOGRAPHY_SCENARIO,
+      }),
+    ).resolves.toMatchObject({
+      artifacts: [
+        {
+          height: 720,
+          name: '01-project-typography-1280x720.png',
+          width: 1280,
+        },
+        {
+          height: 900,
+          name: '02-project-typography-1440x900.png',
+          width: 1440,
+        },
+      ],
+      ok: true,
+      schemaVersion: 1,
+    })
+  })
+
+  it('rejects cross-scenario and stale scenario artifacts', async () => {
+    const baseline = await freshResult()
+    await expect(
+      results.validateVisualResultDirectory(baseline.output, {
+        scenario: results.PROJECT_TYPOGRAPHY_SCENARIO,
+      }),
+    ).rejects.toThrow('VISUAL_SMOKE_RESULT_INVALID')
+
+    const typography = await freshResult(results.PROJECT_TYPOGRAPHY_SCENARIO)
+    await expect(results.validateVisualResultDirectory(typography.output)).rejects.toThrow(
+      'VISUAL_SMOKE_RESULT_INVALID',
+    )
+    await writeFile(join(typography.output, '01-baseline.png'), validPng(1280, 720))
+    await expect(
+      results.validateVisualResultDirectory(typography.output, {
+        scenario: results.PROJECT_TYPOGRAPHY_SCENARIO,
+      }),
+    ).rejects.toThrow('VISUAL_SMOKE_RESULT_INVALID')
   })
 
   it.each(['hash', 'dimensions'])('rejects a manifest-valid %s mismatch', async (kind) => {
@@ -118,6 +166,144 @@ describe('visual result validation', () => {
           await rename(output, join(root, 'displaced'))
           await mkdir(output)
         },
+      }),
+    ).rejects.toThrow('VISUAL_SMOKE_RESULT_INVALID')
+  })
+
+  it('rejects replacement of an earlier typography capture during a later read', async () => {
+    const { output, root } = await freshResult(results.PROJECT_TYPOGRAPHY_SCENARIO)
+    const firstCapture = results.PROJECT_TYPOGRAPHY_NAMES[0]
+    let replaced = false
+    await expect(
+      results.validateVisualResultDirectory(output, {
+        beforeRead: async (_claimed: string, name: string) => {
+          if (replaced || name !== results.PROJECT_TYPOGRAPHY_NAMES[1]) return
+          replaced = true
+          await rename(join(output, firstCapture), join(root, 'displaced-first-capture.png'))
+          await writeFile(join(output, firstCapture), validPng(1, 1))
+        },
+        scenario: results.PROJECT_TYPOGRAPHY_SCENARIO,
+      }),
+    ).rejects.toThrow('VISUAL_SMOKE_RESULT_INVALID')
+    expect(replaced).toBe(true)
+    await expect(
+      results.validateVisualResultDirectory(output, {
+        scenario: results.PROJECT_TYPOGRAPHY_SCENARIO,
+      }),
+    ).rejects.toThrow('VISUAL_SMOKE_RESULT_INVALID')
+  })
+
+  it('rejects replacement of a revalidated typography capture during a later final recheck', async () => {
+    const { output, root } = await freshResult(results.PROJECT_TYPOGRAPHY_SCENARIO)
+    const firstCapturePath = join(output, results.PROJECT_TYPOGRAPHY_NAMES[0])
+    const secondCapturePath = join(output, results.PROJECT_TYPOGRAPHY_NAMES[1])
+    let secondCaptureEntryChecks = 0
+    let replaced = false
+    const fsApi = {
+      ...fileSystem,
+      async lstat(filePath: string, options: { bigint: true }) {
+        if (filePath === secondCapturePath) {
+          secondCaptureEntryChecks += 1
+          // Initial consumption checks this entry before and after reading it;
+          // lookup three begins its final recheck, after earlier leaves passed.
+          if (secondCaptureEntryChecks === 3) {
+            replaced = true
+            await rename(firstCapturePath, join(root, 'displaced-revalidated-capture.png'))
+            await writeFile(firstCapturePath, validPng(1, 1))
+          }
+        }
+        return fileSystem.lstat(filePath, options)
+      },
+    }
+
+    await expect(
+      results.validateVisualResultDirectory(output, {
+        fsApi,
+        scenario: results.PROJECT_TYPOGRAPHY_SCENARIO,
+      }),
+    ).rejects.toThrow('VISUAL_SMOKE_RESULT_INVALID')
+    expect(replaced).toBe(true)
+    await expect(
+      results.validateVisualResultDirectory(output, {
+        scenario: results.PROJECT_TYPOGRAPHY_SCENARIO,
+      }),
+    ).rejects.toThrow('VISUAL_SMOKE_RESULT_INVALID')
+  })
+
+  it('rejects same-inode mutation of a revalidated capture during a later final recheck', async () => {
+    const { output } = await freshResult(results.PROJECT_TYPOGRAPHY_SCENARIO)
+    const firstCapturePath = join(output, results.PROJECT_TYPOGRAPHY_NAMES[0])
+    const secondCapturePath = join(output, results.PROJECT_TYPOGRAPHY_NAMES[1])
+    const original = await fileSystem.lstat(firstCapturePath, { bigint: true })
+    const originalBytes = await readFile(firstCapturePath)
+    const changedOffset = Math.floor(originalBytes.length / 2)
+    let retainedIdentity = false
+    let secondCaptureEntryChecks = 0
+    const fsApi = {
+      ...fileSystem,
+      async lstat(filePath: string, options: { bigint: true }) {
+        if (filePath === secondCapturePath) {
+          secondCaptureEntryChecks += 1
+          if (secondCaptureEntryChecks === 3) {
+            const handle = await fileSystem.open(firstCapturePath, 'r+')
+            try {
+              const changedByte = Buffer.from([originalBytes[changedOffset] ^ 0xff])
+              await handle.write(changedByte, 0, changedByte.length, changedOffset)
+              await handle.sync()
+            } finally {
+              await handle.close()
+            }
+            const changed = await fileSystem.lstat(firstCapturePath, { bigint: true })
+            retainedIdentity =
+              changed.dev === original.dev &&
+              changed.ino === original.ino &&
+              changed.size === original.size
+          }
+        }
+        return fileSystem.lstat(filePath, options)
+      },
+    }
+
+    await expect(
+      results.validateVisualResultDirectory(output, {
+        fsApi,
+        scenario: results.PROJECT_TYPOGRAPHY_SCENARIO,
+      }),
+    ).rejects.toThrow('VISUAL_SMOKE_RESULT_INVALID')
+    expect(retainedIdentity).toBe(true)
+    await expect(
+      results.validateVisualResultDirectory(output, {
+        scenario: results.PROJECT_TYPOGRAPHY_SCENARIO,
+      }),
+    ).rejects.toThrow('VISUAL_SMOKE_RESULT_INVALID')
+  })
+
+  it('publishes authoritative validated bytes independently of a later source mutation', async () => {
+    const { output, root } = await freshResult(results.PROJECT_TYPOGRAPHY_SCENARIO)
+    const validated = await results.validateVisualResultDirectory(output, {
+      scenario: results.PROJECT_TYPOGRAPHY_SCENARIO,
+    })
+    expect(validated.publishedArtifacts.map(({ name }: { name: string }) => name)).toEqual([
+      ...results.PROJECT_TYPOGRAPHY_NAMES,
+      results.RESULT_NAME,
+    ])
+    const authoritativeFirst = Buffer.from(validated.publishedArtifacts[0].bytes)
+    const published = join(root, 'published-evidence')
+    await publishArtifactBuffers(published, validated.publishedArtifacts)
+
+    await writeFile(join(output, results.PROJECT_TYPOGRAPHY_NAMES[0]), validPng(1, 1))
+
+    await expect(
+      results.validateVisualResultDirectory(published, {
+        scenario: results.PROJECT_TYPOGRAPHY_SCENARIO,
+      }),
+    ).resolves.toMatchObject({ ok: true, schemaVersion: 1 })
+    expect(await readFile(join(published, results.PROJECT_TYPOGRAPHY_NAMES[0]))).toEqual(
+      authoritativeFirst,
+    )
+    await expect(
+      results.validateVisualResultDirectory(output, {
+        scenario: results.PROJECT_TYPOGRAPHY_SCENARIO,
       }),
     ).rejects.toThrow('VISUAL_SMOKE_RESULT_INVALID')
   })
