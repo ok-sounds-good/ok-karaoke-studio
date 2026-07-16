@@ -47,6 +47,40 @@ The implementation pull request must link and close its delivery Issue with a
 GitHub closing keyword such as `Closes #123`. Related discovery or residual
 Issues may also be linked, but they do not replace that primary delivery record.
 
+### Issue classification labels
+
+Every open Issue carries at least one relevant canonical classification when it
+is created or reconciled. The Orchestrator corrects its labels when scope changes.
+Labels support filtering and queue review; they never replace the Issue's scope,
+acceptance criteria, dependencies, assignment, or durable decision history.
+
+Broad-purpose labels describe why the Issue exists:
+
+- `feature` — a new or expanded user-facing product capability;
+- `infrastructure` — CI, packaging, tooling, or execution infrastructure;
+- `tracking` — coordination, reconciliation, or delivery tracking rather than a
+  directly implementable change by itself;
+- `maintenance` — mechanical repository upkeep that does not change product
+  behavior;
+- `refactor` — behavior-preserving restructuring or responsibility cleanup;
+- `bug` — an observed malfunction or regression; and
+- `documentation` — documentation-primary work, not every change that also
+  updates documentation.
+
+Delivery-class labels describe the role of a cohesive implementation slice:
+
+- `foundation` — a shared model, contract, or platform foundation;
+- `behavior` — user-visible behavior built on established foundations; and
+- `hardening` — correctness, resilience, parity, or acceptance hardening.
+
+Use a broad-purpose label plus a delivery class when both add useful information,
+such as `feature` + `foundation`, `feature` + `behavior`, `infrastructure` +
+`hardening`, or `bug` + `infrastructure`. One canonical label is sufficient when
+a second would add no signal. New user behavior is not a `refactor`; classify it
+as `feature` and, when it is a delivery slice, `behavior`. GitHub default labels
+outside this taxonomy may support transient triage, but `enhancement` does not
+replace the canonical `feature` classification.
+
 Every agent-authored GitHub Issue body, pull-request body, review, comment,
 rebuttal, status update, and merge rationale starts with the substantive
 author's role marker as its first nonblank line: `## Orchestrator`,
