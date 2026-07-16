@@ -97,20 +97,58 @@ function projectLyricsState(width: number, height: number) {
   }
 }
 
+function styleActionTarget(action: string) {
+  return {
+    action,
+    boundsHeight: 24,
+    boundsWidth: 60,
+    height: 720,
+    href: smoke.PACKAGED_APP_URL,
+    readyState: 'complete',
+    width: 1280,
+    x: 120,
+    y: 20,
+  }
+}
+
+function backgroundState(mode: 'gradient' | 'solid', applied = false) {
+  return {
+    applied,
+    css:
+      mode === 'solid'
+        ? 'rgb(33, 24, 45)'
+        : 'linear-gradient(145deg, rgb(50, 34, 66), rgb(30, 22, 41))',
+    gradientEndColor: '#1E1629',
+    gradientStartColor: '#322242',
+    height: 720,
+    mode,
+    resourcesReady: true,
+    solidColor: '#21182D',
+    stageHeight: 480,
+    stageWidth: 853.33,
+    width: 1280,
+  }
+}
+
 function fakeStyleSessionWindow(
   options: { displayScale?: number; readiness?: Promise<never>; target?: unknown } = {},
+  capturePng = validPng,
 ) {
   const window = fakeWindow()
   const captures = [
     { height: 720, width: 1280 },
     { height: 900, width: 1440 },
+    { height: 720, width: 1280 },
+    { height: 720, width: 1280 },
+    { height: 720, width: 1280 },
   ]
   window.webContents.capturePage.mockImplementation(async () => {
     const viewport = captures.shift()!
+    const pixelValue = captures.length + 1
     return {
       getSize: () => viewport,
       isEmpty: () => false,
-      toPNG: () => validPng(viewport.width, viewport.height),
+      toPNG: () => capturePng(viewport.width, viewport.height, pixelValue),
     }
   })
   window.webContents.executeJavaScript
@@ -136,6 +174,13 @@ function fakeStyleSessionWindow(
     window.webContents.executeJavaScript
       .mockResolvedValueOnce(projectLyricsState(1280, 720))
       .mockResolvedValueOnce(projectLyricsState(1440, 900))
+      .mockResolvedValueOnce(projectLyricsState(1280, 720))
+      .mockResolvedValueOnce(styleActionTarget('background'))
+      .mockResolvedValueOnce(backgroundState('gradient'))
+      .mockResolvedValueOnce(styleActionTarget('solid'))
+      .mockResolvedValueOnce(backgroundState('solid'))
+      .mockResolvedValueOnce(styleActionTarget('apply'))
+      .mockResolvedValueOnce(backgroundState('solid', true))
   }
   return window
 }
@@ -230,6 +275,9 @@ describe('production-window visual smoke', () => {
       expect(artifacts.map(({ name }: { name: string }) => name)).toEqual([
         '01-project-lyrics-1280x720.png',
         '02-project-lyrics-1440x900.png',
+        '03-background-gradient-draft-1280x720.png',
+        '04-background-solid-draft-1280x720.png',
+        '05-background-solid-applied-1280x720.png',
         'result.json',
       ])
     })
@@ -246,14 +294,12 @@ describe('production-window visual smoke', () => {
         { focus: vi.fn(async () => true), publish },
       ),
     ).resolves.toEqual({ ok: true })
-    expect(window.webContents.sendInputEvent.mock.calls.map(([event]) => event)).toEqual([
-      { type: 'mouseMove', x: 120, y: 20 },
-      { button: 'left', clickCount: 1, type: 'mouseDown', x: 120, y: 20 },
-      { button: 'left', clickCount: 1, type: 'mouseUp', x: 120, y: 20 },
-    ])
+    const inputEvents = window.webContents.sendInputEvent.mock.calls.map(([event]) => event)
+    expect(inputEvents).toHaveLength(12)
+    expect(inputEvents.filter(({ type }) => type === 'mouseDown')).toHaveLength(4)
     expect(window.setContentSize.mock.calls).toContainEqual([1280, 720, false])
     expect(window.setContentSize.mock.calls).toContainEqual([1440, 900, false])
-    expect(window.webContents.capturePage).toHaveBeenCalledTimes(2)
+    expect(window.webContents.capturePage).toHaveBeenCalledTimes(5)
     expect(smoke.STYLE_TARGET_SCRIPT).not.toContain('.click(')
     expect(smoke.STYLE_TARGET_SCRIPT).not.toContain('setTimeout')
     const readinessScript = smoke.projectLyricsReadinessScript({ height: 720, width: 1280 })
@@ -301,15 +347,16 @@ describe('production-window visual smoke', () => {
       ),
     ).resolves.toEqual({ ok: true })
 
-    expect(window.webContents.sendInputEvent.mock.calls.map(([event]) => event)).toEqual([
-      { type: 'mouseMove', x: 61, y: 11 },
-      { button: 'left', clickCount: 1, type: 'mouseDown', x: 61, y: 11 },
-      { button: 'left', clickCount: 1, type: 'mouseUp', x: 61, y: 11 },
-    ])
+    expect(window.webContents.sendInputEvent).toHaveBeenCalledTimes(12)
+    expect(window.webContents.sendInputEvent.mock.calls[0][0]).toEqual({
+      type: 'mouseMove',
+      x: 61,
+      y: 11,
+    })
     expect(window.webContents.setZoomFactor).toHaveBeenCalledWith(0.5)
     expect(window.setContentSize.mock.calls).toContainEqual([640, 360, false])
     expect(window.setContentSize.mock.calls).toContainEqual([720, 450, false])
-    expect(window.webContents.capturePage).toHaveBeenCalledTimes(2)
+    expect(window.webContents.capturePage).toHaveBeenCalledTimes(5)
     expect(publish).toHaveBeenCalledOnce()
   })
 
@@ -424,6 +471,25 @@ describe('production-window visual smoke', () => {
     expect(publish).not.toHaveBeenCalled()
     expect(writeFailure).toHaveBeenCalledOnce()
     expect(window.destroy).toHaveBeenCalledOnce()
+  })
+
+  it('publishes no authoritative evidence for duplicate same-size Style captures', async () => {
+    const window = fakeStyleSessionWindow({}, (width, height) => validPng(width, height))
+    const publish = vi.fn()
+    const writeFailure = vi.fn(async () => undefined)
+    await expect(
+      smoke.runVisualSmoke(
+        {
+          app: {},
+          config: { output: '/safe/evidence', scenario: smoke.STYLE_SESSION_SCENARIO },
+          window,
+        },
+        { focus: vi.fn(async () => true), publish, writeFailure },
+      ),
+    ).resolves.toEqual({ ok: false })
+    expect(window.webContents.capturePage).toHaveBeenCalledTimes(5)
+    expect(publish).not.toHaveBeenCalled()
+    expect(writeFailure).toHaveBeenCalledOnce()
   })
 
   it('publishes only a fixed failure and tears down when capture throws secret data', async () => {

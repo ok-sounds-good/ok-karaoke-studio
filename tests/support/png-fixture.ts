@@ -43,8 +43,9 @@ export function pngFromChunks(chunks: Buffer[]) {
   ])
 }
 
-export function validPng(width: number, height: number) {
+export function validPng(width: number, height: number, pixelValue = 0) {
   const row = Buffer.alloc(1 + width * 4)
+  row.fill(pixelValue, 1)
   const pixels = Buffer.concat(Array.from({ length: height }, () => row))
   return Buffer.concat([
     PNG_SIGNATURE,
