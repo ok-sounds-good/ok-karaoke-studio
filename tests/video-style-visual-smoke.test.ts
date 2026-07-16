@@ -132,6 +132,7 @@ function backgroundState(mode: 'gradient' | 'solid', applied = false) {
 
 function fakeStyleSessionWindow(
   options: { displayScale?: number; readiness?: Promise<never>; target?: unknown } = {},
+  capturePng = validPng,
 ) {
   const window = fakeWindow()
   const captures = [
@@ -143,10 +144,11 @@ function fakeStyleSessionWindow(
   ]
   window.webContents.capturePage.mockImplementation(async () => {
     const viewport = captures.shift()!
+    const pixelValue = captures.length + 1
     return {
       getSize: () => viewport,
       isEmpty: () => false,
-      toPNG: () => validPng(viewport.width, viewport.height),
+      toPNG: () => capturePng(viewport.width, viewport.height, pixelValue),
     }
   })
   window.webContents.executeJavaScript
@@ -469,6 +471,25 @@ describe('production-window visual smoke', () => {
     expect(publish).not.toHaveBeenCalled()
     expect(writeFailure).toHaveBeenCalledOnce()
     expect(window.destroy).toHaveBeenCalledOnce()
+  })
+
+  it('publishes no authoritative evidence for duplicate same-size Style captures', async () => {
+    const window = fakeStyleSessionWindow({}, (width, height) => validPng(width, height))
+    const publish = vi.fn()
+    const writeFailure = vi.fn(async () => undefined)
+    await expect(
+      smoke.runVisualSmoke(
+        {
+          app: {},
+          config: { output: '/safe/evidence', scenario: smoke.STYLE_SESSION_SCENARIO },
+          window,
+        },
+        { focus: vi.fn(async () => true), publish, writeFailure },
+      ),
+    ).resolves.toEqual({ ok: false })
+    expect(window.webContents.capturePage).toHaveBeenCalledTimes(5)
+    expect(publish).not.toHaveBeenCalled()
+    expect(writeFailure).toHaveBeenCalledOnce()
   })
 
   it('publishes only a fixed failure and tears down when capture throws secret data', async () => {

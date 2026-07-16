@@ -203,6 +203,11 @@ function normalizeManifest(value, scenario = BASELINE_SCENARIO) {
       throw resultError()
     return Object.freeze(artifact)
   })
+  if (
+    scenario === STYLE_SESSION_SCENARIO &&
+    new Set(artifacts.map(({ sha256 }) => sha256)).size !== artifacts.length
+  )
+    throw resultError()
   return Object.freeze({
     artifacts: Object.freeze(artifacts),
     ok: true,

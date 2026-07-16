@@ -33,7 +33,8 @@ async function freshResult(scenario = results.BASELINE_SCENARIO) {
       : results.createScenarioResultArtifacts(
           scenario,
           results.STYLE_SESSION_VIEWPORTS.map(
-            ({ width, height }: { width: number; height: number }) => validPng(width, height),
+            ({ width, height }: { width: number; height: number }, index: number) =>
+              validPng(width, height, index + 1),
           ),
         )
   await publishArtifactBuffers(output, created.artifacts)
@@ -115,6 +116,18 @@ describe('visual result validation', () => {
       ok: true,
       schemaVersion: 1,
     })
+  })
+
+  it('rejects duplicate-content Style-session captures', async () => {
+    const { output } = await freshResult(results.STYLE_SESSION_SCENARIO)
+    const duplicate = await readFile(join(output, results.STYLE_SESSION_NAMES[0]))
+    const manifest = JSON.parse(await readFile(join(output, results.RESULT_NAME), 'utf8'))
+    manifest.artifacts[2] = { ...manifest.artifacts[0], name: results.STYLE_SESSION_NAMES[2] }
+    await writeFile(join(output, results.STYLE_SESSION_NAMES[2]), duplicate)
+    await writeFile(join(output, results.RESULT_NAME), `${JSON.stringify(manifest)}\n`)
+    await expect(
+      results.validateVisualResultDirectory(output, { scenario: results.STYLE_SESSION_SCENARIO }),
+    ).rejects.toThrow('VISUAL_SMOKE_RESULT_INVALID')
   })
 
   it('rejects cross-scenario and stale scenario artifacts', async () => {
