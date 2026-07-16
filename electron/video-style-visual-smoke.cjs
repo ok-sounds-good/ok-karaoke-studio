@@ -78,7 +78,7 @@ const STYLE_TARGET_SCRIPT = `(() => new Promise((resolve) => {
   const sample = () => {
     const root = document.getElementById('root')
     const target = document.querySelector(
-      'button.style-button[aria-label="Edit project lyric style"]',
+      'button.style-button[aria-label="Edit project Style"]',
     )
     if (!(target instanceof HTMLButtonElement) || !root?.childElementCount) return null
     const bounds = target.getBoundingClientRect()
