@@ -144,8 +144,8 @@ and platform gate for native image decoding, renderer build, production-window
 visual evidence and artifact storage, and unpacked application packaging.
 
 Changing CI providers does not close Windows x64 MVP validation, the final
-user-held product-acceptance gate, or the public-distribution license and FFmpeg
-decisions in `MVP.md`.
+user-held product-acceptance gate, or the FFmpeg redistribution decision in
+`MVP.md`.
 
 ## Definition of done
 
@@ -171,9 +171,10 @@ A change is done when:
   artifacts. Migration coverage becomes required once the product promises
   compatibility with a prior format.
 - Format or export changes include fixtures, validation, and licensing notes.
-- The public-distribution license and any FFmpeg redistribution policy remain
-  user-held decisions. Do not change license files, package metadata, or bundled
-  binary policy without explicit user direction.
+- The repository is licensed under GNU GPL v3.0 or later
+  (`GPL-3.0-or-later`). Any FFmpeg redistribution policy remains a separate
+  user-held decision. Do not change license files, package license metadata, or
+  bundled-binary policy without explicit user direction.
 - Documentation and the relevant release or roadmap status are updated.
 - Every accepted review residual links to its GitHub issue, and that issue
   records its finding class and class-specific evidence, impact, deferral

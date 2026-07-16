@@ -101,9 +101,10 @@ definition of done.
 Okay Karaoke Studio currently invokes a system-installed FFmpeg as a separate
 command-line process and does not redistribute that encoder executable. Bundling
 it remains possible, but is not required for Windows MVP acceptance and the
-selected build determines the obligations. The final public project license and
-FFmpeg redistribution policy are separate user-held MVP decisions; implementation
-work must not silently choose or close them.
+selected build determines the obligations. The repository is licensed under GNU
+GPL v3.0 or later (`GPL-3.0-or-later`); FFmpeg redistribution remains a separate
+user-held MVP decision, and implementation work must not silently choose or close
+it.
 FFmpeg is LGPL 2.1-or-later by default, while GPL components and external libraries
 can make the resulting build GPL. The current exporter uses `libx264`, which the
 [FFmpeg license documentation](https://ffmpeg.org/doxygen/trunk/md_LICENSE.html)
