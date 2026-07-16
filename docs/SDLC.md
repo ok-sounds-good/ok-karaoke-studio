@@ -134,6 +134,15 @@ Artifact retention is controlled by the CircleCI plan rather than
 when the active plan exposes that setting. Configure redundant-workflow
 auto-cancellation in the CircleCI project settings when available.
 
+Formatting cleanliness and process-heavy formatter and Codex-hook integration
+are repository-quality responsibilities, not Windows product acceptance gates.
+The macOS job runs changed-range `bun run format:check` and the complete
+`bun run test` suite once, including `tests/format-diff.test.ts`. The Windows job
+runs the ordinary unit suite with only that integration file excluded; it still
+runs the fast `tests/format-diff-core.test.ts` coverage and every Windows product
+and platform gate for native image decoding, renderer build, production-window
+visual evidence and artifact storage, and unpacked application packaging.
+
 Changing CI providers does not close Windows x64 MVP validation, the final
 user-held product-acceptance gate, or the public-distribution license and FFmpeg
 decisions in `MVP.md`.

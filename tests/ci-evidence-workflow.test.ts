@@ -156,12 +156,10 @@ describe('CI visual evidence contract', () => {
     expect(expression).not.toMatch(/"(?:api|schedule|custom_webhook)"/u)
   })
 
-  it('pins the toolchain and preserves every project gate on both platforms', async () => {
+  it('runs repository formatting once while preserving every platform product gate', async () => {
     const workflow = await repositoryFile(ACTIVE_WORKFLOW)
-    const requiredSteps = [
+    const sharedSteps = [
       'Install locked dependencies',
-      'Check formatting in changed lines',
-      'Run unit tests',
       'Smoke Electron native image decoding',
       'Build renderer',
       'Capture production-window visual evidence',
@@ -174,16 +172,42 @@ describe('CI visual evidence contract', () => {
       expect(job).toContain('24.0.2')
       expect(job).toContain('bun@1.3.14')
       expect(job).toContain('bun install --frozen-lockfile')
-      expect(job).toContain('FORMAT_BASE_SHA')
-      expect(job).toContain('git merge-base origin/main HEAD')
-      expect(job).toContain('bun run format:check')
-      expect(job).toContain('bun run test')
       expect(job).toContain('bun run test:image')
       expect(job).toContain('bun run build')
       expect(job).toContain('bun run test:visual')
       expect(job).toContain('bunx electron-builder --dir --publish never')
-      for (const step of requiredSteps) expect(job).toContain(`name: ${step}`)
+      for (const step of sharedSteps) expect(job).toContain(`name: ${step}`)
     }
+
+    const macOS = jobBlock(workflow, 'macOS')
+    expect(macOS).toContain('FORMAT_DEFAULT_BRANCH: main')
+    expect(macOS).toContain('name: Check formatting in changed lines')
+    expect(macOS).toContain('FORMAT_BASE_SHA')
+    expect(macOS).toContain('git merge-base origin/main HEAD')
+    expect(macOS).toContain('bun run format:check')
+    expect(macOS).toContain('name: Run unit tests\n          command: bun run test')
+    expect(macOS).not.toContain('--exclude')
+
+    const windows = jobBlock(workflow, 'Windows')
+    expect(windows).toContain('name: Run unit tests except formatter integration')
+    expect(windows).toContain('bun run test -- --exclude tests/format-diff.test.ts')
+    expect(windows.match(/--exclude\s+\S+/gu) ?? []).toEqual([
+      '--exclude tests/format-diff.test.ts',
+    ])
+    expect(windows).not.toContain('FORMAT_DEFAULT_BRANCH')
+    expect(windows).not.toContain('FORMAT_BASE_SHA')
+    expect(windows).not.toContain('FORMAT_BRANCH')
+    expect(windows).not.toContain('git fetch --no-tags')
+    expect(windows).not.toContain('git merge-base')
+    expect(windows).not.toContain('name: Check formatting in changed lines')
+    expect(windows).not.toContain('bun run format:check')
+
+    const packageJson = JSON.parse(await repositoryFile('package.json'))
+    expect(packageJson.scripts.test).toBe('vitest run')
+    expect(await repositoryFile('tests/format-diff-core.test.ts')).toContain(
+      "describe('range-formatting algorithm'",
+    )
+    expect(await repositoryFile('vite.config.ts')).not.toContain('format-diff-core.test.ts')
   })
 
   it('captures and stores only each attempted visual-evidence leaf', async () => {
