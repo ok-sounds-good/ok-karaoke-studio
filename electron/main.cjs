@@ -39,6 +39,13 @@ const {
 const { createLocalFontPermissionPolicy } = require('./local-font-access.cjs')
 const { readLinkedImage } = require('./linked-image-decoder.cjs')
 const { createElectronNativeImageDecoder } = require('./native-image-adapter.cjs')
+const {
+  createMediaCapabilityRegistry,
+  mediaTokenFromUrl,
+  normalizeBackgroundMutationRequest,
+  normalizeMediaCapabilityReference,
+  prepareProjectMedia,
+} = require('./media-capabilities.cjs')
 const { createProjectOpenCoordinator } = require('./project-open.cjs')
 const {
   createNativeCloseArbiter,
@@ -73,6 +80,13 @@ const CHANNELS = Object.freeze({
   importAudio: 'studio:import-audio',
   resolveProjectAudio: 'studio:resolve-project-audio',
   releaseAudio: 'studio:release-audio',
+  chooseBackgroundImage: 'studio:choose-background-image',
+  resolveProjectBackground: 'studio:resolve-project-background',
+  settleBackgroundImage: 'studio:settle-background-image',
+  retainBackground: 'studio:retain-background',
+  releaseBackground: 'studio:release-background',
+  releaseBackgroundSnapshot: 'studio:release-background-snapshot',
+  getBackgroundState: 'studio:get-background-state',
   importLrc: 'studio:import-lrc',
   exportText: 'studio:export-text',
   exportVideo: 'studio:export-video',
@@ -148,6 +162,8 @@ const AUDIO_FILTERS = [
   { name: 'All Files', extensions: ['*'] },
 ]
 
+const BACKGROUND_IMAGE_FILTERS = [{ name: 'PNG or JPEG Image', extensions: ['png', 'jpg', 'jpeg'] }]
+
 const LRC_FILTERS = [
   { name: 'LRC Lyrics', extensions: ['lrc'] },
   { name: 'Text', extensions: ['txt'] },
@@ -156,13 +172,10 @@ const LRC_FILTERS = [
 
 const VIDEO_FILTERS = [{ name: 'MPEG-4 Karaoke Video', extensions: ['mp4'] }]
 
-const mediaFiles = new Map()
-const mediaTokensByOwner = new Map()
-const mediaRequestSequences = new Map()
-const restorableProjectAudioByOwner = new Map()
+const mediaCapabilities = createMediaCapabilityRegistry()
 const projectOpens = createProjectOpenCoordinator({
   prepareScope(_ownerId, scope) {
-    return prepareProjectAudio(scope.path, scope.project)
+    return prepareProjectMedia(scope.path, scope.project, AUDIO_EXTENSIONS)
   },
   async validateScope(_ownerId, scope) {
     try {
@@ -177,15 +190,13 @@ const projectOpens = createProjectOpenCoordinator({
     }
   },
   commitScope(ownerId, scope) {
-    beginMediaRequest(ownerId)
-    revokeMediaForOwner(ownerId)
-    restorableProjectAudioByOwner.set(ownerId, scope)
-    return true
+    return mediaCapabilities.replaceProjectScope(ownerId, scope.projectPath, {
+      audio: scope.audioPath,
+      background: scope.backgroundPath,
+    })
   },
   resetScope(ownerId) {
-    beginMediaRequest(ownerId)
-    revokeMediaForOwner(ownerId)
-    restorableProjectAudioByOwner.delete(ownerId)
+    mediaCapabilities.releaseOwner(ownerId)
     return true
   },
 })
@@ -339,6 +350,7 @@ function mediaResponseHeaders() {
     'Access-Control-Allow-Origin': rendererOrigin(),
     'Access-Control-Expose-Headers': 'Accept-Ranges, Content-Length, Content-Range',
     'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
   }
 }
 
@@ -367,18 +379,6 @@ function parseByteRange(value, size) {
   return { start, end }
 }
 
-function tokenFromMediaUrl(rawUrl) {
-  try {
-    const url = new URL(rawUrl)
-    if (url.protocol !== `${MEDIA_SCHEME}:` || url.hostname !== 'asset') return null
-
-    const token = url.pathname.split('/').filter(Boolean)[0]
-    return token && /^[0-9a-f-]{36}$/i.test(token) ? token : null
-  } catch {
-    return null
-  }
-}
-
 function installMediaProtocol() {
   protocol.handle(MEDIA_SCHEME, async (request) => {
     if (request.method !== 'GET' && request.method !== 'HEAD') {
@@ -388,8 +388,8 @@ function installMediaProtocol() {
       })
     }
 
-    const token = tokenFromMediaUrl(request.url)
-    const mediaFile = token ? mediaFiles.get(token) : null
+    const token = mediaTokenFromUrl(request.url, MEDIA_SCHEME)
+    const mediaFile = token ? mediaCapabilities.get(token) : null
     const hasActiveOwner = Boolean(
       mediaFile &&
       mainWindow &&
@@ -397,20 +397,44 @@ function installMediaProtocol() {
       !mainWindow.webContents.isDestroyed() &&
       mainWindow.webContents.id === mediaFile.ownerId,
     )
-    if (token && mediaFile && !hasActiveOwner) revokeMediaToken(token)
-    const filePath = hasActiveOwner ? mediaFile.filePath : null
-    if (!filePath) return textResponse('Media not found', 404, mediaResponseHeaders())
+    if (token && mediaFile && !hasActiveOwner) mediaCapabilities.revokeToken(token)
+    if (!hasActiveOwner) return textResponse('Media not found', 404, mediaResponseHeaders())
+
+    if (mediaFile.kind === 'background') {
+      const size = mediaFile.bytes.length
+      const range = parseByteRange(request.headers.get('range'), size)
+      if (range === false) {
+        return textResponse('Requested range not satisfiable', 416, {
+          ...mediaResponseHeaders(),
+          'Content-Range': `bytes */${size}`,
+        })
+      }
+      const start = range ? range.start : 0
+      const end = range ? range.end : size - 1
+      const headers = {
+        ...mediaResponseHeaders(),
+        'Accept-Ranges': 'bytes',
+        'Content-Length': String(range ? end - start + 1 : size),
+        'Content-Type': mediaFile.mime,
+      }
+      if (range) headers['Content-Range'] = `bytes ${start}-${end}/${size}`
+      const body =
+        request.method === 'HEAD' ? null : Buffer.from(mediaFile.bytes.subarray(start, end + 1))
+      return new Response(body, { status: range ? 206 : 200, headers })
+    }
+
+    const filePath = mediaFile.filePath
 
     let fileStats
     try {
       fileStats = await fs.stat(filePath)
     } catch {
-      if (token) revokeMediaToken(token)
+      if (token) mediaCapabilities.revokeToken(token)
       return textResponse('Media not found', 404, mediaResponseHeaders())
     }
 
     if (!fileStats.isFile()) {
-      if (token) revokeMediaToken(token)
+      if (token) mediaCapabilities.revokeToken(token)
       return textResponse('Media not found', 404, mediaResponseHeaders())
     }
 
@@ -478,43 +502,6 @@ function requireStringWithinBytes(value, fieldName, maxBytes) {
     )
   }
   return text
-}
-
-function revokeMediaToken(token) {
-  const mediaFile = mediaFiles.get(token)
-  if (!mediaFile) return
-  mediaFiles.delete(token)
-
-  const ownerTokens = mediaTokensByOwner.get(mediaFile.ownerId)
-  ownerTokens?.delete(token)
-  if (ownerTokens?.size === 0) mediaTokensByOwner.delete(mediaFile.ownerId)
-}
-
-function revokeMediaForOwner(ownerId) {
-  const ownerTokens = mediaTokensByOwner.get(ownerId)
-  if (!ownerTokens) return
-  for (const token of [...ownerTokens]) revokeMediaToken(token)
-}
-
-function beginMediaRequest(ownerId) {
-  const sequence = (mediaRequestSequences.get(ownerId) || 0) + 1
-  mediaRequestSequences.set(ownerId, sequence)
-  return sequence
-}
-
-function mediaRequestIsCurrent(ownerId, sequence) {
-  return mediaRequestSequences.get(ownerId) === sequence
-}
-
-function prepareProjectAudio(projectPath, project) {
-  let audioPath = null
-  if (project.audioPath) {
-    const candidate = path.isAbsolute(project.audioPath)
-      ? path.resolve(project.audioPath)
-      : path.resolve(path.dirname(projectPath), project.audioPath)
-    if (AUDIO_EXTENSIONS.has(path.extname(candidate).toLowerCase())) audioPath = candidate
-  }
-  return Object.freeze({ projectPath, audioPath })
 }
 
 function assertTrustedSender(event) {
@@ -599,21 +586,36 @@ function normalizeVideoExportRequest(value) {
   }
 }
 
-function makeMediaResult(filePath, ownerContents) {
-  if (!ownerContents || ownerContents.isDestroyed()) {
-    throw new Error('Cannot create a media URL for a destroyed renderer')
-  }
-
-  const ownerId = ownerContents.id
-  revokeMediaForOwner(ownerId)
-  const token = randomUUID()
-  mediaFiles.set(token, { filePath, ownerId })
-  mediaTokensByOwner.set(ownerId, new Set([token]))
-
+function makeMediaResult(token, filePath, kind) {
+  const suffix = kind === 'audio' ? `/${encodeURIComponent(path.basename(filePath))}` : ''
   return {
     path: filePath,
     name: path.basename(filePath),
-    url: `${MEDIA_SCHEME}://asset/${token}/${encodeURIComponent(path.basename(filePath))}`,
+    url: `${MEDIA_SCHEME}://asset/${token}${suffix}`,
+  }
+}
+
+function backgroundCapabilityState(ownerId) {
+  const state = mediaCapabilities.backgroundState(ownerId)
+  return Object.freeze({
+    activeUrl: state.activeToken ? `${MEDIA_SCHEME}://asset/${state.activeToken}` : null,
+    revision: state.revision,
+  })
+}
+
+function registerAudioResult(filePath, ownerContents, requestSequence) {
+  if (!ownerContents || ownerContents.isDestroyed()) {
+    throw new Error('Cannot create a media URL for a destroyed renderer')
+  }
+  const ownerId = ownerContents.id
+  const token = mediaCapabilities.registerAudio(ownerId, filePath, requestSequence)
+  return token ? makeMediaResult(token, filePath, 'audio') : null
+}
+
+function linkedImageMedia(image) {
+  return {
+    bytes: image.bytes,
+    mime: image.format === 'png' ? 'image/png' : 'image/jpeg',
   }
 }
 
@@ -842,7 +844,7 @@ function registerIpcHandlers() {
   ipcMain.handle(CHANNELS.importAudio, async (event) => {
     const owner = assertTrustedSender(event)
     const ownerId = event.sender.id
-    const requestSequence = beginMediaRequest(ownerId)
+    const requestSequence = mediaCapabilities.beginRequest(ownerId, 'audio')
     const result = await dialog.showOpenDialog(owner, {
       title: 'Import Audio',
       buttonLabel: 'Import Audio',
@@ -850,42 +852,190 @@ function registerIpcHandlers() {
       filters: AUDIO_FILTERS,
     })
 
-    if (result.canceled || result.filePaths.length === 0) return null
+    if (result.canceled || result.filePaths.length === 0) {
+      mediaCapabilities.finishRequest(ownerId, 'audio', requestSequence)
+      return null
+    }
 
     const filePath = path.resolve(result.filePaths[0])
     const extension = path.extname(filePath).toLowerCase()
     const fileStats = await fs.stat(filePath)
     if (!fileStats.isFile() || !AUDIO_EXTENSIONS.has(extension)) {
+      mediaCapabilities.finishRequest(ownerId, 'audio', requestSequence)
       throw new TypeError('The selected file is not a supported audio file')
     }
-    if (!mediaRequestIsCurrent(ownerId, requestSequence)) return null
+    if (!mediaCapabilities.requestIsCurrent(ownerId, 'audio', requestSequence)) return null
 
-    return makeMediaResult(filePath, event.sender)
+    return registerAudioResult(filePath, event.sender, requestSequence)
   })
 
   ipcMain.handle(CHANNELS.resolveProjectAudio, async (event, value) => {
     assertTrustedSender(event)
     if (!isRecord(value)) throw new TypeError('resolveProjectAudio requires an options object')
     const ownerId = event.sender.id
-    const requestSequence = beginMediaRequest(ownerId)
     const projectPath = path.resolve(requireString(value.projectPath, 'projectPath'))
-    const authorization = restorableProjectAudioByOwner.get(ownerId)
-    if (authorization?.projectPath !== projectPath) return null
-    restorableProjectAudioByOwner.delete(ownerId)
-    if (!authorization.audioPath) return null
+    const restoration = mediaCapabilities.beginRestore(ownerId, 'audio', projectPath)
+    if (!restoration.authorized) return null
+    if (!restoration.filePath) {
+      mediaCapabilities.finishRequest(ownerId, 'audio', restoration.sequence)
+      return null
+    }
     try {
-      const fileStats = await fs.stat(authorization.audioPath)
-      if (!fileStats.isFile() || !mediaRequestIsCurrent(ownerId, requestSequence)) return null
-      return makeMediaResult(authorization.audioPath, event.sender)
+      const fileStats = await fs.stat(restoration.filePath)
+      if (
+        !fileStats.isFile() ||
+        !mediaCapabilities.requestIsCurrent(ownerId, 'audio', restoration.sequence)
+      )
+        return null
+      return registerAudioResult(restoration.filePath, event.sender, restoration.sequence)
     } catch {
+      mediaCapabilities.finishRequest(ownerId, 'audio', restoration.sequence)
       return null
     }
   })
 
   ipcMain.handle(CHANNELS.releaseAudio, async (event) => {
     assertTrustedSender(event)
-    beginMediaRequest(event.sender.id)
-    revokeMediaForOwner(event.sender.id)
+    mediaCapabilities.resetKind(event.sender.id, 'audio')
+  })
+
+  ipcMain.handle(CHANNELS.getBackgroundState, async (event) => {
+    assertTrustedSender(event)
+    return backgroundCapabilityState(event.sender.id)
+  })
+
+  ipcMain.handle(CHANNELS.chooseBackgroundImage, async (event) => {
+    const owner = assertTrustedSender(event)
+    const ownerId = event.sender.id
+    const requestSequence = mediaCapabilities.beginRequest(ownerId, 'background')
+    const result = await dialog.showOpenDialog(owner, {
+      title: 'Choose Video Background',
+      buttonLabel: 'Choose Image',
+      properties: ['openFile'],
+      filters: BACKGROUND_IMAGE_FILTERS,
+    })
+    if (result.canceled || result.filePaths.length === 0) {
+      mediaCapabilities.finishRequest(ownerId, 'background', requestSequence)
+      return null
+    }
+
+    const filePath = path.resolve(result.filePaths[0])
+    let image
+    try {
+      image = await readLinkedImage(filePath, {
+        decode: createElectronNativeImageDecoder(),
+      })
+    } catch (error) {
+      mediaCapabilities.finishRequest(ownerId, 'background', requestSequence)
+      if (!mediaCapabilities.requestIsCurrent(ownerId, 'background', requestSequence)) return null
+      throw error
+    }
+    const token = mediaCapabilities.registerBackgroundCandidate(
+      ownerId,
+      filePath,
+      linkedImageMedia(image),
+      requestSequence,
+    )
+    return token ? makeMediaResult(token, filePath, 'background') : null
+  })
+
+  ipcMain.handle(CHANNELS.resolveProjectBackground, async (event, value) => {
+    assertTrustedSender(event)
+    if (!isRecord(value)) throw new TypeError('resolveProjectBackground requires an options object')
+    const ownerId = event.sender.id
+    const projectPath = path.resolve(requireString(value.projectPath, 'projectPath'))
+    const restoration = mediaCapabilities.beginRestore(ownerId, 'background', projectPath)
+    if (!restoration.authorized) return { status: 'stale' }
+    if (!restoration.filePath) {
+      mediaCapabilities.finishRequest(ownerId, 'background', restoration.sequence)
+      return { status: 'missing', state: backgroundCapabilityState(ownerId) }
+    }
+
+    try {
+      const image = await readLinkedImage(restoration.filePath, {
+        decode: createElectronNativeImageDecoder(),
+      })
+      const token = mediaCapabilities.registerRestoredBackground(
+        ownerId,
+        restoration.filePath,
+        linkedImageMedia(image),
+        restoration.sequence,
+      )
+      return token
+        ? {
+            status: 'success',
+            media: makeMediaResult(token, restoration.filePath, 'background'),
+            state: backgroundCapabilityState(ownerId),
+          }
+        : { status: 'stale' }
+    } catch {
+      return mediaCapabilities.finishRequest(ownerId, 'background', restoration.sequence)
+        ? { status: 'missing', state: backgroundCapabilityState(ownerId) }
+        : { status: 'stale' }
+    }
+  })
+
+  ipcMain.handle(CHANNELS.settleBackgroundImage, async (event, value) => {
+    assertTrustedSender(event)
+    if (!isRecord(value)) throw new TypeError('settleBackgroundImage requires an options object')
+    if (typeof value.accepted !== 'boolean') {
+      throw new TypeError('settleBackgroundImage.accepted must be a boolean')
+    }
+    const candidate = normalizeMediaCapabilityReference(value.url, { scheme: MEDIA_SCHEME })
+    if (!candidate.valid || !candidate.token) return null
+    return mediaCapabilities.settleBackgroundCandidate(
+      event.sender.id,
+      candidate.token,
+      value.accepted,
+    )
+      ? backgroundCapabilityState(event.sender.id)
+      : null
+  })
+
+  ipcMain.handle(CHANNELS.retainBackground, async (event, value) => {
+    assertTrustedSender(event)
+    if (!isRecord(value)) throw new TypeError('retainBackground requires an options object')
+    const request = normalizeBackgroundMutationRequest(value, 'nullable', MEDIA_SCHEME)
+    if (!request.valid) return null
+    return mediaCapabilities.retainBackground(
+      event.sender.id,
+      request.expectedRevision,
+      request.expectedToken,
+      request.targetToken,
+    )
+      ? backgroundCapabilityState(event.sender.id)
+      : null
+  })
+
+  ipcMain.handle(CHANNELS.releaseBackground, async (event, value) => {
+    assertTrustedSender(event)
+    if (!isRecord(value)) throw new TypeError('releaseBackground requires an options object')
+    const request = normalizeBackgroundMutationRequest(value, 'none', MEDIA_SCHEME)
+    if (!request.valid) return null
+    return mediaCapabilities.releaseKind(
+      event.sender.id,
+      'background',
+      request.expectedRevision,
+      request.expectedToken,
+    )
+      ? backgroundCapabilityState(event.sender.id)
+      : null
+  })
+
+  ipcMain.handle(CHANNELS.releaseBackgroundSnapshot, async (event, value) => {
+    assertTrustedSender(event)
+    if (!isRecord(value))
+      throw new TypeError('releaseBackgroundSnapshot requires an options object')
+    const request = normalizeBackgroundMutationRequest(value, 'required', MEDIA_SCHEME)
+    if (!request.valid || !request.targetToken) return null
+    return mediaCapabilities.releaseBackgroundSnapshot(
+      event.sender.id,
+      request.expectedRevision,
+      request.expectedToken,
+      request.targetToken,
+    )
+      ? backgroundCapabilityState(event.sender.id)
+      : null
   })
 
   ipcMain.handle(CHANNELS.importLrc, async (event) => {
@@ -1096,6 +1246,10 @@ async function openExternalUrl(rawUrl) {
 
 function secureWebContents(contents) {
   const ownerId = contents.id
+  const releaseRendererScope = () => {
+    mediaCapabilities.releaseOwner(ownerId)
+    void projectOpens.releaseOwner(ownerId)
+  }
   contents.setWindowOpenHandler(({ url }) => {
     void openExternalUrl(url)
     return { action: 'deny' }
@@ -1130,14 +1284,19 @@ function secureWebContents(contents) {
   contents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
     if (isMainFrame && !isInPlace) {
       clearNativeCloseOwnership(ownerId)
-      projectOpens.releaseOwner(ownerId)
+      releaseRendererScope()
     }
   })
-  contents.once('render-process-gone', () => clearNativeCloseOwnership(ownerId))
-  contents.once('destroyed', () => {
+  let terminalScopeReleased = false
+  const releaseTerminalScope = () => {
+    if (terminalScopeReleased) return
+    terminalScopeReleased = true
     clearNativeCloseOwnership(ownerId)
-    projectOpens.releaseOwner(ownerId)
-    mediaRequestSequences.delete(ownerId)
+    releaseRendererScope()
+  }
+  contents.once('render-process-gone', releaseTerminalScope)
+  contents.once('destroyed', () => {
+    releaseTerminalScope()
   })
 }
 
