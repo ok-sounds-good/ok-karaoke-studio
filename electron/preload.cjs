@@ -10,6 +10,13 @@ const CHANNELS = Object.freeze({
   importAudio: 'studio:import-audio',
   resolveProjectAudio: 'studio:resolve-project-audio',
   releaseAudio: 'studio:release-audio',
+  chooseBackgroundImage: 'studio:choose-background-image',
+  resolveProjectBackground: 'studio:resolve-project-background',
+  settleBackgroundImage: 'studio:settle-background-image',
+  retainBackground: 'studio:retain-background',
+  releaseBackground: 'studio:release-background',
+  releaseBackgroundSnapshot: 'studio:release-background-snapshot',
+  getBackgroundState: 'studio:get-background-state',
   importLrc: 'studio:import-lrc',
   exportText: 'studio:export-text',
   exportVideo: 'studio:export-video',
@@ -65,6 +72,17 @@ const studio = Object.freeze({
   resolveProjectAudio: (projectPath) =>
     ipcRenderer.invoke(CHANNELS.resolveProjectAudio, { projectPath }),
   releaseAudio: () => ipcRenderer.invoke(CHANNELS.releaseAudio),
+  getBackgroundState: () => ipcRenderer.invoke(CHANNELS.getBackgroundState),
+  chooseBackgroundImage: () => ipcRenderer.invoke(CHANNELS.chooseBackgroundImage),
+  resolveProjectBackground: (projectPath) =>
+    ipcRenderer.invoke(CHANNELS.resolveProjectBackground, { projectPath }),
+  settleBackgroundImage: (url, accepted) =>
+    ipcRenderer.invoke(CHANNELS.settleBackgroundImage, { url, accepted }),
+  retainBackground: (expected, url) =>
+    ipcRenderer.invoke(CHANNELS.retainBackground, { expected, url }),
+  releaseBackground: (expected) => ipcRenderer.invoke(CHANNELS.releaseBackground, { expected }),
+  releaseBackgroundSnapshot: (expected, url) =>
+    ipcRenderer.invoke(CHANNELS.releaseBackgroundSnapshot, { expected, url }),
   importLrc: () => ipcRenderer.invoke(CHANNELS.importLrc),
   exportText: (options) => ipcRenderer.invoke(CHANNELS.exportText, options),
   exportVideo: (options) => ipcRenderer.invoke(CHANNELS.exportVideo, options),

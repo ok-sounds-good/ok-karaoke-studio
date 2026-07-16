@@ -45,6 +45,26 @@ declare global {
     url: string
   }
 
+  interface StudioBackgroundImageResult {
+    path: string
+    name: string
+    url: string
+  }
+
+  interface StudioBackgroundCapabilityState {
+    activeUrl: string | null
+    revision: string
+  }
+
+  type StudioBackgroundRestoreResult =
+    | {
+        status: 'success'
+        media: StudioBackgroundImageResult
+        state: StudioBackgroundCapabilityState
+      }
+    | { status: 'missing'; state: StudioBackgroundCapabilityState }
+    | { status: 'stale' }
+
   interface StudioLrcImportResult {
     path: string
     name: string
@@ -97,6 +117,24 @@ declare global {
     importAudio(): Promise<StudioAudioImportResult | null>
     resolveProjectAudio(projectPath: string): Promise<StudioAudioImportResult | null>
     releaseAudio(): Promise<void>
+    getBackgroundState(): Promise<StudioBackgroundCapabilityState>
+    chooseBackgroundImage(): Promise<StudioBackgroundImageResult | null>
+    resolveProjectBackground(projectPath: string): Promise<StudioBackgroundRestoreResult>
+    settleBackgroundImage(
+      url: string,
+      accepted: boolean,
+    ): Promise<StudioBackgroundCapabilityState | null>
+    retainBackground(
+      expected: StudioBackgroundCapabilityState,
+      url: string | null,
+    ): Promise<StudioBackgroundCapabilityState | null>
+    releaseBackground(
+      expected: StudioBackgroundCapabilityState,
+    ): Promise<StudioBackgroundCapabilityState | null>
+    releaseBackgroundSnapshot(
+      expected: StudioBackgroundCapabilityState,
+      url: string,
+    ): Promise<StudioBackgroundCapabilityState | null>
     importLrc(): Promise<StudioLrcImportResult | null>
     exportText(options: StudioExportTextOptions): Promise<StudioPathResult | null>
     exportVideo(options: StudioVideoExportOptions): Promise<StudioVideoExportResult | null>

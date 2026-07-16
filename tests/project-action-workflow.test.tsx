@@ -51,11 +51,9 @@ describe('project action workflow wiring', () => {
     expect(main).toMatch(
       /window\.on\('close',[\s\S]{0,260}nativeCloseRendererReadiness\.isReady[\s\S]{0,120}preventDefault\(\)/,
     )
-    expect(main).toContain(
-      "contents.once('render-process-gone', () => clearNativeCloseOwnership(ownerId))",
-    )
+    expect(main).toContain("contents.once('render-process-gone', releaseTerminalScope)")
     expect(main).toMatch(/did-start-navigation[\s\S]{0,180}clearNativeCloseOwnership\(ownerId\)/)
-    expect(main).toMatch(/contents\.once\('destroyed',[\s\S]{0,100}clearNativeCloseOwnership/)
+    expect(main).toMatch(/contents\.once\('destroyed',[\s\S]{0,100}releaseTerminalScope/)
     expect(main).toMatch(/window\.on\('closed',[\s\S]{0,100}clearNativeCloseOwnership/)
     expect(main).toMatch(
       /app\.on\('before-quit',[\s\S]{0,360}nativeCloseRendererReadiness\.isReady[\s\S]{0,160}requestAppQuit\(\)/,
