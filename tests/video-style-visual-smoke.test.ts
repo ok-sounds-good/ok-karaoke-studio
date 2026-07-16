@@ -97,7 +97,9 @@ function typographyState(width: number, height: number) {
   }
 }
 
-function fakeTypographyWindow(options: { readiness?: Promise<never>; target?: unknown } = {}) {
+function fakeTypographyWindow(
+  options: { displayScale?: number; readiness?: Promise<never>; target?: unknown } = {},
+) {
   const window = fakeWindow()
   const captures = [
     { height: 720, width: 1280 },
@@ -113,7 +115,7 @@ function fakeTypographyWindow(options: { readiness?: Promise<never>; target?: un
   })
   window.webContents.executeJavaScript
     .mockReset()
-    .mockResolvedValueOnce(1)
+    .mockResolvedValueOnce(options.displayScale ?? 1)
     .mockResolvedValueOnce(
       options.target === undefined
         ? {
@@ -239,10 +241,10 @@ describe('production-window visual smoke', () => {
         { focus: vi.fn(async () => true), publish },
       ),
     ).resolves.toEqual({ ok: true })
-    expect(window.webContents.sendInputEvent.mock.calls.map(([event]) => event.type)).toEqual([
-      'mouseMove',
-      'mouseDown',
-      'mouseUp',
+    expect(window.webContents.sendInputEvent.mock.calls.map(([event]) => event)).toEqual([
+      { type: 'mouseMove', x: 120, y: 20 },
+      { button: 'left', clickCount: 1, type: 'mouseDown', x: 120, y: 20 },
+      { button: 'left', clickCount: 1, type: 'mouseUp', x: 120, y: 20 },
     ])
     expect(window.setContentSize.mock.calls).toContainEqual([1280, 720, false])
     expect(window.setContentSize.mock.calls).toContainEqual([1440, 900, false])
@@ -262,6 +264,70 @@ describe('production-window visual smoke', () => {
     ])
       expect(readinessScript).toContain(contract)
     expect(readinessScript).not.toContain('setTimeout')
+  })
+
+  it('converts Retina Style target coordinates for trusted input', async () => {
+    const window = fakeTypographyWindow({
+      displayScale: 2,
+      target: {
+        boundsHeight: 24,
+        boundsWidth: 60,
+        height: 720,
+        href: smoke.PACKAGED_APP_URL,
+        readyState: 'complete',
+        width: 1280,
+        x: 121,
+        y: 21,
+      },
+    })
+    const publish = vi.fn(async () => undefined)
+
+    await expect(
+      smoke.runVisualSmoke(
+        {
+          app: {},
+          config: {
+            output: '/safe/evidence',
+            scenario: smoke.PROJECT_TYPOGRAPHY_SCENARIO,
+          },
+          window,
+        },
+        { focus: vi.fn(async () => true), publish },
+      ),
+    ).resolves.toEqual({ ok: true })
+
+    expect(window.webContents.sendInputEvent.mock.calls.map(([event]) => event)).toEqual([
+      { type: 'mouseMove', x: 61, y: 11 },
+      { button: 'left', clickCount: 1, type: 'mouseDown', x: 61, y: 11 },
+      { button: 'left', clickCount: 1, type: 'mouseUp', x: 61, y: 11 },
+    ])
+    expect(window.webContents.setZoomFactor).toHaveBeenCalledWith(0.5)
+    expect(window.setContentSize.mock.calls).toContainEqual([640, 360, false])
+    expect(window.setContentSize.mock.calls).toContainEqual([720, 450, false])
+    expect(window.webContents.capturePage).toHaveBeenCalledTimes(2)
+    expect(publish).toHaveBeenCalledOnce()
+  })
+
+  it('rejects unsupported display scales and out-of-bounds trusted input coordinates', () => {
+    const contents = { sendInputEvent: vi.fn() }
+    const target = {
+      boundsHeight: 24,
+      boundsWidth: 60,
+      height: 720,
+      href: smoke.PACKAGED_APP_URL,
+      readyState: 'complete',
+      width: 1280,
+      x: 120,
+      y: 20,
+    }
+
+    expect(() => smoke.sendTrustedStyleActivation(contents, target, 1.5)).toThrow(
+      'VISUAL_SMOKE_ACTIVATION_INVALID',
+    )
+    expect(() => smoke.sendTrustedStyleActivation(contents, { ...target, x: 1279 }, 2)).toThrow(
+      'VISUAL_SMOKE_ACTIVATION_INVALID',
+    )
+    expect(contents.sendInputEvent).not.toHaveBeenCalled()
   })
 
   it('fails closed without capture when the trusted Style target is missing', async () => {
