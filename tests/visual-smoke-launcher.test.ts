@@ -45,8 +45,8 @@ function validatedArtifacts(scenario = smoke.BASELINE_SCENARIO) {
   ]
 }
 
-function rawWorkspace(events: string[] = []) {
-  const claim = { path: '/raw/private' }
+function rawWorkspace(output: string, events: string[] = []) {
+  const claim = { path: join(dirname(output), 'private-raw') }
   return {
     claim,
     createRawRoot: vi.fn(async () => claim),
@@ -71,7 +71,8 @@ describe('visual smoke launcher', () => {
     const publish = vi.fn(async () => {
       events.push('publish')
     })
-    const raw = rawWorkspace(events)
+    const raw = rawWorkspace(output, events)
+    const rawOutput = join(raw.claim.path, 'evidence')
     const created = [profile('user'), profile('session')]
     const outcome = await launcher.runLauncher(
       {
@@ -105,14 +106,14 @@ describe('visual smoke launcher', () => {
     expect(args).toEqual([
       launcher.REPOSITORY_ROOT,
       smoke.TRIGGER,
-      `${smoke.OPTIONS.output}/raw/private/evidence`,
+      `${smoke.OPTIONS.output}${rawOutput}`,
       `${smoke.OPTIONS.scenario}${smoke.BASELINE_SCENARIO}`,
       `${smoke.OPTIONS.userData}/profiles/user`,
       `${smoke.OPTIONS.userIdentity}user-identity`,
       `${smoke.OPTIONS.sessionData}/profiles/session`,
       `${smoke.OPTIONS.sessionIdentity}session-identity`,
     ])
-    expect(validateResult).toHaveBeenCalledWith('/raw/private/evidence', {
+    expect(validateResult).toHaveBeenCalledWith(rawOutput, {
       scenario: smoke.BASELINE_SCENARIO,
     })
     expect(raw.verifyRawRoot).toHaveBeenCalledWith(raw.claim)
@@ -171,7 +172,8 @@ describe('visual smoke launcher', () => {
     const publish = vi.fn(async () => {
       events.push('publish')
     })
-    const raw = rawWorkspace(events)
+    const raw = rawWorkspace(output, events)
+    const rawOutput = join(raw.claim.path, 'evidence')
     const created = [profile('user'), profile('session')]
     await expect(
       launcher.runLauncher(
@@ -193,8 +195,8 @@ describe('visual smoke launcher', () => {
     expect(runChild.mock.calls[0][0].args).toContain(
       `${smoke.OPTIONS.scenario}${smoke.PROJECT_TYPOGRAPHY_SCENARIO}`,
     )
-    expect(runChild.mock.calls[0][0].args).toContain(`${smoke.OPTIONS.output}/raw/private/evidence`)
-    expect(validateResult).toHaveBeenCalledWith('/raw/private/evidence', {
+    expect(runChild.mock.calls[0][0].args).toContain(`${smoke.OPTIONS.output}${rawOutput}`)
+    expect(validateResult).toHaveBeenCalledWith(rawOutput, {
       scenario: smoke.PROJECT_TYPOGRAPHY_SCENARIO,
     })
     expect(publish).toHaveBeenCalledWith(output, authoritative)
@@ -253,7 +255,7 @@ describe('visual smoke launcher', () => {
   it('maps child failures to one sanitized fresh failure artifact', async () => {
     const output = await outputPath()
     const events: string[] = []
-    const raw = rawWorkspace(events)
+    const raw = rawWorkspace(output, events)
     const writeFailure = vi.fn(async () => {
       events.push('failure')
       return 'created'
@@ -292,7 +294,7 @@ describe('visual smoke launcher', () => {
     'rejects a zero-exit child with captured fatal diagnostics without leaking %s',
     async (secret) => {
       const output = await outputPath()
-      const raw = rawWorkspace()
+      const raw = rawWorkspace(output)
       const writeFailure = vi.fn(async () => 'created')
       const validateResult = vi.fn()
       const outcome = await launcher.runLauncher(
@@ -325,7 +327,7 @@ describe('visual smoke launcher', () => {
 
   it('rejects capture overflow even when the child otherwise exits cleanly', async () => {
     const output = await outputPath()
-    const raw = rawWorkspace()
+    const raw = rawWorkspace(output)
     const validateResult = vi.fn()
     await expect(
       launcher.runLauncher(
@@ -354,7 +356,8 @@ describe('visual smoke launcher', () => {
   it('confirms private child-output retention before publishing a validation failure', async () => {
     const output = await outputPath()
     const events: string[] = []
-    const raw = rawWorkspace(events)
+    const raw = rawWorkspace(output, events)
+    const rawOutput = join(raw.claim.path, 'evidence')
     const publish = vi.fn()
     const writeFailure = vi.fn(async () => {
       events.push('failure')
@@ -386,7 +389,7 @@ describe('visual smoke launcher', () => {
         },
       ),
     ).resolves.toEqual({ code: 'VISUAL_SMOKE_RESULT_INVALID', ok: false })
-    expect(validateResult).toHaveBeenCalledWith('/raw/private/evidence', {
+    expect(validateResult).toHaveBeenCalledWith(rawOutput, {
       scenario: smoke.BASELINE_SCENARIO,
     })
     expect(publish).not.toHaveBeenCalled()
@@ -398,6 +401,10 @@ describe('visual smoke launcher', () => {
     const authoritative = validatedArtifacts()
     const outputState = vi.fn(async () => ({ output, state: 'absent' }))
     const publish = vi.fn()
+    const raw = rawWorkspace(output)
+    const verifyRawRoot = vi.fn(async () => {
+      throw new Error('retention uncertain')
+    })
     const writeFailure = vi.fn()
 
     await expect(
@@ -408,7 +415,7 @@ describe('visual smoke launcher', () => {
             .fn()
             .mockResolvedValueOnce(profile('user'))
             .mockResolvedValueOnce(profile('session')),
-          createRawRoot: vi.fn(async () => ({ path: '/raw/private' })),
+          createRawRoot: raw.createRawRoot,
           outputState,
           publish,
           runChild: vi.fn(async () => ({
@@ -418,14 +425,13 @@ describe('visual smoke launcher', () => {
           })),
           validateResult: vi.fn(async () => ({ publishedArtifacts: authoritative })),
           verifyProfile: vi.fn(async () => ({ retained: true })),
-          verifyRawRoot: vi.fn(async () => {
-            throw new Error('retention uncertain')
-          }),
+          verifyRawRoot,
           writeFailure,
         },
       ),
     ).resolves.toEqual({ code: 'VISUAL_SMOKE_OUTPUT_INVALID', ok: false })
     expect(outputState).toHaveBeenCalledTimes(1)
+    expect(verifyRawRoot).toHaveBeenCalledWith(raw.claim)
     expect(publish).not.toHaveBeenCalled()
     expect(writeFailure).not.toHaveBeenCalled()
   })
