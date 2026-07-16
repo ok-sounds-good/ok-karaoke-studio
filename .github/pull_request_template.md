@@ -33,10 +33,11 @@ Closes #
 | Visual evidence      |                           |        |
 
 - Environment-dependent or manual gaps:
-- Protected `macOS` check and evidence:
-- Protected `Windows` check and evidence:
+- Protected `ci/circleci: macOS` check and evidence:
+- Protected `ci/circleci: Windows` check and evidence:
 
-<!-- During the documented Actions outage, use UNAVAILABLE, never PASS. -->
+<!-- UNAVAILABLE is never PASS. A temporary required-check exception requires -->
+<!-- an explicit user decision and a linked Issue under docs/SDLC.md. -->
 
 ## Impact review
 
