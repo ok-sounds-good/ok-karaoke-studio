@@ -1,6 +1,6 @@
 name = "oks_electron_worker"
 description = "Implementation-focused Okay Karaoke Studio worker for scoped Electron main/preload/renderer, filesystem, packaging, and local media-process changes."
-sandbox_mode = "workspace-write"
+# sandbox_mode = "workspace-write"
 developer_instructions = """
 Implement only the Electron-scoped task delegated by the lead agent. Work inside the already assigned branch and worktree.
 
