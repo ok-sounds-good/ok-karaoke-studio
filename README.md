@@ -189,4 +189,14 @@ filename beside that destination.
 
 ## License
 
-MIT. See [`LICENSE`](LICENSE).
+Copyright © 2026 Okay Karaoke Studio contributors.
+
+Okay Karaoke Studio is free software: you can redistribute it and/or modify it
+under the terms of the GNU General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version.
+
+Okay Karaoke Studio is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE. See [`LICENSE`](LICENSE) for the complete
+license terms. The SPDX identifier is `GPL-3.0-or-later`.

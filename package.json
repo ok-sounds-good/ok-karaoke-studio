@@ -4,7 +4,7 @@
   "private": true,
   "description": "A desktop karaoke lyric timing and production studio.",
   "author": "Okay Karaoke Studio",
-  "license": "MIT",
+  "license": "GPL-3.0-or-later",
   "type": "module",
   "main": "electron/main.cjs",
   "packageManager": "bun@1.3.14",

@@ -36,12 +36,12 @@ current format.
 - **Technical baseline:** every iteration must leave `main` green and releasable.
   Passing CI or producing a package is required engineering evidence, but is not
   equivalent to product acceptance.
-- **Distribution acceptance: open and user-held.** Before public distribution,
-  the user selects and applies the final project license and explicitly decides
-  whether FFmpeg remains externally installed or is redistributed with a
-  documented compatible build and compliance plan. This separate decision does
-  not block private-repository MVP implementation, CI, or product testing, and
-  no agent may close it on the user's behalf.
+- **Distribution acceptance: open and user-held.** The repository is licensed
+  under GNU GPL v3.0 or later (`GPL-3.0-or-later`). Before public distribution,
+  the user still explicitly decides whether FFmpeg remains externally installed
+  or is redistributed with a documented compatible build and compliance plan.
+  This remaining decision does not block private-repository MVP implementation,
+  CI, or product testing, and no agent may close it on the user's behalf.
 
 ## Primary user journey
 
@@ -322,9 +322,11 @@ Karaoke Studio identity.
 - The Windows package continues to use the guided external-FFmpeg setup unless
   the user separately approves a redistributable FFmpeg build and its compliance
   plan. Bundling FFmpeg is not required for Windows MVP acceptance.
-- The repository currently declares MIT. The final public-distribution license
-  remains a user-held MVP decision; agents must not change `LICENSE`, package
-  metadata, or redistribution policy without the user's explicit direction.
+- The repository is licensed under GNU GPL v3.0 or later
+  (`GPL-3.0-or-later`). This selection does not authorize bundling FFmpeg. Its
+  redistribution policy remains a separate user-held MVP decision, and agents
+  must not change `LICENSE`, package license metadata, or bundled-binary policy
+  without the user's explicit direction.
 
 ### Quality bar
 
@@ -439,9 +441,10 @@ Karaoke Studio identity.
 - [ ] The inspector has no decorative **Document / Project** header row, and
   **Style** is available beside the Okay Karaoke Studio identity in the
   application header.
-- [ ] The user selects and applies the final public-distribution license and
-  decides whether FFmpeg remains externally installed or is redistributed with
-  a documented compatible build and compliance plan.
+- [x] The repository's public-distribution license is GNU GPL v3.0 or later
+      (`GPL-3.0-or-later`).
+- [ ] The user decides whether FFmpeg remains externally installed or is
+      redistributed with a documented compatible build and compliance plan.
 - [ ] A linked-audio project renders synchronized H.264/AAC MP4 lyric frames at
   every supported resolution and at 30 or 60 fps; a new export defaults to
   720p/30.

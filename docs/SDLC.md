@@ -47,6 +47,40 @@ The implementation pull request must link and close its delivery Issue with a
 GitHub closing keyword such as `Closes #123`. Related discovery or residual
 Issues may also be linked, but they do not replace that primary delivery record.
 
+### Issue classification labels
+
+Every open Issue carries at least one relevant canonical classification when it
+is created or reconciled. The Orchestrator corrects its labels when scope changes.
+Labels support filtering and queue review; they never replace the Issue's scope,
+acceptance criteria, dependencies, assignment, or durable decision history.
+
+Broad-purpose labels describe why the Issue exists:
+
+- `feature` — a new or expanded user-facing product capability;
+- `infrastructure` — CI, packaging, tooling, or execution infrastructure;
+- `tracking` — coordination, reconciliation, or delivery tracking rather than a
+  directly implementable change by itself;
+- `maintenance` — mechanical repository upkeep that does not change product
+  behavior;
+- `refactor` — behavior-preserving restructuring or responsibility cleanup;
+- `bug` — an observed malfunction or regression; and
+- `documentation` — documentation-primary work, not every change that also
+  updates documentation.
+
+Delivery-class labels describe the role of a cohesive implementation slice:
+
+- `foundation` — a shared model, contract, or platform foundation;
+- `behavior` — user-visible behavior built on established foundations; and
+- `hardening` — correctness, resilience, parity, or acceptance hardening.
+
+Use a broad-purpose label plus a delivery class when both add useful information,
+such as `feature` + `foundation`, `feature` + `behavior`, `infrastructure` +
+`hardening`, or `bug` + `infrastructure`. One canonical label is sufficient when
+a second would add no signal. New user behavior is not a `refactor`; classify it
+as `feature` and, when it is a delivery slice, `behavior`. GitHub default labels
+outside this taxonomy may support transient triage, but `enhancement` does not
+replace the canonical `feature` classification.
+
 Every agent-authored GitHub Issue body, pull-request body, review, comment,
 rebuttal, status update, and merge rationale starts with the substantive
 author's role marker as its first nonblank line: `## Orchestrator`,
@@ -144,8 +178,8 @@ and platform gate for native image decoding, renderer build, production-window
 visual evidence and artifact storage, and unpacked application packaging.
 
 Changing CI providers does not close Windows x64 MVP validation, the final
-user-held product-acceptance gate, or the public-distribution license and FFmpeg
-decisions in `MVP.md`.
+user-held product-acceptance gate, or the FFmpeg redistribution decision in
+`MVP.md`.
 
 ## Definition of done
 
@@ -171,9 +205,10 @@ A change is done when:
   artifacts. Migration coverage becomes required once the product promises
   compatibility with a prior format.
 - Format or export changes include fixtures, validation, and licensing notes.
-- The public-distribution license and any FFmpeg redistribution policy remain
-  user-held decisions. Do not change license files, package metadata, or bundled
-  binary policy without explicit user direction.
+- The repository is licensed under GNU GPL v3.0 or later
+  (`GPL-3.0-or-later`). Any FFmpeg redistribution policy remains a separate
+  user-held decision. Do not change license files, package license metadata, or
+  bundled-binary policy without explicit user direction.
 - Documentation and the relevant release or roadmap status are updated.
 - Every accepted review residual links to its GitHub issue, and that issue
   records its finding class and class-specific evidence, impact, deferral
