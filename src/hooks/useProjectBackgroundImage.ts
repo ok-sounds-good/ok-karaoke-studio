@@ -132,12 +132,11 @@ export function useProjectBackgroundImage({
           const restored = await studio.resolveProjectBackground(request.acceptedProjectPath)
           if (!isCurrent()) return
           if (restored.status === 'success') {
-            if (restored.media.path !== request.background.imagePath) {
-              finish(restored.state, 'error', null)
-              return
-            }
+            // Main authorizes this result from the accepted project scope and may
+            // native-normalize its path. Bind the URL to the serialized intent
+            // whose trusted restore produced it instead of comparing raw strings.
             finish(restored.state, 'available', {
-              path: restored.media.path,
+              path: request.background.imagePath,
               url: restored.media.url,
             })
             return

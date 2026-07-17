@@ -62,8 +62,12 @@ in-app first-project guide.
 
    Choose **Style** to set the project lyric appearance, customize the active
    Lead Vocal, choose a solid or gradient background, edit the title card, and
-   control the Stage frame's Brand, Clock, and Footer. Use the 16:9 Design
-   preview to compare changes, then choose **Apply & close** or **Cancel**.
+   control the Stage frame's Brand, Clock, and Footer. Existing linked images
+   appear in Live and Design Preview after their immutable snapshot loads, with
+   a gradient fallback and retry after failures. Choosing, replacing, or
+   clearing an image and exporting an image-backed MP4 remain unavailable. Use
+   the 16:9 Design preview to compare changes, then choose **Apply & close** or
+   **Cancel**.
 
 6. **Save the editable project.** Choose **Save project** in the top bar or use
    Command/Ctrl+S. **Save As** is also available from the File menu.
