@@ -220,6 +220,7 @@ function fakeStyleSessionWindow(
     { height: 720, width: 1280 },
     { height: 720, width: 1280 },
     { height: 720, width: 1280 },
+    { height: 720, width: 1280 },
   ]
   let candidateIndex = 0
   window.webContents.capturePage.mockImplementation(async () => {
@@ -292,6 +293,9 @@ function fakeStyleSessionWindow(
       .mockResolvedValueOnce(stageFrameState('footer', { changedClock: true }))
       .mockResolvedValueOnce(styleActionTarget('apply-stage'))
       .mockResolvedValueOnce(stageFrameState('footer', { applied: true, changedClock: true }))
+      .mockResolvedValueOnce(styleActionTarget('reopen'))
+      .mockResolvedValueOnce(styleActionTarget('lead'))
+      .mockResolvedValueOnce({ height: 720, resourcesReady: true, width: 1280 })
   }
   return window
 }
@@ -467,6 +471,7 @@ describe('production-window visual smoke', () => {
         '12-stage-frame-clock-draft-1280x720.png',
         '13-stage-frame-footer-hidden-draft-1280x720.png',
         '14-stage-frame-applied-1280x720.png',
+        '15-lead-vocal-destination-1280x720.png',
         'result.json',
       ])
     })
@@ -484,8 +489,8 @@ describe('production-window visual smoke', () => {
       ),
     ).resolves.toEqual({ ok: true })
     const inputEvents = window.webContents.sendInputEvent.mock.calls.map(([event]) => event)
-    expect(inputEvents).toHaveLength(118)
-    expect(inputEvents.filter(({ type }) => type === 'mouseDown')).toHaveLength(21)
+    expect(inputEvents).toHaveLength(124)
+    expect(inputEvents.filter(({ type }) => type === 'mouseDown')).toHaveLength(23)
     const expectedKeys = [
       'Tab',
       'Tab',
@@ -559,10 +564,12 @@ describe('production-window visual smoke', () => {
       'footer',
       'footer-visibility',
       'apply-stage',
+      'reopen',
+      'lead',
     ])
     expect(window.setContentSize.mock.calls).toContainEqual([1280, 720, false])
     expect(window.setContentSize.mock.calls).toContainEqual([1440, 900, false])
-    expect(window.webContents.capturePage).toHaveBeenCalledTimes(28)
+    expect(window.webContents.capturePage).toHaveBeenCalledTimes(30)
     expect(smoke.STYLE_TARGET_SCRIPT).not.toContain('.click(')
     expect(smoke.STYLE_TARGET_SCRIPT).not.toContain('setTimeout')
     const readinessScript = smoke.projectLyricsReadinessScript({ height: 720, width: 1280 })
@@ -610,7 +617,7 @@ describe('production-window visual smoke', () => {
       ),
     ).resolves.toEqual({ ok: true })
 
-    expect(window.webContents.sendInputEvent).toHaveBeenCalledTimes(118)
+    expect(window.webContents.sendInputEvent).toHaveBeenCalledTimes(124)
     expect(window.webContents.sendInputEvent.mock.calls[0][0]).toEqual({
       type: 'mouseMove',
       x: 61,
@@ -619,7 +626,7 @@ describe('production-window visual smoke', () => {
     expect(window.webContents.setZoomFactor).toHaveBeenCalledWith(0.5)
     expect(window.setContentSize.mock.calls).toContainEqual([640, 360, false])
     expect(window.setContentSize.mock.calls).toContainEqual([720, 450, false])
-    expect(window.webContents.capturePage).toHaveBeenCalledTimes(28)
+    expect(window.webContents.capturePage).toHaveBeenCalledTimes(30)
     expect(publish).toHaveBeenCalledOnce()
   })
 
@@ -771,7 +778,7 @@ describe('production-window visual smoke', () => {
         },
       ),
     ).resolves.toEqual({ ok: false })
-    expect(window.webContents.capturePage).toHaveBeenCalledTimes(28)
+    expect(window.webContents.capturePage).toHaveBeenCalledTimes(30)
     expect(publish).not.toHaveBeenCalled()
     expect(writeFailure).toHaveBeenCalledOnce()
   })
