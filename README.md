@@ -110,7 +110,7 @@ the top bar for the in-app first-project guide.
 
    MP4 export requires lyrics and attached audio, is limited to 30 minutes, and
    produces H.264/AAC video. It renders every unmuted track, or only the unmuted
-   solo tracks when any track is soloed. The current MVP UI authors one
+   solo tracks when any unmuted track is soloed. The current MVP UI authors one
    lead-vocal track; adding singer tracks remains deferred, while valid current
    v0 projects can preserve and render multiple tracks. Resolution choices are
    240p (426 × 240), 360p (640 × 360), 480p (854 × 480), 720p (1280 × 720), 1080p
