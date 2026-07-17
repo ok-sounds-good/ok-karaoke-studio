@@ -802,16 +802,28 @@ describe('production-window visual smoke', () => {
     expect(writeFailure).toHaveBeenCalledOnce()
   })
 
-  it('requires native-valid arbitrary timing values with an explicit 100 ms Arrow contract', () => {
+  it('requires native-valid spinner-free timing with an explicit 100 ms Arrow contract', async () => {
     const readiness = smoke.projectLyricsReadinessScript(
       { height: 720, width: 1280 },
       { kind: 'lead-vocal' },
     )
+    const styles = await readFile(new URL('../src/video-style.css', import.meta.url), 'utf8')
     expect(readiness).toContain("input.step !== 'any'")
     expect(readiness).toContain("input.dataset.stepMs !== '100'")
     expect(readiness).toContain("input.min !== '0' || input.max !== '60000'")
+    expect(readiness).toContain("getComputedStyle(input).appearance !== 'textfield'")
     expect(readiness).toContain('input.validity.stepMismatch || !input.checkValidity()')
     expect(readiness).toContain('Arrow Up or Arrow Down')
+    expect(styles).toContain(`.vocal-timing-input input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}`)
+    expect(styles).toContain(`.vocal-timing-input input[type='number']::-webkit-inner-spin-button,
+.vocal-timing-input input[type='number']::-webkit-outer-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+  appearance: none;
+}`)
   })
 
   it('publishes no authoritative evidence for duplicate same-size Style captures', async () => {

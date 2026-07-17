@@ -518,6 +518,7 @@ function projectLyricsReadinessScript(viewport, contract = { kind: 'project-lyri
           !(enabled instanceof HTMLInputElement) || !enabled.checked || timing.length !== 3 ||
           timing.some((input) => !(input instanceof HTMLInputElement) || input.step !== 'any' ||
             input.dataset.stepMs !== '100' || input.min !== '0' || input.max !== '60000' ||
+            getComputedStyle(input).appearance !== 'textfield' ||
             input.validity.stepMismatch || !input.checkValidity() || !input.value) ||
           !text.includes('Sung') || !text.includes('Unsung') || !text.includes('Preview Time') ||
           !text.includes('Sync Aid') || !text.includes('Minimum lead') || !text.includes('Maximum lead') ||

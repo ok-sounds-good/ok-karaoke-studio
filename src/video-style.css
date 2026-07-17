@@ -528,6 +528,18 @@
   font: inherit;
 }
 
+.vocal-timing-input input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.vocal-timing-input input[type='number']::-webkit-inner-spin-button,
+.vocal-timing-input input[type='number']::-webkit-outer-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
 .vocal-timing-input > span {
   padding-right: 8px;
   color: var(--muted);
