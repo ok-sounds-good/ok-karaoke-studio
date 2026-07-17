@@ -110,7 +110,7 @@ describe('offset-aware renderer state', () => {
 
     expect(markup).toMatch(/karaoke-stage__time"[^>]*>00:01\.500/u)
     expect(markup).toContain('--word-progress:0%')
-    expect(markup).toContain('Linked-image Preview and MP4 export are deferred; using the authored gradient fallback.')
+    expect(markup).toContain('Linked background is missing; using the gradient fallback.')
   })
 
   it('keeps per-word progress without rendering a whole-line progress meter', () => {

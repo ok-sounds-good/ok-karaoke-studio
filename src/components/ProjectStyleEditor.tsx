@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import type { InstalledFontState } from '../hooks/useInstalledFonts'
+import type { BackgroundImagePreviewSource } from '../hooks/useProjectBackgroundImage'
 import type {
   ProjectStyleDraft,
   ProjectStyleSession,
@@ -33,6 +34,7 @@ export interface ProjectStyleEditorProps {
   draft: ProjectStyleDraft
   leadVocalAvailable: boolean
   fonts: InstalledFontState
+  backgroundPreview?: BackgroundImagePreviewSource
   onDraftChange: ProjectStyleSession['change']
   onRetryFonts: () => void
   onTogglePlayback: () => void
@@ -91,6 +93,7 @@ export function ProjectStyleEditor({
   draft,
   leadVocalAvailable,
   fonts,
+  backgroundPreview,
   onDraftChange,
   onRetryFonts,
   onTogglePlayback,
@@ -326,8 +329,8 @@ export function ProjectStyleEditor({
               </section>
             )}
             <p className="style-field-help">
-              Image backgrounds and their linked paths stay preserved, but Image authoring and
-              readiness are not available in this Style destination yet.
+              Existing linked images can be checked in Preview. Image authoring remains unavailable
+              in this Style destination.
             </p>
           </section>
 
@@ -369,6 +372,7 @@ export function ProjectStyleEditor({
         playbackMs={playbackMs}
         lyricMs={playbackMs - project.offsetMs}
         selectedWordIds={new Set()}
+        backgroundImage={backgroundPreview}
         designMode={
           destination === 'title-card'
             ? { target: 'title-card', role: titleCardPreviewRole, stageStyle }
