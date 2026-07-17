@@ -123,6 +123,26 @@ describe('project background image Preview capability', () => {
     expect(latest.preview.onRetryResolution).toBeUndefined()
   })
 
+  it.each([
+    ['POSIX', '/media/assets/../background.png', '/media/background.png'],
+    ['Windows', 'C:/media/background.png', 'C:\\media\\background.png'],
+  ])(
+    'accepts a trusted %s restore after main native-normalizes its linked path',
+    async (_platform, serializedPath, nativePath) => {
+      const resolveProjectBackground = vi.fn(async () =>
+        restored(nativePath, 'studio-media://asset/normalized', 'normalized-1'),
+      )
+      installStudio({ resolveProjectBackground })
+
+      await render(probeProps(serializedPath, 5, '/projects/normalized.oks'))
+
+      expect(resolveProjectBackground).toHaveBeenCalledExactlyOnceWith('/projects/normalized.oks')
+      expect(latest.ready).toBe(true)
+      expectPreview('available', 'studio-media://asset/normalized')
+      expect(latest.preview.onRetryResolution).toBeUndefined()
+    },
+  )
+
   it('keeps an exact missing link retryable without accepting another history path', async () => {
     const missingState = { activeUrl: null, revision: 'missing-1' }
     const resolveProjectBackground = vi
