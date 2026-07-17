@@ -44,11 +44,11 @@ function applyDraftChange(change: ProjectStyleDraftChange | undefined, current: 
   return change(current)
 }
 
-function replaceInput(input: HTMLInputElement, value: string) {
+function replaceInput(input: HTMLInputElement, value: string, publish = true) {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
   if (!setter) throw new Error('Input value setter is unavailable')
   setter.call(input, value)
-  input.dispatchEvent(new InputEvent('input', { bubbles: true, data: value }))
+  if (publish) input.dispatchEvent(new InputEvent('input', { bubbles: true, data: value }))
 }
 
 function keyDown(target: Element, init: KeyboardEventInit) {
@@ -247,13 +247,22 @@ describe('ProjectStyleEditor', () => {
     expect(panel.textContent).toContain('Preview Time')
     expect(panel.textContent).toContain('Sync Aid')
     expect(panel.textContent).toContain('literal first line after a blank row')
+    expect(panel.textContent).toContain('Arrow Up or Arrow Down adjusts by 100 ms')
     const timingInputs = [
       panel.querySelector<HTMLInputElement>('[aria-label="Lead Vocal Preview Time"]')!,
       panel.querySelector<HTMLInputElement>('[aria-label="Lead Vocal Sync Aid Minimum lead"]')!,
       panel.querySelector<HTMLInputElement>('[aria-label="Lead Vocal Sync Aid Maximum lead"]')!,
     ]
     expect(timingInputs.map(({ value }) => value)).toEqual(['7000', '2500', '6000'])
-    expect(timingInputs.every(({ type, step }) => type === 'number' && step === '100')).toBe(true)
+    expect(
+      timingInputs.map(({ dataset, max, min, step, type }) => [
+        type,
+        step,
+        dataset.stepMs,
+        min,
+        max,
+      ]),
+    ).toEqual(Array(3).fill(['number', 'any', '100', '0', '60000']))
     const designPreview = container.querySelector<HTMLElement>(
       '[aria-label="Lead Vocal design preview"]',
     )!
@@ -405,6 +414,11 @@ describe('ProjectStyleEditor', () => {
     expect(
       describedBy.some((id) => document.getElementById(id)?.getAttribute('role') === 'alert'),
     ).toBe(true)
+    onDraftChange.mockClear()
+    const invalidStep = keyDown(retained, { code: 'ArrowUp', key: 'ArrowUp' })
+    expect(invalidStep.defaultPrevented).toBe(true)
+    expect(onDraftChange).not.toHaveBeenCalled()
+    expect(retained.value).toBe('1000.5')
     expect(container.querySelector('[aria-label="Lead Vocal design preview"] .sync-aid')).toBeNull()
     const apply = findButton(container, 'Apply & close')
     expect(apply.disabled).toBe(true)
@@ -422,7 +436,32 @@ describe('ProjectStyleEditor', () => {
         .querySelector<HTMLInputElement>('[aria-label="Lead Vocal Preview Time"]')!
         .getAttribute('aria-invalid'),
     ).toBe('false')
+    const accepted = container.querySelector<HTMLInputElement>(
+      '[aria-label="Lead Vocal Preview Time"]',
+    )!
+    expect(accepted.validity.stepMismatch).toBe(false)
+    expect(accepted.checkValidity()).toBe(true)
     expect(findButton(container, 'Apply & close').disabled).toBe(false)
+
+    replaceInput(accepted, '60000', false)
+    onDraftChange.mockClear()
+    expect(keyDown(accepted, { code: 'ArrowUp', key: 'ArrowUp' }).defaultPrevented).toBe(true)
+    expect(onDraftChange).not.toHaveBeenCalled()
+    expect(accepted.value).toBe('60000')
+    replaceInput(accepted, '4501', false)
+    const arrowUp = keyDown(accepted, { code: 'ArrowUp', key: 'ArrowUp' })
+    expect(arrowUp.defaultPrevented).toBe(true)
+    draft = applyDraftChange(onDraftChange.mock.calls.at(-1)?.[0], draft)
+    expect([draft.vocalTiming.previewMs, draft.vocalStyle.previewMs]).toEqual(['4601', 4_601])
+    await renderEditor({ project, draft, onDraftChange })
+    const stepped = container.querySelector<HTMLInputElement>(
+      '[aria-label="Lead Vocal Preview Time"]',
+    )!
+    onDraftChange.mockClear()
+    const arrowDown = keyDown(stepped, { code: 'ArrowDown', key: 'ArrowDown' })
+    expect(arrowDown.defaultPrevented).toBe(true)
+    draft = applyDraftChange(onDraftChange.mock.calls.at(-1)?.[0], draft)
+    expect([draft.vocalTiming.previewMs, draft.vocalStyle.previewMs]).toEqual(['4501', 4_501])
   })
 
   it('makes Lead Vocal unavailable when the project has no track', async () => {

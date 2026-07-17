@@ -1,4 +1,4 @@
-import { useId } from 'react'
+import { useId, type KeyboardEvent } from 'react'
 import type { InstalledFontState } from '../hooks/useInstalledFonts'
 import type { ProjectStyleDraft, ProjectStyleSession } from '../hooks/useProjectStyleSession'
 import {
@@ -29,6 +29,29 @@ interface LeadVocalStylePanelProps {
   labelledBy: string
   onDraftChange: ProjectStyleSession['change']
   onRetryFonts: () => void
+}
+
+const TIMING_MIN_MS = 0
+const TIMING_MAX_MS = 60_000
+const TIMING_STEP_MS = 100
+
+function handleTimingStep(
+  event: KeyboardEvent<HTMLInputElement>,
+  field: VocalStyleTimingField,
+  onChange: (field: VocalStyleTimingField, value: string) => void,
+) {
+  const direction = event.key === 'ArrowUp' ? 1 : event.key === 'ArrowDown' ? -1 : null
+  if (direction === null) return
+  event.preventDefault()
+  const current = event.currentTarget.valueAsNumber
+  const next = current + direction * TIMING_STEP_MS
+  if (
+    [current, next].some(
+      (value) => !Number.isSafeInteger(value) || value < TIMING_MIN_MS || value > TIMING_MAX_MS,
+    )
+  )
+    return
+  onChange(field, String(next))
 }
 
 function OverrideToggle({
@@ -121,10 +144,14 @@ function TimingField({
           aria-describedby={`${describedBy}${error ? ` ${errorId}` : ''}`}
           aria-invalid={Boolean(error)}
           aria-label={inputLabel}
-          step={100}
+          data-step-ms={TIMING_STEP_MS}
+          max={TIMING_MAX_MS}
+          min={TIMING_MIN_MS}
+          step="any"
           type="number"
           value={value}
           onChange={(event) => onChange(field, event.currentTarget.value)}
+          onKeyDown={(event) => handleTimingStep(event, field, onChange)}
         />
         <span aria-hidden="true">ms</span>
       </span>
@@ -312,7 +339,8 @@ export function LeadVocalStylePanel({
             />
             <p className="style-field-help" id={timingHelpId}>
               Preview Time controls when a line becomes eligible before its first sung word, subject
-              to the current line count and Clear or Scroll advance behavior.
+              to the current line count and Clear or Scroll advance behavior. Enter any whole value
+              from 0 to 60000 ms; Arrow Up or Arrow Down adjusts by 100 ms.
             </p>
           </section>
 
@@ -351,7 +379,8 @@ export function LeadVocalStylePanel({
               Sync Aid cues only the literal first line after a blank row, including the first
               project section, when its literal first word has valid start and end timing. The cue
               is skipped when the minimum useful lead is unavailable, ends at that first word, and
-              never transfers to another word or line.
+              never transfers to another word or line. Enter any whole value from 0 to 60000 ms;
+              Arrow Up or Arrow Down adjusts by 100 ms.
             </p>
           </fieldset>
         </div>

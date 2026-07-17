@@ -802,6 +802,18 @@ describe('production-window visual smoke', () => {
     expect(writeFailure).toHaveBeenCalledOnce()
   })
 
+  it('requires native-valid arbitrary timing values with an explicit 100 ms Arrow contract', () => {
+    const readiness = smoke.projectLyricsReadinessScript(
+      { height: 720, width: 1280 },
+      { kind: 'lead-vocal' },
+    )
+    expect(readiness).toContain("input.step !== 'any'")
+    expect(readiness).toContain("input.dataset.stepMs !== '100'")
+    expect(readiness).toContain("input.min !== '0' || input.max !== '60000'")
+    expect(readiness).toContain('input.validity.stepMismatch || !input.checkValidity()')
+    expect(readiness).toContain('Arrow Up or Arrow Down')
+  })
+
   it('publishes no authoritative evidence for duplicate same-size Style captures', async () => {
     const window = fakeStyleSessionWindow({}, (width, height) => validPng(width, height))
     const publish = vi.fn()

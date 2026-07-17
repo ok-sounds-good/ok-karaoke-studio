@@ -516,9 +516,12 @@ function projectLyricsReadinessScript(viewport, contract = { kind: 'project-lyri
           panel.querySelectorAll('input[aria-label^="Override Lead Vocal"]').length !== 5 ||
           panel.querySelectorAll('input[type="color"]').length !== 2 ||
           !(enabled instanceof HTMLInputElement) || !enabled.checked || timing.length !== 3 ||
-          timing.some((input) => !(input instanceof HTMLInputElement) || input.step !== '100' || !input.value) ||
+          timing.some((input) => !(input instanceof HTMLInputElement) || input.step !== 'any' ||
+            input.dataset.stepMs !== '100' || input.min !== '0' || input.max !== '60000' ||
+            input.validity.stepMismatch || !input.checkValidity() || !input.value) ||
           !text.includes('Sung') || !text.includes('Unsung') || !text.includes('Preview Time') ||
           !text.includes('Sync Aid') || !text.includes('Minimum lead') || !text.includes('Maximum lead') ||
+          !text.includes('Arrow Up or Arrow Down adjusts by 100 ms') ||
           !(cue instanceof HTMLElement) || cue.style.getPropertyValue('--sync-progress') !== '0.5' ||
           stage.querySelectorAll('.stage-line').length !== 2 ||
           !/^stage-line stage-line--(?:left|center|right)$/u.test(line.className) ||
