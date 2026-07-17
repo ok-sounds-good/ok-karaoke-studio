@@ -1096,6 +1096,23 @@ function validProjectLyricsState(value, viewport) {
   )
 }
 
+function validLeadVocalState(value, viewport) {
+  return Boolean(
+    value &&
+    typeof value === 'object' &&
+    JSON.stringify(Object.keys(value).sort()) ===
+      JSON.stringify(['height', 'resourcesReady', 'stageHeight', 'stageWidth', 'width']) &&
+    value.height === viewport.height &&
+    value.width === viewport.width &&
+    value.resourcesReady === true &&
+    Number.isFinite(value.stageHeight) &&
+    value.stageHeight > 0 &&
+    Number.isFinite(value.stageWidth) &&
+    value.stageWidth > 0 &&
+    Math.abs(value.stageWidth / value.stageHeight - 16 / 9) <= 0.01,
+  )
+}
+
 function validStageFrameState(value, viewport, contract) {
   return Boolean(
     value &&
@@ -1392,7 +1409,7 @@ async function captureStyleSession(window, app, options) {
       ),
     options.readinessTimeoutMs,
   )
-  if (!leadVocalState || leadVocalState.resourcesReady !== true)
+  if (!validLeadVocalState(leadVocalState, viewport))
     throw smokeError('VISUAL_SMOKE_READINESS_INVALID')
   pngs.push(await capture(viewport))
   return options.createScenarioArtifacts(STYLE_SESSION_SCENARIO, pngs).artifacts

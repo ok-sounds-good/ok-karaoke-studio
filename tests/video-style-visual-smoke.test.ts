@@ -201,7 +201,12 @@ function styleKeyboardState() {
 }
 
 function fakeStyleSessionWindow(
-  options: { displayScale?: number; readiness?: Promise<never>; target?: unknown } = {},
+  options: {
+    displayScale?: number
+    leadState?: unknown
+    readiness?: Promise<never>
+    target?: unknown
+  } = {},
   capturePng = validPng,
 ) {
   const window = fakeWindow()
@@ -295,7 +300,15 @@ function fakeStyleSessionWindow(
       .mockResolvedValueOnce(stageFrameState('footer', { applied: true, changedClock: true }))
       .mockResolvedValueOnce(styleActionTarget('reopen'))
       .mockResolvedValueOnce(styleActionTarget('lead'))
-      .mockResolvedValueOnce({ height: 720, resourcesReady: true, width: 1280 })
+      .mockResolvedValueOnce(
+        options.leadState ?? {
+          height: 720,
+          resourcesReady: true,
+          stageHeight: 540,
+          stageWidth: 960,
+          width: 1280,
+        },
+      )
   }
   return window
 }
@@ -757,6 +770,32 @@ describe('production-window visual smoke', () => {
     expect(publish).not.toHaveBeenCalled()
     expect(writeFailure).toHaveBeenCalledOnce()
     expect(window.destroy).toHaveBeenCalledOnce()
+  })
+
+  it('rejects an incomplete Lead Vocal readiness result before its capture', async () => {
+    const window = fakeStyleSessionWindow({
+      leadState: { height: 720, resourcesReady: true, width: 1280 },
+    })
+    const publish = vi.fn()
+    const writeFailure = vi.fn(async () => undefined)
+    await expect(
+      smoke.runVisualSmoke(
+        {
+          app: {},
+          config: { output: '/safe/evidence', scenario: smoke.STYLE_SESSION_SCENARIO },
+          window,
+        },
+        {
+          captureSettle: settleCaptureImmediately,
+          focus: vi.fn(async () => true),
+          publish,
+          writeFailure,
+        },
+      ),
+    ).resolves.toEqual({ ok: false })
+    expect(window.webContents.capturePage).toHaveBeenCalledTimes(28)
+    expect(publish).not.toHaveBeenCalled()
+    expect(writeFailure).toHaveBeenCalledOnce()
   })
 
   it('publishes no authoritative evidence for duplicate same-size Style captures', async () => {
