@@ -205,6 +205,16 @@ async function chooseColor(label: string, value: string) {
   })
 }
 
+async function enterInput(label: string, value: string) {
+  const input = document.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+  if (!input || !setter) throw new Error(`Input was not mounted: ${label}`)
+  await act(async () => {
+    setter.call(input, value)
+    input.dispatchEvent(new InputEvent('input', { bubbles: true, data: value }))
+  })
+}
+
 function dispatchPointer(
   target: EventTarget,
   type: string,
@@ -635,6 +645,92 @@ describe('project Style App integration', () => {
     await click(buttonByText('Apply changes'))
     expect(document.body.textContent).toContain('Export karaoke')
     expect(document.querySelector('.style-workspace')).toBeNull()
+  })
+
+  it('blocks both invalid timing Apply paths, then applies, undoes, redoes, saves, and reopens once', async () => {
+    await click(buttonByText('Style'))
+    await click(buttonByText('Lead Vocal'))
+    await act(async () =>
+      document
+        .querySelector<HTMLInputElement>('[aria-label="Enable Lead Vocal Sync Aid"]')!
+        .click(),
+    )
+    await enterInput('Lead Vocal Preview Time', '')
+    await enterInput('Lead Vocal Sync Aid Minimum lead', '2001')
+    await enterInput('Lead Vocal Sync Aid Maximum lead', '4001')
+    await click(buttonByText('Background'))
+    await click(buttonByText('Lead Vocal'))
+
+    const directApply = buttonByText('Apply & close')
+    expect(directApply.disabled).toBe(true)
+    expect(document.body.textContent).toContain('Fix the Lead Vocal Preview Time')
+    await click(directApply)
+    expect(document.querySelector('.style-workspace')).not.toBeNull()
+    expect(buttonByLabel('Undo').disabled).toBe(true)
+
+    await click(buttonByLabel('Save project'))
+    const guardedApply = buttonByText('Apply changes')
+    expect(guardedApply.disabled).toBe(true)
+    expect(document.body.textContent).toContain('Fix the Lead Vocal Preview Time')
+    await click(guardedApply)
+    expect(harness.saveProject).not.toHaveBeenCalled()
+    expect(buttonByLabel('Undo').disabled).toBe(true)
+    await click(buttonByText('Keep editing'))
+    expect(
+      document.querySelector<HTMLInputElement>('[aria-label="Lead Vocal Preview Time"]')?.value,
+    ).toBe('')
+
+    await enterInput('Lead Vocal Preview Time', '5001')
+    expect(buttonByText('Apply & close').disabled).toBe(false)
+    await click(buttonByLabel('Save project'))
+    expect(buttonByText('Apply changes').disabled).toBe(false)
+    await click(buttonByText('Apply changes'))
+    expect(document.querySelector('.style-workspace')).toBeNull()
+    expect(harness.saveProject).toHaveBeenCalledOnce()
+    expect(buttonByLabel('Undo').disabled).toBe(false)
+
+    const acceptedContents = harness.saveProject.mock.calls[0]![0].contents
+    const accepted = parseProject(acceptedContents).tracks[0]!.vocalStyle
+    expect(accepted).toMatchObject({
+      previewMs: 5_001,
+      syncAid: { enabled: true, minLeadMs: 2_001, maxLeadMs: 4_001 },
+    })
+
+    await click(buttonByLabel('Undo'))
+    await click(buttonByLabel('Save project'))
+    expect(
+      parseProject(harness.saveProject.mock.calls.at(-1)![0].contents).tracks[0]!.vocalStyle,
+    ).toMatchObject({
+      previewMs: 3_000,
+      syncAid: { enabled: false, minLeadMs: 2_000, maxLeadMs: 3_000 },
+    })
+    await click(buttonByLabel('Redo'))
+    await click(buttonByLabel('Save project'))
+    expect(
+      parseProject(harness.saveProject.mock.calls.at(-1)![0].contents).tracks[0]!.vocalStyle,
+    ).toEqual(accepted)
+
+    harness.openProject.mockResolvedValueOnce({
+      requestId: 'reopen-lead-vocal-timing',
+      path: '/projects/reopened-lead-vocal-timing.oks',
+      contents: acceptedContents,
+    })
+    await click(buttonByLabel('Open project'))
+    await click(buttonByText('Style'))
+    await click(buttonByText('Lead Vocal'))
+    expect(
+      document.querySelector<HTMLInputElement>('[aria-label="Enable Lead Vocal Sync Aid"]')
+        ?.checked,
+    ).toBe(true)
+    expect(
+      [
+        'Lead Vocal Preview Time',
+        'Lead Vocal Sync Aid Minimum lead',
+        'Lead Vocal Sync Aid Maximum lead',
+      ].map(
+        (label) => document.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)?.value,
+      ),
+    ).toEqual(['5001', '2001', '4001'])
   })
 
   it('refuses Style entry while lyrics or Export already owns a dialog', async () => {

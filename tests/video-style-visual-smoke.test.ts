@@ -300,8 +300,11 @@ function fakeStyleSessionWindow(
       .mockResolvedValueOnce(stageFrameState('footer', { applied: true, changedClock: true }))
       .mockResolvedValueOnce(styleActionTarget('reopen'))
       .mockResolvedValueOnce(styleActionTarget('lead'))
+      .mockResolvedValueOnce(styleActionTarget('sync-aid'))
       .mockResolvedValueOnce(
         options.leadState ?? {
+          controls: 4,
+          cueProgress: 0.5,
           height: 720,
           resourcesReady: true,
           stageHeight: 540,
@@ -502,8 +505,8 @@ describe('production-window visual smoke', () => {
       ),
     ).resolves.toEqual({ ok: true })
     const inputEvents = window.webContents.sendInputEvent.mock.calls.map(([event]) => event)
-    expect(inputEvents).toHaveLength(124)
-    expect(inputEvents.filter(({ type }) => type === 'mouseDown')).toHaveLength(23)
+    expect(inputEvents).toHaveLength(127)
+    expect(inputEvents.filter(({ type }) => type === 'mouseDown')).toHaveLength(24)
     const expectedKeys = [
       'Tab',
       'Tab',
@@ -579,6 +582,7 @@ describe('production-window visual smoke', () => {
       'apply-stage',
       'reopen',
       'lead',
+      'sync-aid',
     ])
     expect(window.setContentSize.mock.calls).toContainEqual([1280, 720, false])
     expect(window.setContentSize.mock.calls).toContainEqual([1440, 900, false])
@@ -630,7 +634,7 @@ describe('production-window visual smoke', () => {
       ),
     ).resolves.toEqual({ ok: true })
 
-    expect(window.webContents.sendInputEvent).toHaveBeenCalledTimes(124)
+    expect(window.webContents.sendInputEvent).toHaveBeenCalledTimes(127)
     expect(window.webContents.sendInputEvent.mock.calls[0][0]).toEqual({
       type: 'mouseMove',
       x: 61,

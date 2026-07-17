@@ -10,6 +10,8 @@ interface ProjectActionDecisionDialogProps {
   phase: ProjectActionPhase
   error: string | null
   hasDraft: boolean
+  canApplyDraft: boolean
+  applyBlockedReason: string | null
   onApply: () => void
   onDiscard: () => void
   onKeep: () => void
@@ -48,6 +50,8 @@ export function ProjectActionDecisionDialog({
   phase,
   error,
   hasDraft,
+  canApplyDraft,
+  applyBlockedReason,
   onApply,
   onDiscard,
   onKeep,
@@ -70,7 +74,7 @@ export function ProjectActionDecisionDialog({
           <Button variant="secondary" disabled={!canDecide} onClick={onDiscard}>
             Discard changes
           </Button>
-          <Button variant="primary" disabled={!canDecide} onClick={onApply}>
+          <Button variant="primary" disabled={!canDecide || !canApplyDraft} onClick={onApply}>
             Apply changes
           </Button>
         </>
@@ -79,6 +83,7 @@ export function ProjectActionDecisionDialog({
       <div className="project-action-decision">
         <p>Resolve the open project Style edit before you {actionDescription(request)}.</p>
         {progress && <p role="status">{progress}</p>}
+        {canDecide && applyBlockedReason && <p role="alert">{applyBlockedReason}</p>}
         {error && <p role="alert">{error}</p>}
       </div>
     </Modal>

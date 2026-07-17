@@ -110,6 +110,12 @@ bun run test:video
    Live and Design Preview after their immutable snapshot loads, with a gradient
    fallback and retry for failures; Choose, Replace, Clear, and Image MP4 export
    remain unavailable. Changes appear in the fixed 16:9 Design preview. Choose
+   Lead Vocal to set its **Preview Time** in milliseconds and configure the section-start
+   **Sync Aid** with **Enabled**, **Minimum lead**, and **Maximum lead** controls. Preview Time
+   governs line eligibility before the first sung word subject to Lines and Clear or Scroll; the
+   cue is limited to the literal first line after a blank row (including the first section) when
+   that line's literal first word has valid start and end timing. It is skipped when its minimum
+   useful lead is unavailable and never transfers to another word or line. Choose
    **Apply & close** to create one undoable project edit, or **Cancel** to leave the
    project unchanged. The active track's Inspector **Sung** color remains a quick
    action for that one override.

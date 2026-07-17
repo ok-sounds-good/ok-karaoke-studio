@@ -114,6 +114,11 @@ function blankVideoLine() {
 }
 
 describe('karaoke video frame planning', () => {
+  it('keeps the 50 ms synchronization clock path unchanged', () => {
+    const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
+    expect(app).toContain('refreshIntervalMs: syncMode ? 50 : 16')
+  })
+
   it('refuses cancellation once an existing destination enters atomic promotion', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'okay-video-promotion-'))
     const partialPath = join(directory, 'song.partial.mp4')

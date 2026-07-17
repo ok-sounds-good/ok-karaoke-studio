@@ -13,6 +13,11 @@ import {
   type VocalAlignment,
   type VocalStyle,
 } from '../lib/video-style'
+import {
+  validateVocalStyleTiming,
+  vocalStyleWithTiming,
+  type VocalStyleTimingField,
+} from '../lib/vocal-style-timing'
 import { TypefaceCombobox } from './TypefaceCombobox'
 
 interface LeadVocalStylePanelProps {
@@ -90,6 +95,48 @@ function VocalColorField({
   )
 }
 
+function TimingField({
+  describedBy,
+  error,
+  field,
+  inputLabel,
+  label,
+  onChange,
+  value,
+}: {
+  describedBy: string
+  error: string | null
+  field: VocalStyleTimingField
+  inputLabel: string
+  label: string
+  onChange: (field: VocalStyleTimingField, value: string) => void
+  value: string
+}) {
+  const errorId = `${describedBy}-${field}-error`
+  return (
+    <label className="vocal-timing-field">
+      <span>{label}</span>
+      <span className="vocal-timing-input">
+        <input
+          aria-describedby={`${describedBy}${error ? ` ${errorId}` : ''}`}
+          aria-invalid={Boolean(error)}
+          aria-label={inputLabel}
+          step={100}
+          type="number"
+          value={value}
+          onChange={(event) => onChange(field, event.currentTarget.value)}
+        />
+        <span aria-hidden="true">ms</span>
+      </span>
+      {error && (
+        <span className="vocal-timing-error" id={errorId} role="alert">
+          {error}
+        </span>
+      )}
+    </label>
+  )
+}
+
 export function LeadVocalStylePanel({
   active,
   available,
@@ -103,6 +150,8 @@ export function LeadVocalStylePanel({
   const alignmentName = useId()
   const stageLyrics = draft.stageStyle.lyrics
   const vocal = draft.vocalStyle
+  const timingValidation = validateVocalStyleTiming(draft.vocalTiming)
+  const timingHelpId = `${id}-timing-help`
   const resolved = resolveVocalStyle(stageLyrics, vocal)
   const effectiveFace = resolveFontFace(resolved.typeface, vocal.fontStyle ?? resolved.fontStyle)
   const update = (patch: Partial<VocalStyle>) =>
@@ -112,6 +161,23 @@ export function LeadVocalStylePanel({
     }))
   const chooseTypeface = (typeface: FontTypefaceDescriptor) =>
     update({ typeface: cloneTypeface(typeface) })
+  const updateTiming = (field: VocalStyleTimingField, value: string) =>
+    onDraftChange((current) => {
+      const vocalTiming = { ...current.vocalTiming, [field]: value }
+      return {
+        ...current,
+        vocalStyle: vocalStyleWithTiming(current.vocalStyle, vocalTiming) ?? current.vocalStyle,
+        vocalTiming,
+      }
+    })
+  const updateSyncAidEnabled = (enabled: boolean) =>
+    onDraftChange((current) => ({
+      ...current,
+      vocalStyle: {
+        ...current.vocalStyle,
+        syncAid: { ...current.vocalStyle.syncAid, enabled },
+      },
+    }))
 
   return (
     <section id={id} role="tabpanel" aria-labelledby={labelledBy} hidden={!active}>
@@ -231,6 +297,62 @@ export function LeadVocalStylePanel({
                 </label>
               ))}
             </div>
+          </fieldset>
+
+          <section className="vocal-timing-controls" aria-labelledby={`${id}-preview-time-title`}>
+            <h3 id={`${id}-preview-time-title`}>Preview Time</h3>
+            <TimingField
+              describedBy={timingHelpId}
+              error={timingValidation.errors.previewMs}
+              field="previewMs"
+              inputLabel="Lead Vocal Preview Time"
+              label="Preview Time"
+              onChange={updateTiming}
+              value={draft.vocalTiming.previewMs}
+            />
+            <p className="style-field-help" id={timingHelpId}>
+              Preview Time controls when a line becomes eligible before its first sung word, subject
+              to the current line count and Clear or Scroll advance behavior.
+            </p>
+          </section>
+
+          <fieldset className="vocal-sync-aid-controls">
+            <legend>Sync Aid</legend>
+            <label className="vocal-sync-aid-enabled">
+              <input
+                aria-label="Enable Lead Vocal Sync Aid"
+                checked={vocal.syncAid.enabled}
+                type="checkbox"
+                onChange={(event) => updateSyncAidEnabled(event.currentTarget.checked)}
+              />
+              Enabled
+            </label>
+            <div className="vocal-sync-aid-values">
+              <TimingField
+                describedBy={`${id}-sync-aid-help`}
+                error={timingValidation.errors.minLeadMs}
+                field="minLeadMs"
+                inputLabel="Lead Vocal Sync Aid Minimum lead"
+                label="Minimum lead"
+                onChange={updateTiming}
+                value={draft.vocalTiming.minLeadMs}
+              />
+              <TimingField
+                describedBy={`${id}-sync-aid-help`}
+                error={timingValidation.errors.maxLeadMs}
+                field="maxLeadMs"
+                inputLabel="Lead Vocal Sync Aid Maximum lead"
+                label="Maximum lead"
+                onChange={updateTiming}
+                value={draft.vocalTiming.maxLeadMs}
+              />
+            </div>
+            <p className="style-field-help" id={`${id}-sync-aid-help`}>
+              Sync Aid cues only the literal first line after a blank row, including the first
+              project section, when its literal first word has valid start and end timing. The cue
+              is skipped when the minimum useful lead is unavailable, ends at that first word, and
+              never transfers to another word or line.
+            </p>
           </fieldset>
         </div>
       )}

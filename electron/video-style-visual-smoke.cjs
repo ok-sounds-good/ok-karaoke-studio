@@ -503,6 +503,9 @@ function projectLyricsReadinessScript(viewport, contract = { kind: 'project-lyri
         const preview = document.querySelector('[aria-label="Lead Vocal design preview"]')
         const stage = preview?.querySelector('[data-logical-stage="1920x1080"]')
         const line = stage?.querySelector('[data-design-preview="lead-vocal"] .stage-line')
+        const cue = stage?.querySelector('.sync-aid')
+        const enabled = panel?.querySelector('[aria-label="Enable Lead Vocal Sync Aid"]')
+        const timing = [...(panel?.querySelectorAll('.vocal-timing-field input[type="number"]') ?? [])]
         const bounds = stage?.getBoundingClientRect()
         const text = panel?.textContent ?? ''
         if (!(workspace instanceof HTMLElement) || !(panel instanceof HTMLElement) || panel.hidden ||
@@ -512,9 +515,12 @@ function projectLyricsReadinessScript(viewport, contract = { kind: 'project-lyri
           Math.abs(bounds.width / bounds.height - 16 / 9) > .01 ||
           panel.querySelectorAll('input[aria-label^="Override Lead Vocal"]').length !== 5 ||
           panel.querySelectorAll('input[type="color"]').length !== 2 ||
-          !text.includes('Sung') || !text.includes('Unsung') ||
-          text.includes('Preview time') || text.includes('Sync aid') ||
-          stage.querySelector('.sync-aid') || stage.querySelectorAll('.stage-line').length !== 1 ||
+          !(enabled instanceof HTMLInputElement) || !enabled.checked || timing.length !== 3 ||
+          timing.some((input) => !(input instanceof HTMLInputElement) || input.step !== '100' || !input.value) ||
+          !text.includes('Sung') || !text.includes('Unsung') || !text.includes('Preview Time') ||
+          !text.includes('Sync Aid') || !text.includes('Minimum lead') || !text.includes('Maximum lead') ||
+          !(cue instanceof HTMLElement) || cue.style.getPropertyValue('--sync-progress') !== '0.5' ||
+          stage.querySelectorAll('.stage-line').length !== 2 ||
           !/^stage-line stage-line--(?:left|center|right)$/u.test(line.className) ||
           !line.getAttribute('data-stage-font-size') || document.readyState !== 'complete' ||
           fontSet?.status !== 'loaded' || document.documentElement.clientWidth !== expected.width ||
@@ -522,8 +528,9 @@ function projectLyricsReadinessScript(viewport, contract = { kind: 'project-lyri
           document.documentElement.scrollWidth > expected.width || document.body.scrollWidth > expected.width ||
           window.location.href !== '${PACKAGED_APP_URL}' || document.querySelector('.stage-resource-warning') ||
           !fiveDestinationsFit()) return null
-        return { height: expected.height, resourcesReady: true, stageHeight: bounds.height,
-          stageWidth: bounds.width, width: expected.width }
+        return { controls: timing.length + 1, cueProgress: .5, height: expected.height,
+          resourcesReady: true, stageHeight: bounds.height, stageWidth: bounds.width,
+          width: expected.width }
       }
       const workspace = document.querySelector('.style-workspace[role="dialog"]')
       const typeface = document.querySelector('[role="combobox"][aria-label="Project lyric typeface"]')
@@ -657,17 +664,22 @@ function styleSessionActionScript(action) {
     const footer = document.querySelector('input[type="radio"][value="footer"]')
     const clockFace = document.querySelector('[aria-label="Clock face Bold"]')
     const footerVisibility = document.querySelector('[aria-label="Show Footer in output"]')
+    const syncAid = document.querySelector('[aria-label="Enable Lead Vocal Sync Aid"]')
     const apply = workspace?.querySelector('[data-style-action="apply"]')
     const targets = { background: backgroundTab, lead: leadVocalTab, solid, apply, reopen:
       document.querySelector('button.style-button[aria-label="Edit project Style"]'),
       title: titleTab, 'eyebrow-visibility': eyebrowVisibility, artist,
       'artist-visibility': artistVisibility, 'apply-title': apply, stage: stageTab,
       'stage-off': stageMaster, 'stage-on': stageMaster, clock, 'clock-face': clockFace,
-      footer, 'footer-visibility': footerVisibility, 'apply-stage': apply }
+      footer, 'footer-visibility': footerVisibility, 'apply-stage': apply, 'sync-aid': syncAid }
     const target = targets[action]
+    if (action === 'sync-aid' && target instanceof HTMLElement) {
+      target.scrollIntoView({ block: 'center' })
+    }
     const semantic = ({
       background: projectTab?.getAttribute('aria-selected') === 'true' && backgroundTab?.getAttribute('aria-selected') === 'false',
       lead: projectTab?.getAttribute('aria-selected') === 'true' && leadVocalTab?.getAttribute('aria-selected') === 'false',
+      'sync-aid': leadVocalTab?.getAttribute('aria-selected') === 'true' && !syncAid?.checked,
       solid: backgroundTab?.getAttribute('aria-selected') === 'true' && gradient?.checked && !solid?.checked,
       apply: backgroundTab?.getAttribute('aria-selected') === 'true' && solid?.checked,
       reopen: !workspace,
@@ -1101,7 +1113,17 @@ function validLeadVocalState(value, viewport) {
     value &&
     typeof value === 'object' &&
     JSON.stringify(Object.keys(value).sort()) ===
-      JSON.stringify(['height', 'resourcesReady', 'stageHeight', 'stageWidth', 'width']) &&
+      JSON.stringify([
+        'controls',
+        'cueProgress',
+        'height',
+        'resourcesReady',
+        'stageHeight',
+        'stageWidth',
+        'width',
+      ]) &&
+    value.controls === 4 &&
+    value.cueProgress === 0.5 &&
     value.height === viewport.height &&
     value.width === viewport.width &&
     value.resourcesReady === true &&
@@ -1401,6 +1423,7 @@ async function captureStyleSession(window, app, options) {
   pngs.push(await capture(viewport))
   await activate('reopen')
   await activate('lead')
+  await activate('sync-aid')
   const leadVocalState = await executeBeforeDeadline(
     () =>
       window.webContents.executeJavaScript(
