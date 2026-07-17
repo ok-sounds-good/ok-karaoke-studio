@@ -24,6 +24,7 @@ import { usePlayback } from './hooks/usePlayback'
 import { useInstalledFonts } from './hooks/useInstalledFonts'
 import { useWaveform } from './hooks/useWaveform'
 import { useProjectActionArbiter } from './hooks/useProjectActionArbiter'
+import { useProjectBackgroundImage } from './hooks/useProjectBackgroundImage'
 import {
   sameStageStyle,
   sameVocalStyle,
@@ -329,6 +330,7 @@ export default function App() {
   const syncSessionHasCommitRef = useRef(false)
   const projectRestoreSequenceRef = useRef(0)
   const projectLifecycleSequenceRef = useRef(0)
+  const acceptedProjectBackgroundPathRef = useRef<string | null>(null)
   const projectTransitionRef = useRef(false)
   const projectActionLifetimeRef = useRef<ProjectActionLifetimeOwner | null>(null)
   const projectAuthorityCertainRef = useRef(true)
@@ -387,6 +389,11 @@ export default function App() {
     () => projectForTimingPreview(project, history.revision, timingDraft),
     [history.revision, project, timingDraft],
   )
+  const backgroundImages = useProjectBackgroundImage({
+    acceptedProjectPath: acceptedProjectBackgroundPathRef.current,
+    background: project.stageStyle.background,
+    lifecycle: projectLifecycleSequenceRef.current,
+  })
 
   const updateTimingDraft = useCallback((timings: ProjectTimingDraft | null) => {
     setTimingDraft(timings ? { revision: history.revision, timings } : null)
@@ -399,6 +406,7 @@ export default function App() {
   }, [])
   const canInteractWithProjectStyle = useCallback(
     () =>
+      backgroundImages.ready &&
       !projectTransitionRef.current &&
       !projectActionLifetimeRef.current &&
       !videoExportActiveRef.current &&
@@ -408,7 +416,14 @@ export default function App() {
       !exportDialogOpen &&
       !validationDialogOpen &&
       !workflowGuideOpen,
-    [exportDialogOpen, lyricsDialogOpen, syncMode, validationDialogOpen, workflowGuideOpen],
+    [
+      backgroundImages.ready,
+      exportDialogOpen,
+      lyricsDialogOpen,
+      syncMode,
+      validationDialogOpen,
+      workflowGuideOpen,
+    ],
   )
   const commitProjectStyle = useCallback(
     (ownerKey: ProjectStyleOwnerKey, draft: ProjectStyleDraft): ProjectStyleCommitResult => {
@@ -485,7 +500,6 @@ export default function App() {
     requestFonts: installedFonts.request,
     commitDraft: commitProjectStyle,
   })
-
   useEffect(() => {
     if (!toast) return
     const timer = window.setTimeout(() => setToast(null), 3200)
@@ -702,6 +716,7 @@ export default function App() {
         restoreSequence = projectRestoreSequenceRef.current + 1
         projectRestoreSequenceRef.current = restoreSequence
         projectLifecycleSequenceRef.current += 1
+        acceptedProjectBackgroundPathRef.current = path
         history.reset(next, true)
         setProjectPath(path)
         setActiveTrackId(next.tracks[0]?.id ?? '')
@@ -784,6 +799,7 @@ export default function App() {
 
       projectRestoreSequenceRef.current += 1
       projectLifecycleSequenceRef.current += 1
+      acceptedProjectBackgroundPathRef.current = null
       const next = createProject({ title: 'Untitled Song', artist: 'Unknown Artist' })
       history.reset(next, true)
       setProjectPath(null)
@@ -1561,7 +1577,9 @@ export default function App() {
                     ? 'Close timing review first.'
                     : workflowGuideOpen
                       ? 'Close Workflow first.'
-                      : null
+                      : !backgroundImages.ready
+                        ? 'Wait for the linked background to finish restoring.'
+                        : null
 
   return (
     <div className="app-shell">
@@ -1596,6 +1614,7 @@ export default function App() {
           leadVocalAvailable={Boolean(activeTrack)}
           fonts={installedFonts}
           onDraftChange={styleSession.change}
+          backgroundPreview={backgroundImages.preview}
           onRetryFonts={installedFonts.request}
           onTogglePlayback={playback.toggle}
           onCancel={styleSession.cancel}
@@ -1627,6 +1646,7 @@ export default function App() {
                   playbackMs={playback.currentMs}
                   lyricMs={lyricTimeMs}
                   selectedWordIds={selectedWordIds}
+                  backgroundImage={backgroundImages.preview}
                   onUpdateLyricDisplay={updateLyricDisplay}
                   onEditLyrics={() => setLyricsDialogOpen(true)}
                 />

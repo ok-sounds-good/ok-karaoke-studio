@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { Edit3, MonitorPlay, ShieldCheck } from 'lucide-react'
 import {
   designPreviewFonts,
@@ -16,7 +16,6 @@ import { previewFrameStateAt, type StageFrameLine } from '../lib/stage-frame-sta
 import { SYNC_AID_GEOMETRY, syncAidBrightness, syncAidPosition } from '../lib/sync-aid-geometry'
 import {
   DEFAULT_VOCAL_STYLE,
-  backgroundReadiness,
   resolveFontFace,
   resolveVocalStyle,
   type LyricTextStyle,
@@ -24,6 +23,7 @@ import {
   type TextStyle,
   type VocalStyle,
 } from '../lib/video-style'
+import type { BackgroundImagePreviewSource } from '../hooks/useProjectBackgroundImage'
 import { Button } from './ui'
 
 export type KaraokePreviewDesignMode =
@@ -41,6 +41,7 @@ export type KaraokePreviewDesignMode =
     }
 
 type StageFrameTextRole = 'brand' | 'clock' | 'footer'
+type BackgroundImageLoadStatus = 'idle' | 'loading' | 'ready' | 'error'
 
 interface KaraokePreviewProps {
   project: KaraokeProject
@@ -50,6 +51,7 @@ interface KaraokePreviewProps {
   onUpdateLyricDisplay?: (patch: Partial<LyricDisplaySettings>) => void
   onEditLyrics?: () => void
   designMode?: KaraokePreviewDesignMode
+  backgroundImage?: BackgroundImagePreviewSource
 }
 
 function textStyle(style: TextStyle, aliases: Record<string, string | null>): CSSProperties {
@@ -244,6 +246,7 @@ export function KaraokePreview({
   onUpdateLyricDisplay,
   onEditLyrics,
   designMode,
+  backgroundImage,
 }: KaraokePreviewProps) {
   const designStyle = designMode?.stageStyle ?? null
   const previewProject = useMemo(
@@ -279,17 +282,83 @@ export function KaraokePreview({
   const fontRuntime = usePreviewFonts(selectedFonts)
   const stageStyle = designStyle ?? frame.stageStyle
   const background = stageStyle.background
-  const imageReadiness = backgroundReadiness(
-    background,
-    null,
-    'Linked-image Preview and MP4 export are deferred; using the authored gradient fallback.',
-  )
+  const [localImageReload, setLocalImageReload] = useState(0)
+  const [imageLoad, setImageLoad] = useState<{
+    status: BackgroundImageLoadStatus
+    url: string | null
+  }>({ status: 'idle', url: null })
+  const imageUrl = backgroundImage?.url ?? null
+  const imageResolutionStatus = backgroundImage?.resolutionStatus ?? 'missing'
+
+  useEffect(() => {
+    setLocalImageReload(0)
+  }, [imageUrl])
+
+  useEffect(() => {
+    if (!imageUrl || imageResolutionStatus !== 'available') {
+      setImageLoad((current) =>
+        current.status === 'idle' && current.url === imageUrl
+          ? current
+          : { status: 'idle', url: imageUrl },
+      )
+      return
+    }
+
+    let current = true
+    const publish = (status: Exclude<BackgroundImageLoadStatus, 'idle'>) => {
+      if (!current) return
+      setImageLoad({ status, url: imageUrl })
+    }
+    publish('loading')
+    const image = new Image()
+    image.onload = () => publish('ready')
+    image.onerror = () => publish('error')
+    image.src = imageUrl
+    return () => {
+      current = false
+      image.onload = null
+      image.onerror = null
+    }
+  }, [imageResolutionStatus, imageUrl, localImageReload])
+
+  const imageReady =
+    background.mode === 'image' &&
+    imageResolutionStatus === 'available' &&
+    imageLoad.url === imageUrl &&
+    imageLoad.status === 'ready'
   const backgroundStyle: CSSProperties =
     background.mode === 'solid'
       ? { background: background.solidColor }
-      : {
-          background: `linear-gradient(145deg, ${background.gradientStartColor}, ${background.gradientEndColor})`,
-        }
+      : background.mode === 'gradient'
+        ? {
+            background: `linear-gradient(145deg, ${background.gradientStartColor}, ${background.gradientEndColor})`,
+          }
+        : {
+            backgroundColor: background.gradientEndColor,
+            backgroundImage: imageReady
+              ? `url(${JSON.stringify(imageUrl)})`
+              : `linear-gradient(145deg, ${background.gradientStartColor}, ${background.gradientEndColor})`,
+            backgroundPosition: 'center',
+            backgroundRepeat: 'no-repeat',
+            backgroundSize: 'cover',
+          }
+  const retryImageLoad = () => setLocalImageReload((current) => current + 1)
+  const imageWarning =
+    background.mode !== 'image'
+      ? null
+      : imageResolutionStatus === 'loading'
+        ? 'Loading linked background; using the gradient fallback.'
+        : imageResolutionStatus === 'missing'
+          ? 'Linked background is missing; using the gradient fallback.'
+          : imageResolutionStatus === 'error'
+            ? 'Linked background could not be restored; using the gradient fallback.'
+            : imageLoad.url !== imageUrl ||
+                imageLoad.status === 'loading' ||
+                imageLoad.status === 'idle'
+              ? 'Loading linked background; using the gradient fallback.'
+              : imageLoad.status === 'error'
+                ? 'Linked background could not be displayed; using the gradient fallback.'
+                : null
   const stageFrame = stageStyle.stageFrame
   const stageVars = {
     ...backgroundStyle,
@@ -444,15 +513,22 @@ export function KaraokePreview({
         className={stageClassName}
         data-background-gradient-end-color={background.gradientEndColor}
         data-background-gradient-start-color={background.gradientStartColor}
+        data-background-image-ready={imageReady ? 'true' : 'false'}
         data-background-mode={background.mode}
         data-background-solid-color={background.solidColor}
         data-logical-stage={isDesigning ? '1920x1080' : undefined}
         style={stageVars}
       >
         <div className="karaoke-stage__grain" />
-        {!imageReadiness.ready ? (
+        {imageWarning ? (
           <div className="stage-resource-warning" role="status">
-            {imageReadiness.reason}
+            {imageWarning}{' '}
+            {(imageResolutionStatus === 'missing' || imageResolutionStatus === 'error') &&
+            backgroundImage?.onRetryResolution ? (
+              <button onClick={backgroundImage.onRetryResolution}>Retry</button>
+            ) : imageResolutionStatus === 'available' && imageLoad.status === 'error' ? (
+              <button onClick={retryImageLoad}>Retry</button>
+            ) : null}
           </div>
         ) : fontRuntime.loading ? (
           <div className="stage-resource-warning" role="status">
