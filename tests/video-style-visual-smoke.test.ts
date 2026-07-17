@@ -42,6 +42,8 @@ async function configuredArguments() {
   }
 }
 
+async function settleCaptureImmediately() {}
+
 function fakeWindow(
   capturePage = vi.fn(async () => ({
     getSize: () => ({ height: 720, width: 1280 }),
@@ -134,6 +136,70 @@ function titleCardState(role: 'eyebrow' | 'artist', applied = false) {
   return { applied, resourcesReady: true, role }
 }
 
+function stageFrameState(
+  role: 'brand' | 'clock' | 'footer',
+  options: { applied?: boolean; changedClock?: boolean } = {},
+) {
+  return {
+    applied: options.applied === true,
+    brandStyle: 'color: rgb(193, 187, 199); font-weight: 700;',
+    clockStyle: options.changedClock
+      ? 'color: rgb(187, 183, 192); font-weight: 700;'
+      : 'color: rgb(187, 183, 192); font-weight: 600;',
+    clockWeight: options.changedClock ? '700' : '600',
+    height: 720,
+    lineColor: '#473C54',
+    lineWidth: '0.10416666666666667cqw',
+    resourcesReady: true,
+    role,
+    stageHeight: 480,
+    stageWidth: 853.33,
+    width: 1280,
+  }
+}
+
+function styleKeyboardState() {
+  return {
+    changes: ['footer', 'clock', 'footer', 'brand', 'footer', 'brand'].map((role) => ({
+      active: true,
+      checked: true,
+      checkedCount: 1,
+      role,
+    })),
+    closed: true,
+    clean: true,
+    focus: [
+      'master',
+      'role:brand',
+      'master',
+      'role:brand',
+      'role:footer',
+      'master',
+      'role:footer',
+      'role:clock',
+      'master',
+      'role:clock',
+      'role:footer',
+      'role:brand',
+      'role:footer',
+      'role:brand',
+      'visibility',
+      'typeface',
+      'face:Regular',
+      'face:Italic',
+      'face:Semi Bold',
+      'face:Bold',
+      'face:Extra Bold',
+      'size',
+      'color',
+      'cancel',
+      'apply',
+    ],
+    redoDisabled: true,
+    undoDisabled: true,
+  }
+}
+
 function fakeStyleSessionWindow(
   options: { displayScale?: number; readiness?: Promise<never>; target?: unknown } = {},
   capturePng = validPng,
@@ -149,10 +215,18 @@ function fakeStyleSessionWindow(
     { height: 720, width: 1280 },
     { height: 720, width: 1280 },
     { height: 720, width: 1280 },
+    { height: 720, width: 1280 },
+    { height: 720, width: 1280 },
+    { height: 720, width: 1280 },
+    { height: 720, width: 1280 },
+    { height: 720, width: 1280 },
   ]
+  let candidateIndex = 0
   window.webContents.capturePage.mockImplementation(async () => {
-    const viewport = captures.shift()!
-    const pixelValue = captures.length + 1
+    const captureIndex = Math.floor(candidateIndex / 2)
+    const viewport = captures[captureIndex]
+    const pixelValue = captures.length - captureIndex
+    candidateIndex += 1
     return {
       getSize: () => viewport,
       isEmpty: () => false,
@@ -183,6 +257,11 @@ function fakeStyleSessionWindow(
       .mockResolvedValueOnce(projectLyricsState(1280, 720))
       .mockResolvedValueOnce(projectLyricsState(1440, 900))
       .mockResolvedValueOnce(projectLyricsState(1280, 720))
+      .mockResolvedValueOnce(styleActionTarget('stage'))
+      .mockResolvedValueOnce(stageFrameState('brand'))
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(styleKeyboardState())
+      .mockResolvedValueOnce(styleActionTarget('reopen'))
       .mockResolvedValueOnce(styleActionTarget('background'))
       .mockResolvedValueOnce(backgroundState('gradient'))
       .mockResolvedValueOnce(styleActionTarget('solid'))
@@ -199,6 +278,20 @@ function fakeStyleSessionWindow(
       .mockResolvedValueOnce(titleCardState('artist'))
       .mockResolvedValueOnce(styleActionTarget('apply-title'))
       .mockResolvedValueOnce(titleCardState('artist', true))
+      .mockResolvedValueOnce(styleActionTarget('reopen'))
+      .mockResolvedValueOnce(styleActionTarget('stage'))
+      .mockResolvedValueOnce(stageFrameState('brand'))
+      .mockResolvedValueOnce(styleActionTarget('stage-off'))
+      .mockResolvedValueOnce(stageFrameState('brand'))
+      .mockResolvedValueOnce(styleActionTarget('stage-on'))
+      .mockResolvedValueOnce(styleActionTarget('clock'))
+      .mockResolvedValueOnce(styleActionTarget('clock-face'))
+      .mockResolvedValueOnce(stageFrameState('clock', { changedClock: true }))
+      .mockResolvedValueOnce(styleActionTarget('footer'))
+      .mockResolvedValueOnce(styleActionTarget('footer-visibility'))
+      .mockResolvedValueOnce(stageFrameState('footer', { changedClock: true }))
+      .mockResolvedValueOnce(styleActionTarget('apply-stage'))
+      .mockResolvedValueOnce(stageFrameState('footer', { applied: true, changedClock: true }))
   }
   return window
 }
@@ -260,8 +353,9 @@ describe('production-window visual smoke', () => {
     )
   })
 
-  it('captures, validates, publishes baseline before result, and destroys the window', async () => {
+  it('publishes a baseline after immediate consecutive-frame stability', async () => {
     const window = fakeWindow(undefined, 2)
+    const captureSettle = vi.fn(settleCaptureImmediately)
     const publish = vi.fn(async (_output, artifacts) => {
       expect(window.isDestroyed()).toBe(true)
       expect(artifacts.map(({ name }: { name: string }) => name)).toEqual([
@@ -276,13 +370,81 @@ describe('production-window visual smoke', () => {
           config: { output: '/safe/evidence' },
           window,
         },
-        { focus: vi.fn(async () => true), publish },
+        { captureSettle, focus: vi.fn(async () => true), publish },
       ),
     ).resolves.toEqual({ ok: true })
     expect(window.setContentSize).toHaveBeenCalledWith(1280, 720, false)
     expect(window.setContentSize).toHaveBeenCalledWith(640, 360, false)
     expect(window.webContents.setZoomFactor).toHaveBeenCalledWith(0.5)
     expect(window.setMinimumSize).toHaveBeenCalledWith(1, 1)
+    expect(window.webContents.capturePage).toHaveBeenCalledTimes(2)
+    expect(captureSettle).toHaveBeenCalledOnce()
+    expect(window.destroy).toHaveBeenCalledOnce()
+  })
+
+  it('slides the comparison window until a mismatched frame stabilizes', async () => {
+    const first = validPng(1280, 720, 1)
+    const stable = validPng(1280, 720, 2)
+    const candidates = [first, stable, stable]
+    const capturePage = vi.fn(async () => {
+      const bytes = candidates.shift()!
+      return {
+        getSize: () => ({ height: 720, width: 1280 }),
+        isEmpty: () => false,
+        toPNG: () => bytes,
+      }
+    })
+    const window = fakeWindow(capturePage)
+    const captureSettle = vi.fn(settleCaptureImmediately)
+    const publish = vi.fn(async (_output, artifacts) => {
+      expect(artifacts[0].bytes).toEqual(stable)
+    })
+
+    await expect(
+      smoke.runVisualSmoke(
+        { app: {}, config: { output: '/safe/evidence' }, window },
+        { captureSettle, focus: vi.fn(async () => true), publish },
+      ),
+    ).resolves.toEqual({ ok: true })
+
+    expect(capturePage).toHaveBeenCalledTimes(3)
+    expect(captureSettle).toHaveBeenCalledTimes(2)
+    expect(publish).toHaveBeenCalledOnce()
+    expect(window.destroy).toHaveBeenCalledOnce()
+  })
+
+  it('fails closed when no consecutive frame stabilizes within the candidate cap', async () => {
+    const candidates = Array.from({ length: 5 }, (_, index) => validPng(1280, 720, index + 1))
+    const capturePage = vi.fn(async () => {
+      const bytes = candidates.shift()!
+      return {
+        getSize: () => ({ height: 720, width: 1280 }),
+        isEmpty: () => false,
+        toPNG: () => bytes,
+      }
+    })
+    const window = fakeWindow(capturePage)
+    const captureSettle = vi.fn(settleCaptureImmediately)
+    const publish = vi.fn()
+    const writeFailure = vi.fn(async () => {
+      expect(window.isDestroyed()).toBe(true)
+    })
+
+    await expect(
+      smoke.runVisualSmoke(
+        { app: {}, config: { output: '/safe/evidence' }, window },
+        { captureSettle, focus: vi.fn(async () => true), publish, writeFailure },
+      ),
+    ).resolves.toEqual({ ok: false })
+
+    expect(capturePage).toHaveBeenCalledTimes(5)
+    expect(captureSettle).toHaveBeenCalledTimes(4)
+    expect(publish).not.toHaveBeenCalled()
+    expect(writeFailure).toHaveBeenCalledOnce()
+    expect(writeFailure).toHaveBeenCalledWith('/safe/evidence', {
+      code: 'VISUAL_SMOKE_FAILED',
+      ok: false,
+    })
     expect(window.destroy).toHaveBeenCalledOnce()
   })
 
@@ -300,6 +462,11 @@ describe('production-window visual smoke', () => {
         '07-title-card-eyebrow-draft-1280x720.png',
         '08-title-card-artist-draft-1280x720.png',
         '09-title-card-applied-1280x720.png',
+        '10-stage-frame-destination-1280x720.png',
+        '11-stage-frame-master-off-draft-1280x720.png',
+        '12-stage-frame-clock-draft-1280x720.png',
+        '13-stage-frame-footer-hidden-draft-1280x720.png',
+        '14-stage-frame-applied-1280x720.png',
         'result.json',
       ])
     })
@@ -313,15 +480,89 @@ describe('production-window visual smoke', () => {
           },
           window,
         },
-        { focus: vi.fn(async () => true), publish },
+        { captureSettle: settleCaptureImmediately, focus: vi.fn(async () => true), publish },
       ),
     ).resolves.toEqual({ ok: true })
     const inputEvents = window.webContents.sendInputEvent.mock.calls.map(([event]) => event)
-    expect(inputEvents).toHaveLength(30)
-    expect(inputEvents.filter(({ type }) => type === 'mouseDown')).toHaveLength(10)
+    expect(inputEvents).toHaveLength(118)
+    expect(inputEvents.filter(({ type }) => type === 'mouseDown')).toHaveLength(21)
+    const expectedKeys = [
+      'Tab',
+      'Tab',
+      'Shift+Tab',
+      'Tab',
+      'Left',
+      'Shift+Tab',
+      'Tab',
+      'Up',
+      'Shift+Tab',
+      'Tab',
+      'Right',
+      'Right',
+      'Up',
+      'Down',
+      'Tab',
+      'Tab',
+      'Escape',
+      'Tab',
+      'Tab',
+      'Tab',
+      'Tab',
+      'Tab',
+      'Tab',
+      'Tab',
+      'Tab',
+      'Tab',
+      'Enter',
+    ]
+    expect(
+      inputEvents
+        .filter(({ type }) => ['keyDown', 'char', 'keyUp'].includes(type))
+        .map(
+          ({ keyCode, modifiers, type }) =>
+            `${type}:${modifiers?.includes('shift') ? 'Shift+' : ''}${keyCode}`,
+        ),
+    ).toEqual(
+      expectedKeys.flatMap((key) => [
+        `keyDown:${key}`,
+        ...(key === 'Enter' ? [`char:${key}`] : []),
+        `keyUp:${key}`,
+      ]),
+    )
+    const scripts = window.webContents.executeJavaScript.mock.calls.map(([script]) => script)
+    const recorderScripts = scripts.filter((script) =>
+      script.includes('__oksStyleKeyboardRecorder'),
+    )
+    expect(recorderScripts).toHaveLength(2)
+    expect(recorderScripts[0]).toContain("addEventListener('focusin'")
+    expect(recorderScripts[1]).toContain('delete globalThis[storage]')
+    expect(
+      scripts.flatMap((script) => script.match(/const action = "([^"]+)"/u)?.[1] ?? []),
+    ).toEqual([
+      'stage',
+      'reopen',
+      'background',
+      'solid',
+      'apply',
+      'reopen',
+      'title',
+      'eyebrow-visibility',
+      'artist',
+      'artist-visibility',
+      'apply-title',
+      'reopen',
+      'stage',
+      'stage-off',
+      'stage-on',
+      'clock',
+      'clock-face',
+      'footer',
+      'footer-visibility',
+      'apply-stage',
+    ])
     expect(window.setContentSize.mock.calls).toContainEqual([1280, 720, false])
     expect(window.setContentSize.mock.calls).toContainEqual([1440, 900, false])
-    expect(window.webContents.capturePage).toHaveBeenCalledTimes(9)
+    expect(window.webContents.capturePage).toHaveBeenCalledTimes(28)
     expect(smoke.STYLE_TARGET_SCRIPT).not.toContain('.click(')
     expect(smoke.STYLE_TARGET_SCRIPT).not.toContain('setTimeout')
     const readinessScript = smoke.projectLyricsReadinessScript({ height: 720, width: 1280 })
@@ -365,11 +606,11 @@ describe('production-window visual smoke', () => {
           },
           window,
         },
-        { focus: vi.fn(async () => true), publish },
+        { captureSettle: settleCaptureImmediately, focus: vi.fn(async () => true), publish },
       ),
     ).resolves.toEqual({ ok: true })
 
-    expect(window.webContents.sendInputEvent).toHaveBeenCalledTimes(30)
+    expect(window.webContents.sendInputEvent).toHaveBeenCalledTimes(118)
     expect(window.webContents.sendInputEvent.mock.calls[0][0]).toEqual({
       type: 'mouseMove',
       x: 61,
@@ -378,7 +619,7 @@ describe('production-window visual smoke', () => {
     expect(window.webContents.setZoomFactor).toHaveBeenCalledWith(0.5)
     expect(window.setContentSize.mock.calls).toContainEqual([640, 360, false])
     expect(window.setContentSize.mock.calls).toContainEqual([720, 450, false])
-    expect(window.webContents.capturePage).toHaveBeenCalledTimes(9)
+    expect(window.webContents.capturePage).toHaveBeenCalledTimes(28)
     expect(publish).toHaveBeenCalledOnce()
   })
 
@@ -418,7 +659,12 @@ describe('production-window visual smoke', () => {
           },
           window,
         },
-        { focus: vi.fn(async () => true), publish, writeFailure },
+        {
+          captureSettle: settleCaptureImmediately,
+          focus: vi.fn(async () => true),
+          publish,
+          writeFailure,
+        },
       ),
     ).resolves.toEqual({ ok: false })
     expect(window.webContents.sendInputEvent).not.toHaveBeenCalled()
@@ -446,6 +692,7 @@ describe('production-window visual smoke', () => {
           window,
         },
         {
+          captureSettle: settleCaptureImmediately,
           focus: vi.fn(async () => true),
           publish,
           readinessTimeoutMs: 5,
@@ -474,6 +721,11 @@ describe('production-window visual smoke', () => {
         isEmpty: () => false,
         toPNG: () => validPng(1280, 720),
       })
+      .mockResolvedValueOnce({
+        getSize: () => ({ height: 720, width: 1280 }),
+        isEmpty: () => false,
+        toPNG: () => validPng(1280, 720),
+      })
     const publish = vi.fn()
     const writeFailure = vi.fn(async () => undefined)
     await expect(
@@ -486,10 +738,15 @@ describe('production-window visual smoke', () => {
           },
           window,
         },
-        { focus: vi.fn(async () => true), publish, writeFailure },
+        {
+          captureSettle: settleCaptureImmediately,
+          focus: vi.fn(async () => true),
+          publish,
+          writeFailure,
+        },
       ),
     ).resolves.toEqual({ ok: false })
-    expect(window.webContents.capturePage).toHaveBeenCalledTimes(2)
+    expect(window.webContents.capturePage).toHaveBeenCalledTimes(3)
     expect(publish).not.toHaveBeenCalled()
     expect(writeFailure).toHaveBeenCalledOnce()
     expect(window.destroy).toHaveBeenCalledOnce()
@@ -506,10 +763,15 @@ describe('production-window visual smoke', () => {
           config: { output: '/safe/evidence', scenario: smoke.STYLE_SESSION_SCENARIO },
           window,
         },
-        { focus: vi.fn(async () => true), publish, writeFailure },
+        {
+          captureSettle: settleCaptureImmediately,
+          focus: vi.fn(async () => true),
+          publish,
+          writeFailure,
+        },
       ),
     ).resolves.toEqual({ ok: false })
-    expect(window.webContents.capturePage).toHaveBeenCalledTimes(9)
+    expect(window.webContents.capturePage).toHaveBeenCalledTimes(28)
     expect(publish).not.toHaveBeenCalled()
     expect(writeFailure).toHaveBeenCalledOnce()
   })
@@ -530,7 +792,11 @@ describe('production-window visual smoke', () => {
           config: { output: '/safe/evidence' },
           window,
         },
-        { focus: vi.fn(async () => true), writeFailure },
+        {
+          captureSettle: settleCaptureImmediately,
+          focus: vi.fn(async () => true),
+          writeFailure,
+        },
       ),
     ).resolves.toEqual({ ok: false })
     expect(writeFailure).toHaveBeenCalledWith('/safe/evidence', {
@@ -552,7 +818,12 @@ describe('production-window visual smoke', () => {
     await expect(
       smoke.runVisualSmoke(
         { app: {}, config: { output: '/safe/evidence' }, window },
-        { focus: vi.fn(async () => true), publish, writeFailure },
+        {
+          captureSettle: settleCaptureImmediately,
+          focus: vi.fn(async () => true),
+          publish,
+          writeFailure,
+        },
       ),
     ).resolves.toEqual({ ok: false })
     expect(publish).not.toHaveBeenCalled()
@@ -577,6 +848,7 @@ describe('production-window visual smoke', () => {
         smoke.runVisualSmoke(
           { app: {}, config: { output: '/safe/evidence' }, fatalObserver, window },
           {
+            captureSettle: settleCaptureImmediately,
             focus: vi.fn(async () => true),
             publish,
             settle: vi.fn(async () => {

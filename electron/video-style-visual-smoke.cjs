@@ -6,6 +6,7 @@ const {
   validateFreshOutputPath,
   writeFreshLauncherFailure,
 } = require('./smoke-artifacts.cjs')
+const { parseBoundedPngContainer } = require('./png-validation.cjs')
 const { focusSmokeWindow } = require('./smoke-window-focus.cjs')
 const {
   BASELINE_SCENARIO,
@@ -29,7 +30,66 @@ const OPTIONS = Object.freeze({
 const PACKAGED_APP_URL = 'studio-app://app/index.html'
 const PUBLIC_FAILURE = Object.freeze({ code: 'VISUAL_SMOKE_FAILED', ok: false })
 const FATAL_DIAGNOSTIC = '[oks-visual-smoke:fatal]\n'
+const CAPTURE_STABILITY_CANDIDATE_LIMIT = 5
+const CAPTURE_STABILITY_SETTLE_MS = 50
 const STYLE_SESSION_READINESS_TIMEOUT_MS = 10_000
+const STYLE_KEY_SEQUENCE = Object.freeze([
+  'Tab',
+  'Tab',
+  'Shift+Tab',
+  'Tab',
+  'Left',
+  'Shift+Tab',
+  'Tab',
+  'Up',
+  'Shift+Tab',
+  'Tab',
+  'Right',
+  'Right',
+  'Up',
+  'Down',
+  'Tab',
+  'Tab',
+  'Escape',
+  'Tab',
+  'Tab',
+  'Tab',
+  'Tab',
+  'Tab',
+  'Tab',
+  'Tab',
+  'Tab',
+  'Tab',
+  'Enter',
+])
+const STYLE_KEY_FOCUS = Object.freeze([
+  'master',
+  'role:brand',
+  'master',
+  'role:brand',
+  'role:footer',
+  'master',
+  'role:footer',
+  'role:clock',
+  'master',
+  'role:clock',
+  'role:footer',
+  'role:brand',
+  'role:footer',
+  'role:brand',
+  'visibility',
+  'typeface',
+  'face:Regular',
+  'face:Italic',
+  'face:Semi Bold',
+  'face:Bold',
+  'face:Extra Bold',
+  'size',
+  'color',
+  'cancel',
+  'apply',
+])
+const STYLE_KEY_CHANGES = Object.freeze(['footer', 'clock', 'footer', 'brand', 'footer', 'brand'])
 
 const STABLE_RENDERER_SCRIPT = `(() => {
   const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()))
@@ -129,6 +189,65 @@ const STYLE_TARGET_SCRIPT = `(() => new Promise((resolve) => {
   })
   resizeObserver.observe(document.documentElement)
   check()
+}))()`
+
+const STYLE_KEY_RECORDER_SCRIPT = `(() => {
+  const storage = '__oksStyleKeyboardRecorder'
+  if (globalThis[storage]) return false
+  const focus = []
+  const changes = []
+  const describe = (target) => {
+    if (!(target instanceof HTMLElement)) return null
+    if (target.matches('[aria-label="Show Stage frame in output"]')) return 'master'
+    if (target.matches('input[type="radio"]')) return 'role:' + target.value
+    const label = target.getAttribute('aria-label')
+    if (label === 'Show Brand in output') return 'visibility'
+    if (label === 'Brand typeface') return 'typeface'
+    if (label?.startsWith('Brand face ')) return 'face:' + label.slice(11)
+    if (label === 'Brand font size') return 'size'
+    if (label === 'Brand color') return 'color'
+    return target.dataset.styleAction ?? null
+  }
+  const onFocus = (event) => {
+    const value = describe(event.target)
+    if (value) focus.push(value)
+  }
+  const onChange = (event) => {
+    const target = event.target
+    const roles = [...document.querySelectorAll(
+      '[aria-label="Stage frame role"] input[type="radio"]',
+    )]
+    if (target instanceof HTMLInputElement && roles.includes(target)) changes.push({
+      active: document.activeElement === target,
+      checked: target.checked,
+      checkedCount: roles.filter((role) => role.checked).length,
+      role: target.value,
+    })
+  }
+  document.addEventListener('focusin', onFocus, true)
+  document.addEventListener('change', onChange, true)
+  globalThis[storage] = { changes, focus, dispose() {
+    document.removeEventListener('focusin', onFocus, true)
+    document.removeEventListener('change', onChange, true)
+  } }
+  return true
+})()`
+
+const STYLE_KEY_RESULT_SCRIPT = `(() => new Promise((resolve) => {
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const storage = '__oksStyleKeyboardRecorder'
+    const recorder = globalThis[storage]
+    const undo = document.querySelector('[aria-label="Undo"]')
+    const redo = document.querySelector('[aria-label="Redo"]')
+    const result = recorder ? { changes: [...recorder.changes], focus: [...recorder.focus],
+      closed: !document.querySelector('.style-workspace[role="dialog"]'),
+      clean: !document.querySelector('[title="Unsaved changes"]'),
+      redoDisabled: redo instanceof HTMLButtonElement && redo.disabled,
+      undoDisabled: undo instanceof HTMLButtonElement && undo.disabled } : null
+    recorder?.dispose()
+    delete globalThis[storage]
+    resolve(result)
+  }))
 }))()`
 
 function projectLyricsReadinessScript(viewport, contract = { kind: 'project-lyrics' }) {
@@ -281,9 +400,101 @@ function projectLyricsReadinessScript(viewport, contract = { kind: 'project-lyri
         stageHeight: bounds.height, stageWidth: bounds.width, width: expected.width }
     }
 
+    const sampleStageFrame = () => {
+      const applied = contract.applied === true
+      const workspace = document.querySelector('.style-workspace[role="dialog"]')
+      const panel = document.querySelector('[role="tabpanel"][aria-labelledby$="-stage-frame-tab"]')
+      const tab = document.querySelector('[role="tab"][data-style-destination="stage-frame"]')
+      const preview = document.querySelector(
+        applied ? '[aria-label="Karaoke preview"]' : '[aria-label="Stage frame design preview"]',
+      )
+      const stage = preview?.querySelector('.karaoke-stage')
+      const line = stage?.querySelector('[data-stage-frame-line]')
+      const brand = stage?.querySelector('[data-stage-frame-role="brand"]')
+      const clock = stage?.querySelector('[data-stage-frame-role="clock"]')
+      const footer = stage?.querySelector('[data-stage-frame-role="footer"]')
+      const status = preview?.querySelectorAll('[data-stage-frame-output-status]') ?? []
+      const bounds = stage?.getBoundingClientRect()
+      const lineColor = stage?.style.getPropertyValue('--stage-frame-color')
+      const lineWidth = stage?.style.getPropertyValue('--stage-frame-width')
+      const brandStyle = brand?.getAttribute('style')
+      const clockStyle = clock?.getAttribute('style')
+      const clockWeight = clock instanceof HTMLElement ? getComputedStyle(clock).fontWeight : null
+      if (!(preview instanceof HTMLElement) || !(stage instanceof HTMLElement) ||
+        !bounds || bounds.width <= 0 || Math.abs(bounds.width / bounds.height - 16 / 9) > .01 ||
+        !(line instanceof HTMLElement) || !(brand instanceof HTMLElement) ||
+        !(clock instanceof HTMLElement) || brand.textContent !== 'OKAY / STUDIO' ||
+        !/^\\d{2}:\\d{2}\\.\\d{3}$/u.test(clock.textContent ?? '') ||
+        (footer && footer.textContent !== 'Unknown Artist · Untitled Song') ||
+        document.documentElement.clientWidth !== expected.width ||
+        document.documentElement.clientHeight !== expected.height ||
+        document.documentElement.scrollWidth > expected.width || document.body.scrollWidth > expected.width ||
+        document.readyState !== 'complete' || fontSet?.status !== 'loaded' ||
+        window.location.href !== '${PACKAGED_APP_URL}' || document.querySelector('.stage-resource-warning') ||
+        (contract.lineColor && lineColor !== contract.lineColor) ||
+        (contract.lineWidth && lineWidth !== contract.lineWidth) ||
+        (contract.brandStyle && brandStyle !== contract.brandStyle) ||
+        (contract.clockStyle && clockStyle !== contract.clockStyle) ||
+        (contract.clockWeight && clockWeight !== contract.clockWeight)) return null
+      const stageCenterX = bounds.left + bounds.width / 2
+      const stageCenterY = bounds.top + bounds.height / 2
+      const brandBounds = brand.getBoundingClientRect()
+      const clockBounds = clock.getBoundingClientRect()
+      const footerBounds = footer?.getBoundingClientRect()
+      if (brandBounds.left >= stageCenterX || brandBounds.top >= stageCenterY ||
+        clockBounds.right <= stageCenterX || clockBounds.top >= stageCenterY ||
+        (footerBounds && footerBounds.bottom <= stageCenterY)) return null
+      if (applied) {
+        if (workspace || stage.classList.contains('is-designing') || status.length || footer ||
+          stage.querySelector('[data-stage-frame-design-role], [data-design-only]')) return null
+      } else {
+        const master = panel?.querySelector('[aria-label="Show Stage frame in output"]')
+        const selected = panel?.querySelector('input[value="' + contract.role + '"]')
+        const visibility = panel?.querySelector('[aria-label="Show ' +
+          contract.role[0].toUpperCase() + contract.role.slice(1) + ' in output"]')
+        const target = stage.querySelector('[data-stage-frame-design-role="' + contract.role + '"]')
+        const controls = [...(panel?.querySelectorAll('input, button, select') ?? [])]
+        const body = workspace?.querySelector('.style-editor__body')
+        const bodyBounds = body?.getBoundingClientRect()
+        const initialControls = [master, panel?.querySelector('[role="radiogroup"]'),
+          panel?.querySelector('.visible-text-role-editor > h3'), visibility,
+          panel?.querySelector('[role="combobox"]')]
+        const expectedStatus = contract.enabled
+          ? (contract.roleVisible ? null : contract.role[0].toUpperCase() + contract.role.slice(1) + ' hidden in output')
+          : 'Stage frame off in output'
+        if (!(workspace instanceof HTMLElement) || !(panel instanceof HTMLElement) || panel.hidden ||
+          !(tab instanceof HTMLButtonElement) || tab.getAttribute('aria-selected') !== 'true' ||
+          !(master instanceof HTMLInputElement) || master.checked !== contract.enabled ||
+          !(selected instanceof HTMLInputElement) || !selected.checked ||
+          !(visibility instanceof HTMLInputElement) || visibility.checked !== contract.roleVisible ||
+          !(target instanceof HTMLElement) || getComputedStyle(target).outlineStyle === 'none' ||
+          controls.some((control) => control.disabled || getComputedStyle(control).visibility !== 'visible') ||
+          !bodyBounds || initialControls.some((control) => {
+            const box = control?.getBoundingClientRect()
+            return !box || box.top < bodyBounds.top || box.bottom > bodyBounds.bottom
+          }) || workspace.querySelectorAll('.style-editor__body').length !== 1 || !fourDestinationsFit() ||
+          status.length !== (expectedStatus ? 1 : 0) ||
+          (expectedStatus && status[0]?.getAttribute('aria-label') !== expectedStatus) ||
+          (status[0] && status[0].nextElementSibling?.textContent !== 'Fixed 1920 × 1080 stage')) return null
+        const opacityFor = (role) => {
+          const element = role === 'footer' ? footer?.closest('.karaoke-stage__footer') :
+            role === 'brand' ? brand : clock
+          return element instanceof HTMLElement ? Number(getComputedStyle(element).opacity) : null
+        }
+        if (Number(getComputedStyle(target).opacity) !== 1 ||
+          Number(getComputedStyle(line).opacity) !== (contract.enabled ? 1 : .45) ||
+          (!contract.enabled && ['brand', 'clock', 'footer'].some((role) =>
+            role !== contract.role && opacityFor(role) !== .45))) return null
+      }
+      return { applied, brandStyle, clockStyle, clockWeight, height: expected.height,
+        lineColor, lineWidth, resourcesReady: true, role: contract.role,
+        stageHeight: bounds.height, stageWidth: bounds.width, width: expected.width }
+    }
+
     const sample = () => {
       if (contract.kind === 'background') return sampleBackground()
       if (contract.kind === 'title-card') return sampleTitleCard()
+      if (contract.kind === 'stage-frame') return sampleStageFrame()
       const workspace = document.querySelector('.style-workspace[role="dialog"]')
       const typeface = document.querySelector('[role="combobox"][aria-label="Project lyric typeface"]')
       const preview = document.querySelector('[aria-label="Project lyrics design preview"]')
@@ -402,29 +613,47 @@ function styleSessionActionScript(action) {
     const projectTab = document.querySelector('[role="tab"][data-style-destination="project-lyrics"]')
     const backgroundTab = document.querySelector('[role="tab"][data-style-destination="background"]')
     const titleTab = document.querySelector('[role="tab"][data-style-destination="title-card"]')
+    const stageTab = document.querySelector('[role="tab"][data-style-destination="stage-frame"]')
     const gradient = document.querySelector('input[type="radio"][value="gradient"]')
     const solid = document.querySelector('input[type="radio"][value="solid"]')
     const eyebrow = document.querySelector('input[type="radio"][value="eyebrow"]')
     const artist = document.querySelector('input[type="radio"][value="artist"]')
     const eyebrowVisibility = document.querySelector('[aria-label="Show Eyebrow in output"]')
     const artistVisibility = document.querySelector('[aria-label="Show Artist in output"]')
+    const stageMaster = document.querySelector('[aria-label="Show Stage frame in output"]')
+    const brand = document.querySelector('input[type="radio"][value="brand"]')
+    const clock = document.querySelector('input[type="radio"][value="clock"]')
+    const footer = document.querySelector('input[type="radio"][value="footer"]')
+    const clockFace = document.querySelector('[aria-label="Clock face Bold"]')
+    const footerVisibility = document.querySelector('[aria-label="Show Footer in output"]')
     const apply = workspace?.querySelector('[data-style-action="apply"]')
     const targets = { background: backgroundTab, solid, apply, reopen:
       document.querySelector('button.style-button[aria-label="Edit project Style"]'),
       title: titleTab, 'eyebrow-visibility': eyebrowVisibility, artist,
-      'artist-visibility': artistVisibility, 'apply-title': apply }
+      'artist-visibility': artistVisibility, 'apply-title': apply, stage: stageTab,
+      'stage-off': stageMaster, 'stage-on': stageMaster, clock, 'clock-face': clockFace,
+      footer, 'footer-visibility': footerVisibility, 'apply-stage': apply }
     const target = targets[action]
-    const semantic = action === 'background'
-      ? projectTab?.getAttribute('aria-selected') === 'true' && backgroundTab?.getAttribute('aria-selected') === 'false'
-      : action === 'solid'
-        ? backgroundTab?.getAttribute('aria-selected') === 'true' && gradient?.checked && !solid?.checked
-        : action === 'apply' ? backgroundTab?.getAttribute('aria-selected') === 'true' && solid?.checked
-          : action === 'reopen' ? !workspace
-            : action === 'title' ? projectTab?.getAttribute('aria-selected') === 'true'
-              : action === 'eyebrow-visibility' ? titleTab?.getAttribute('aria-selected') === 'true' && eyebrow?.checked && eyebrowVisibility?.checked
-                : action === 'artist' ? eyebrow?.checked && !eyebrowVisibility?.checked && !artist?.checked
-                  : action === 'artist-visibility' ? artist?.checked && artistVisibility?.checked
-                    : action === 'apply-title' && artist?.checked && !eyebrowVisibility?.checked && !artistVisibility?.checked
+    const semantic = ({
+      background: projectTab?.getAttribute('aria-selected') === 'true' && backgroundTab?.getAttribute('aria-selected') === 'false',
+      solid: backgroundTab?.getAttribute('aria-selected') === 'true' && gradient?.checked && !solid?.checked,
+      apply: backgroundTab?.getAttribute('aria-selected') === 'true' && solid?.checked,
+      reopen: !workspace,
+      title: projectTab?.getAttribute('aria-selected') === 'true',
+      'eyebrow-visibility': titleTab?.getAttribute('aria-selected') === 'true' && eyebrow?.checked && eyebrowVisibility?.checked,
+      artist: eyebrow?.checked && !eyebrowVisibility?.checked && !artist?.checked,
+      'artist-visibility': artist?.checked && artistVisibility?.checked,
+      'apply-title': artist?.checked && !eyebrowVisibility?.checked && !artistVisibility?.checked,
+      stage: projectTab?.getAttribute('aria-selected') === 'true' && stageTab?.getAttribute('aria-selected') === 'false',
+      'stage-off': stageTab?.getAttribute('aria-selected') === 'true' && brand?.checked && stageMaster?.checked,
+      'stage-on': brand?.checked && !stageMaster?.checked,
+      clock: stageMaster?.checked && brand?.checked && !clock?.checked,
+      'clock-face': clock?.checked && clockFace?.getAttribute('aria-pressed') === 'false',
+      footer: clock?.checked && clockFace?.getAttribute('aria-pressed') === 'true' && !footer?.checked,
+      'footer-visibility': footer?.checked && footerVisibility?.checked,
+      'apply-stage': stageTab?.getAttribute('aria-selected') === 'true' &&
+        stageMaster?.checked && footer?.checked && !footerVisibility?.checked,
+    })[action] === true
     if (!(target instanceof HTMLElement) || !semantic || target.disabled) return null
     const bounds = target.getBoundingClientRect()
     const style = getComputedStyle(target)
@@ -556,6 +785,10 @@ function fatalObserved(observer) {
 
 function settleTeardown() {
   return new Promise((resolve) => setImmediate(resolve))
+}
+
+function settleCapture() {
+  return new Promise((resolve) => setTimeout(resolve, CAPTURE_STABILITY_SETTLE_MS))
 }
 
 function parseOption(args, prefix) {
@@ -704,7 +937,7 @@ async function prepareCaptureWindow(window, app, options) {
   return displayScale
 }
 
-async function captureViewport(window, viewport) {
+async function capturePngCandidate(window, viewport) {
   let image
   try {
     image = await window.webContents.capturePage()
@@ -718,18 +951,47 @@ async function captureViewport(window, viewport) {
     image.getSize().height !== viewport.height
   )
     throw smokeError('VISUAL_SMOKE_CAPTURE_INVALID')
+  let bytes
+  let parsed
   try {
-    return image.toPNG()
+    bytes = image.toPNG()
+    if (!Buffer.isBuffer(bytes)) throw smokeError('VISUAL_SMOKE_CAPTURE_INVALID')
+    parsed = parseBoundedPngContainer(bytes)
   } catch {
     throw smokeError('VISUAL_SMOKE_CAPTURE_INVALID')
   }
+  if (parsed.animated || parsed.width !== viewport.width || parsed.height !== viewport.height) {
+    throw smokeError('VISUAL_SMOKE_CAPTURE_INVALID')
+  }
+  return Buffer.from(bytes)
+}
+
+async function captureViewport(window, viewport, settle = settleCapture) {
+  let previous
+  for (
+    let candidateIndex = 0;
+    candidateIndex < CAPTURE_STABILITY_CANDIDATE_LIMIT;
+    candidateIndex += 1
+  ) {
+    const candidate = await capturePngCandidate(window, viewport)
+    if (previous && previous.equals(candidate)) return candidate
+    previous = candidate
+    if (candidateIndex < CAPTURE_STABILITY_CANDIDATE_LIMIT - 1) {
+      try {
+        await settle()
+      } catch {
+        throw smokeError('VISUAL_SMOKE_CAPTURE_INVALID')
+      }
+    }
+  }
+  throw smokeError('VISUAL_SMOKE_CAPTURE_INVALID')
 }
 
 async function captureBaseline(window, app, options) {
   await prepareCaptureWindow(window, app, options)
   const rendererState = await window.webContents.executeJavaScript(STABLE_RENDERER_SCRIPT, false)
   if (!validRendererState(rendererState)) throw smokeError('VISUAL_SMOKE_RENDERER_INVALID')
-  const png = await captureViewport(window, VIEWPORT)
+  const png = await captureViewport(window, VIEWPORT, options.captureSettle)
   return options.createArtifacts(png).artifacts
 }
 
@@ -802,6 +1064,50 @@ function validProjectLyricsState(value, viewport) {
   )
 }
 
+function validStageFrameState(value, viewport, contract) {
+  return Boolean(
+    value &&
+    typeof value === 'object' &&
+    value.applied === (contract.applied === true) &&
+    value.role === contract.role &&
+    value.height === viewport.height &&
+    value.width === viewport.width &&
+    value.resourcesReady === true &&
+    Number.isFinite(value.stageHeight) &&
+    value.stageHeight > 0 &&
+    Number.isFinite(value.stageWidth) &&
+    value.stageWidth > 0 &&
+    typeof value.brandStyle === 'string' &&
+    typeof value.clockStyle === 'string' &&
+    typeof value.clockWeight === 'string' &&
+    /^#[0-9a-f]{6}$/iu.test(value.lineColor) &&
+    typeof value.lineWidth === 'string' &&
+    value.lineWidth.length > 0,
+  )
+}
+
+function validStyleKeyboardState(value) {
+  return Boolean(
+    value &&
+    value.closed === true &&
+    value.clean === true &&
+    value.undoDisabled === true &&
+    value.redoDisabled === true &&
+    JSON.stringify(value.focus) === JSON.stringify(STYLE_KEY_FOCUS) &&
+    Array.isArray(value.changes) &&
+    value.changes.length === STYLE_KEY_CHANGES.length &&
+    value.changes.every((change, index) =>
+      Boolean(
+        change &&
+        change.active === true &&
+        change.checked === true &&
+        change.checkedCount === 1 &&
+        change.role === STYLE_KEY_CHANGES[index],
+      ),
+    ),
+  )
+}
+
 function executeBeforeDeadline(operation, timeoutMs) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
     throw smokeError('VISUAL_SMOKE_READINESS_INVALID')
@@ -858,8 +1164,30 @@ function sendTrustedStyleActivation(contents, target, displayScale) {
   }
 }
 
+function sendTrustedStyleKey(contents, accelerator) {
+  if (
+    !contents ||
+    typeof contents.sendInputEvent !== 'function' ||
+    !STYLE_KEY_SEQUENCE.includes(accelerator)
+  )
+    throw smokeError('VISUAL_SMOKE_ACTIVATION_INVALID')
+  const shifted = accelerator.startsWith('Shift+')
+  const keyCode = shifted ? accelerator.slice(6) : accelerator
+  const eventTypes = accelerator === 'Enter' ? ['keyDown', 'char', 'keyUp'] : ['keyDown', 'keyUp']
+  try {
+    for (const type of eventTypes) {
+      const event = { keyCode, type }
+      if (shifted) event.modifiers = ['shift']
+      contents.sendInputEvent(event)
+    }
+  } catch {
+    throw smokeError('VISUAL_SMOKE_ACTIVATION_INVALID')
+  }
+}
+
 async function captureStyleSession(window, app, options) {
   const displayScale = await prepareCaptureWindow(window, app, options)
+  const capture = (viewport) => captureViewport(window, viewport, options.captureSettle)
   const target = await executeBeforeDeadline(
     () => window.webContents.executeJavaScript(STYLE_TARGET_SCRIPT, false),
     options.readinessTimeoutMs,
@@ -877,7 +1205,7 @@ async function captureStyleSession(window, app, options) {
     if (!validProjectLyricsState(state, viewport)) {
       throw smokeError('VISUAL_SMOKE_READINESS_INVALID')
     }
-    pngs.push(await captureViewport(window, viewport))
+    pngs.push(await capture(viewport))
   }
   const viewport = STYLE_SESSION_VIEWPORTS[2]
   setExactViewport(window, viewport, displayScale)
@@ -896,6 +1224,30 @@ async function captureStyleSession(window, app, options) {
       throw smokeError('VISUAL_SMOKE_ACTIVATION_INVALID')
     sendTrustedStyleActivation(window.webContents, actionTarget, displayScale)
   }
+  const stageFrameState = async (contract) => {
+    const state = await executeBeforeDeadline(
+      () =>
+        window.webContents.executeJavaScript(
+          projectLyricsReadinessScript(viewport, { kind: 'stage-frame', ...contract }),
+          false,
+        ),
+      options.readinessTimeoutMs,
+    )
+    if (!validStageFrameState(state, viewport, contract))
+      throw smokeError('VISUAL_SMOKE_READINESS_INVALID')
+    return state
+  }
+  await activate('stage')
+  await stageFrameState({ enabled: true, role: 'brand', roleVisible: true })
+  const armed = await window.webContents.executeJavaScript(STYLE_KEY_RECORDER_SCRIPT, false)
+  if (armed !== true) throw smokeError('VISUAL_SMOKE_ACTIVATION_INVALID')
+  STYLE_KEY_SEQUENCE.forEach((key) => sendTrustedStyleKey(window.webContents, key))
+  const keyboardState = await executeBeforeDeadline(
+    () => window.webContents.executeJavaScript(STYLE_KEY_RESULT_SCRIPT, false),
+    options.readinessTimeoutMs,
+  )
+  if (!validStyleKeyboardState(keyboardState)) throw smokeError('VISUAL_SMOKE_READINESS_INVALID')
+  await activate('reopen')
   const backgroundState = async (mode, colors = null, applied = false) => {
     const state = await executeBeforeDeadline(
       () =>
@@ -917,16 +1269,16 @@ async function captureStyleSession(window, app, options) {
   }
   await activate('background')
   await backgroundState('gradient')
-  pngs.push(await captureViewport(window, viewport))
+  pngs.push(await capture(viewport))
   await activate('solid')
   const solid = await backgroundState('solid')
-  pngs.push(await captureViewport(window, viewport))
+  pngs.push(await capture(viewport))
   const colors = Object.fromEntries(
     ['gradientEndColor', 'gradientStartColor', 'solidColor'].map((key) => [key, solid[key]]),
   )
   await activate('apply')
   await backgroundState('solid', colors, true)
-  pngs.push(await captureViewport(window, viewport))
+  pngs.push(await capture(viewport))
   const titleCardState = async (contract) => {
     const state = await executeBeforeDeadline(
       () =>
@@ -947,17 +1299,57 @@ async function captureStyleSession(window, app, options) {
   await activate('reopen')
   await activate('title')
   await titleCardState({ role: 'eyebrow', eyebrowHidden: false, artistHidden: false })
-  pngs.push(await captureViewport(window, viewport))
+  pngs.push(await capture(viewport))
   await activate('eyebrow-visibility')
   await titleCardState({ role: 'eyebrow', eyebrowHidden: true, artistHidden: false })
-  pngs.push(await captureViewport(window, viewport))
+  pngs.push(await capture(viewport))
   await activate('artist')
   await activate('artist-visibility')
   await titleCardState({ role: 'artist', eyebrowHidden: true, artistHidden: true })
-  pngs.push(await captureViewport(window, viewport))
+  pngs.push(await capture(viewport))
   await activate('apply-title')
   await titleCardState({ applied: true, role: 'artist', eyebrowHidden: true, artistHidden: true })
-  pngs.push(await captureViewport(window, viewport))
+  pngs.push(await capture(viewport))
+  await activate('reopen')
+  await activate('stage')
+  const baselineFrame = await stageFrameState({ enabled: true, role: 'brand', roleVisible: true })
+  pngs.push(await capture(viewport))
+  const preservedFrame = {
+    brandStyle: baselineFrame.brandStyle,
+    clockStyle: baselineFrame.clockStyle,
+    clockWeight: baselineFrame.clockWeight,
+    lineColor: baselineFrame.lineColor,
+    lineWidth: baselineFrame.lineWidth,
+  }
+  await activate('stage-off')
+  await stageFrameState({ ...preservedFrame, enabled: false, role: 'brand', roleVisible: true })
+  pngs.push(await capture(viewport))
+  await activate('stage-on')
+  await activate('clock')
+  await activate('clock-face')
+  const clockFrame = await stageFrameState({
+    ...preservedFrame,
+    clockStyle: undefined,
+    clockWeight: '700',
+    enabled: true,
+    role: 'clock',
+    roleVisible: true,
+  })
+  pngs.push(await capture(viewport))
+  const changedFrame = { ...preservedFrame, clockStyle: clockFrame.clockStyle, clockWeight: '700' }
+  await activate('footer')
+  await activate('footer-visibility')
+  await stageFrameState({ ...changedFrame, enabled: true, role: 'footer', roleVisible: false })
+  pngs.push(await capture(viewport))
+  await activate('apply-stage')
+  await stageFrameState({
+    ...changedFrame,
+    applied: true,
+    enabled: true,
+    role: 'footer',
+    roleVisible: false,
+  })
+  pngs.push(await capture(viewport))
   return options.createScenarioArtifacts(STYLE_SESSION_SCENARIO, pngs).artifacts
 }
 
@@ -984,6 +1376,7 @@ async function writeFailure(output, options) {
 
 async function runVisualSmoke({ app, config, fatalObserver, window }, dependencies = {}) {
   const options = {
+    captureSettle: dependencies.captureSettle || settleCapture,
     createArtifacts: dependencies.createArtifacts || createResultArtifacts,
     createScenarioArtifacts: dependencies.createScenarioArtifacts || createScenarioResultArtifacts,
     focus: dependencies.focus || focusSmokeWindow,
