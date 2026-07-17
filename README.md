@@ -108,11 +108,14 @@ the top bar for the in-app first-project guide.
    MP4 karaoke video, and another editable `.oks` project. Review any reported
    timing issues before handing off the result.
 
-   MP4 export requires lyrics and attached audio, is limited to 30 minutes and
-   the active lead-vocal track, and produces H.264/AAC video. Resolution choices
-   are 240p (426 × 240), 360p (640 × 360), 480p (854 × 480), 720p (1280 × 720),
-   1080p (1920 × 1080), 1440p (2560 × 1440), and 2160p (3840 × 2160), each at 30
-   or 60 fps. A new export defaults to 720p at 30 fps. Closing the export dialog,
+   MP4 export requires lyrics and attached audio, is limited to 30 minutes, and
+   produces H.264/AAC video. It renders every unmuted track, or only the unmuted
+   solo tracks when any track is soloed. The current MVP UI authors one
+   lead-vocal track; adding singer tracks remains deferred, while valid current
+   v0 projects can preserve and render multiple tracks. Resolution choices are
+   240p (426 × 240), 360p (640 × 360), 480p (854 × 480), 720p (1280 × 720), 1080p
+   (1920 × 1080), 1440p (2560 × 1440), and 2160p (3840 × 2160), each at 30 or 60
+   fps. A new export defaults to 720p at 30 fps. Closing the export dialog,
    closing or quitting the app, or choosing **Cancel video export** during an
    active export asks for confirmation. Confirmed cancellation preserves a
    UUID-named partial file beside the chosen destination; ordinary export
