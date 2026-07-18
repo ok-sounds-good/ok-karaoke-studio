@@ -1120,7 +1120,7 @@ describe('mounted first-time workflow', () => {
     )
   })
 
-  it('forwards the exact capability only after the current Image is ready in Live Preview', async () => {
+  it('forwards then invalidates only the exact Preview-ready capability after parity failure', async () => {
     const path = '/fixtures/background.png'
     const activeUrl = 'studio-media://asset/00000000-0000-4000-8000-000000000060'
     const capability = {
@@ -1153,6 +1153,12 @@ describe('mounted first-time workflow', () => {
       path: '/opened/ready-image.oks',
       contents: serializeProject(project),
     })
+    harness.exportVideo.mockResolvedValueOnce({
+      status: 'background-invalid',
+      background: capability,
+      message:
+        'The linked background image is unavailable, invalid, changed, or no longer authorized. Restore it in Live Preview and try again.',
+    })
 
     await clickButton('Workflow')
     await clickButton('Open .oks')
@@ -1163,6 +1169,13 @@ describe('mounted first-time workflow', () => {
     expect(harness.exportVideo).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ background: capability }),
     )
+    expect(document.querySelector('.toast')?.textContent).toContain(
+      'unavailable, invalid, changed, or no longer authorized',
+    )
+    expect(document.querySelector('[aria-label="Karaoke video export progress"]')).toBeNull()
+    await clickButton('Karaoke video')
+    expect(harness.exportVideo).toHaveBeenCalledOnce()
+    expect(document.querySelector('.toast')?.textContent).toContain('not ready in Live Preview')
   })
 
   it('confirms cancellation from both the cancel action and the export-dialog close action', async () => {

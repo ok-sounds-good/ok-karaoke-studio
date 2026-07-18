@@ -39,6 +39,7 @@ export interface ProjectBackgroundImageController {
   forgetSnapshot(path: string, url: string): boolean
   getCapability(): StudioBackgroundCapabilityState | null
   getExportCapability(): StudioBackgroundCapabilityState | null
+  invalidateExportCapability(expected: StudioBackgroundCapabilityState): boolean
   reconcileCapability(): Promise<StudioBackgroundCapabilityState | null>
   rememberSnapshot(path: string, url: string, capability?: StudioBackgroundCapabilityState): boolean
   setCapability(capability: StudioBackgroundCapabilityState): boolean
@@ -405,7 +406,7 @@ export function useProjectBackgroundImage({
     )
   const previewGenerationKey = JSON.stringify([
     lifecycle,
-    resource.capability?.revision ?? null,
+    background.imagePath,
     resolutionStatus,
     url,
   ])
@@ -482,6 +483,33 @@ export function useProjectBackgroundImage({
       return null
     return current.capability
   }, [isOwnedLifecycle, lifecycle])
+
+  const invalidateExportCapability = useCallback(
+    (expected: StudioBackgroundCapabilityState) => {
+      if (!isOwnedLifecycle()) return false
+      const current = resourceRef.current
+      const currentBackground = currentRef.current.background
+      if (
+        currentBackground.mode !== 'image' ||
+        !currentBackground.imagePath ||
+        !current.capability ||
+        current.capability.activeUrl !== expected.activeUrl ||
+        current.capability.revision !== expected.revision
+      )
+        return false
+      previewReadinessRef.current = {
+        ...previewReadinessRef.current,
+        status: 'error',
+      }
+      publish({
+        ...current,
+        failedIntent: backgroundIntent(currentBackground),
+        resolutionStatus: 'error',
+      })
+      return true
+    },
+    [isOwnedLifecycle, publish],
+  )
 
   const setCapability = useCallback(
     (capability: StudioBackgroundCapabilityState) => {
@@ -677,6 +705,7 @@ export function useProjectBackgroundImage({
     forgetSnapshot,
     getCapability,
     getExportCapability,
+    invalidateExportCapability,
     reconcileCapability,
     rememberSnapshot,
     setCapability,

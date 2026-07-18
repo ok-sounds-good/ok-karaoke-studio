@@ -42,9 +42,10 @@ describe('linked-background Electron boundary', () => {
       main.indexOf('function executeVideoExport'),
       main.indexOf('function parseVideoExportProject'),
     )
-    expect(operation.indexOf('await authorizeExport')).toBeLessThan(
-      operation.indexOf('beginExport(sender.id)'),
+    expect(operation.indexOf('beginExport(sender.id)')).toBeLessThan(
+      operation.indexOf('await authorizeExport'),
     )
+    expect(operation).toContain('signal: operation.controller.signal')
     expect(authorization).toContain('backgroundExportSnapshot(')
     expect(authorization).toContain('await readLinkedImage(retained.filePath)')
     expect(authorization).toContain('sameMedia(retained, current)')
@@ -52,6 +53,7 @@ describe('linked-background Electron boundary', () => {
     expect(exportSetup).not.toContain('readLinkedImage')
     expect(videoExport).not.toContain('readLinkedImage(background.imagePath)')
     expect(preload).not.toContain('backgroundImage.bytes')
+    expect(main).toContain('linkedImageExportFailure(error, request.background, MEDIA_SCHEME)')
   })
 
   it('exposes only opaque settlement and exact-project restore operations', () => {

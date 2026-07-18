@@ -47,7 +47,10 @@ const {
   normalizeMediaCapabilityReference,
   prepareProjectMedia,
 } = require('./media-capabilities.cjs')
-const { createVideoExportAuthorizer } = require('./video-export-authorization.cjs')
+const {
+  createVideoExportAuthorizer,
+  linkedImageExportFailure,
+} = require('./video-export-authorization.cjs')
 const { createProjectOpenCoordinator } = require('./project-open.cjs')
 const {
   createNativeCloseArbiter,
@@ -683,11 +686,12 @@ const authorizeVideoExport = createVideoExportAuthorizer({
 })
 const videoExportOperation = createVideoExportOperation({
   parseProject: parseVideoExportProject,
-  authorizeExport: ({ project, request, sender }) =>
+  authorizeExport: ({ project, request, sender, signal }) =>
     authorizeVideoExport({
       ownerId: sender.id,
       project,
       expectedBackground: request.background,
+      signal,
     }),
   createCommitState: createVideoExportCommitState,
   prepareExport: prepareVideoExport,
@@ -1079,7 +1083,13 @@ function registerIpcHandlers() {
   ipcMain.handle(CHANNELS.exportVideo, async (event, value) => {
     const owner = assertTrustedSender(event)
     const request = normalizeVideoExportRequest(value)
-    return videoExportOperation.run({ owner, sender: event.sender, request })
+    try {
+      return await videoExportOperation.run({ owner, sender: event.sender, request })
+    } catch (error) {
+      const failure = linkedImageExportFailure(error, request.background, MEDIA_SCHEME)
+      if (failure) return failure
+      throw error
+    }
   })
 
   ipcMain.handle(CHANNELS.cancelVideoExport, async (event) => {

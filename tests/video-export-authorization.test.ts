@@ -6,8 +6,10 @@ import { createProject } from '../src/lib/model'
 const require = createRequire(import.meta.url)
 const { createMediaCapabilityRegistry } = require('../electron/media-capabilities.cjs')
 const {
+  LINKED_IMAGE_EXPORT_ERROR_CODE,
   LINKED_IMAGE_EXPORT_WARNING,
   createVideoExportAuthorizer,
+  linkedImageExportFailure,
 } = require('../electron/video-export-authorization.cjs')
 
 function ids() {
@@ -36,6 +38,28 @@ function retainedImage(registry: any, ownerId: number, imagePath: string, bytes:
 }
 
 describe('linked-image video export authorization', () => {
+  it('maps only a typed parity error to the exact opaque attempted state', () => {
+    const error = Object.assign(new Error('private detail'), {
+      code: LINKED_IMAGE_EXPORT_ERROR_CODE,
+    })
+    const expected = {
+      activeToken: '00000000-0000-4000-8000-000000000060',
+      revision: '00000000-0000-4000-8000-000000000061',
+      valid: true,
+    }
+
+    expect(linkedImageExportFailure(error, expected)).toEqual({
+      status: 'background-invalid',
+      background: {
+        activeUrl: 'studio-media://asset/00000000-0000-4000-8000-000000000060',
+        revision: expected.revision,
+      },
+      message: LINKED_IMAGE_EXPORT_WARNING,
+    })
+    expect(linkedImageExportFailure(new Error('other'), expected)).toBeNull()
+    expect(linkedImageExportFailure(error, { ...expected, valid: false })).toBeNull()
+  })
+
   it('returns an isolated immutable active snapshot after current-file parity validation', async () => {
     const registry = createMediaCapabilityRegistry({ createRevision: ids(), createToken: ids() })
     const bytes = Buffer.from([1, 2, 3])
@@ -98,7 +122,10 @@ describe('linked-image video export authorization', () => {
           project: imageProject('/private/song-art.png'),
           expectedBackground,
         }),
-      ).rejects.toThrow(LINKED_IMAGE_EXPORT_WARNING)
+      ).rejects.toMatchObject({
+        code: LINKED_IMAGE_EXPORT_ERROR_CODE,
+        message: LINKED_IMAGE_EXPORT_WARNING,
+      })
     },
   )
 
@@ -141,5 +168,32 @@ describe('linked-image video export authorization', () => {
     await expect(
       authorize({ ownerId: 11, project: imageProject('/media/current.png'), expectedBackground }),
     ).rejects.toThrow(LINKED_IMAGE_EXPORT_WARNING)
+  })
+
+  it('reports cancellation instead of a parity warning when aborted during current-file read', async () => {
+    const registry = createMediaCapabilityRegistry({ createRevision: ids(), createToken: ids() })
+    const expectedBackground = retainedImage(
+      registry,
+      12,
+      '/media/cancel.png',
+      Buffer.from([1, 2, 3]),
+    )
+    const controller = new AbortController()
+    const authorize = createVideoExportAuthorizer({
+      mediaCapabilities: registry,
+      readLinkedImage: vi.fn(async () => {
+        controller.abort()
+        return { bytes: Buffer.from([1, 2, 3]), format: 'png' }
+      }),
+    })
+
+    await expect(
+      authorize({
+        ownerId: 12,
+        project: imageProject('/media/cancel.png'),
+        expectedBackground,
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ name: 'AbortError' })
   })
 })

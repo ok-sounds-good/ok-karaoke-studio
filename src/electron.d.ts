@@ -110,6 +110,12 @@ declare global {
     }>
   }
 
+  interface StudioVideoExportBackgroundFailure {
+    status: 'background-invalid'
+    background: StudioBackgroundCapabilityState
+    message: string
+  }
+
   interface StudioApi {
     openProject(): Promise<StudioOpenProjectResult | null>
     settleProjectOpen(requestId: string, accepted: boolean): Promise<boolean>
@@ -138,7 +144,9 @@ declare global {
     ): Promise<StudioBackgroundCapabilityState | null>
     importLrc(): Promise<StudioLrcImportResult | null>
     exportText(options: StudioExportTextOptions): Promise<StudioPathResult | null>
-    exportVideo(options: StudioVideoExportOptions): Promise<StudioVideoExportResult | null>
+    exportVideo(
+      options: StudioVideoExportOptions,
+    ): Promise<StudioVideoExportResult | StudioVideoExportBackgroundFailure | null>
     cancelVideoExport(): Promise<boolean>
     getPendingWindowClose(): Promise<StudioWindowCloseRequest | null>
     resolveWindowClose(requestId: string, proceed: boolean): Promise<boolean>

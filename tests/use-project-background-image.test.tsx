@@ -132,7 +132,7 @@ describe('project background image Preview capability', () => {
     expect(latest.preview.onRetryResolution).toBeUndefined()
   })
 
-  it('authorizes Image export only for the exact current Preview-ready capability generation', async () => {
+  it('preserves ready Image export across unrelated revision rotation but not lifecycle changes', async () => {
     const first = restored('/media/background.png', 'studio-media://asset/first', 'first-1')
     const second = restored('/media/background.png', 'studio-media://asset/second', 'second-2')
     const resolveProjectBackground = vi
@@ -146,14 +146,12 @@ describe('project background image Preview capability', () => {
     expect(latest.getExportCapability()).toBeNull()
     await act(async () => latest.preview.onLoadStatusChange?.(first.media.url, 'ready'))
     expect(latest.getExportCapability()).toEqual(first.state)
-    const firstGenerationReadiness = latest.preview.onLoadStatusChange
     const refreshedFirst = { activeUrl: first.media.url, revision: 'first-2' }
     await act(async () => {
       latest.setCapability(refreshedFirst)
     })
-    await act(async () => firstGenerationReadiness?.(first.media.url, 'ready'))
-    expect(latest.getExportCapability()).toBeNull()
-    await act(async () => latest.preview.onLoadStatusChange?.(first.media.url, 'ready'))
+    expect(latest.getExportCapability()).toEqual(refreshedFirst)
+    expect(latest.invalidateExportCapability(first.state)).toBe(false)
     expect(latest.getExportCapability()).toEqual(refreshedFirst)
     await act(async () => latest.preview.onLoadStatusChange?.(first.media.url, 'error'))
     expect(latest.getExportCapability()).toBeNull()
@@ -163,6 +161,46 @@ describe('project background image Preview capability', () => {
     expect(latest.getExportCapability()).toBeNull()
     await act(async () => latest.preview.onLoadStatusChange?.(second.media.url, 'ready'))
     expect(latest.getExportCapability()).toEqual(second.state)
+  })
+
+  it('invalidates and retries only the exact failed export capability without clearing its path', async () => {
+    const path = '/media/retry-export.png'
+    const result = restored(path, 'studio-media://asset/retry-export', 'retry-export-1')
+    const refreshed = { ...result.state, revision: 'retry-export-2' }
+    const newer = restored('/media/newer.png', 'studio-media://asset/newer-export', 'newer-1')
+    const getBackgroundState = vi.fn(async () => refreshed)
+    installStudio({
+      getBackgroundState,
+      resolveProjectBackground: vi.fn(async (projectPath) =>
+        projectPath === '/projects/newer.oks' ? newer : result,
+      ),
+    })
+    const props = probeProps(path, 42, '/projects/retry-export.oks')
+
+    await render(props)
+    await act(async () => latest.preview.onLoadStatusChange?.(result.media.url, 'ready'))
+    expect(latest.getExportCapability()).toEqual(result.state)
+    await act(async () => {
+      expect(latest.invalidateExportCapability(result.state)).toBe(true)
+    })
+    expect(latest.getExportCapability()).toBeNull()
+    expect(latest.preview).toMatchObject({ resolutionStatus: 'error', url: null })
+    expect(latest.preview.onRetryResolution).toBeTypeOf('function')
+    expect(latest.sourceFor(props.background).resolutionStatus).toBe('error')
+
+    await act(async () => {
+      latest.preview.onRetryResolution?.()
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
+    })
+    expect(getBackgroundState).toHaveBeenCalledOnce()
+    expect(latest.preview).toMatchObject({ resolutionStatus: 'available', url: result.media.url })
+    expect(latest.getExportCapability()).toBeNull()
+    await act(async () => latest.preview.onLoadStatusChange?.(result.media.url, 'ready'))
+    expect(latest.getExportCapability()).toEqual(refreshed)
+
+    await render(probeProps('/media/newer.png', 43, '/projects/newer.oks'))
+    expect(latest.invalidateExportCapability(result.state)).toBe(false)
+    expect(latest.preview).toMatchObject({ resolutionStatus: 'available', url: newer.media.url })
   })
 
   it.each([

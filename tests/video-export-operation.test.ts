@@ -142,22 +142,22 @@ describe('video export operation preflight and lifecycle', () => {
     expectClean(fixture, sender)
   })
 
-  it('rejects failed authorization before export lifecycle, setup, or destination effects', async () => {
+  it('cleans failed authorization lifecycle before setup, destination, or progress effects', async () => {
     const fixture = harness()
     const sender = new FakeSender(8)
     fixture.authorizeExport.mockRejectedValueOnce(new Error('fixed warning'))
 
     await expect(run(fixture.coordinator, sender)).rejects.toThrow('fixed warning')
 
-    expect(fixture.events).toEqual(['parse'])
+    expect(fixture.events).toEqual(['parse', 'begin'])
     for (const effect of [
-      fixture.createCommitState,
       fixture.prepareExport,
       fixture.selectDestination,
       fixture.executeExport,
       fixture.sendProgress,
     ])
       expect(effect).not.toHaveBeenCalled()
+    expect(fixture.createCommitState).toHaveBeenCalledOnce()
     expectClean(fixture, sender)
   })
 
@@ -171,11 +171,58 @@ describe('video export operation preflight and lifecycle', () => {
 
     sender.destroy()
     authorization.resolve({ backgroundImage: null })
-    await expect(running).rejects.toThrow('owner is no longer available')
+    await expect(running).rejects.toMatchObject({ name: 'AbortError' })
 
-    expect(fixture.createCommitState).not.toHaveBeenCalled()
+    expect(fixture.createCommitState).toHaveBeenCalledOnce()
     expect(fixture.prepareExport).not.toHaveBeenCalled()
     expect(fixture.selectDestination).not.toHaveBeenCalled()
+    expectClean(fixture, sender)
+  })
+
+  it.each(['renderer cancel', 'app or window abort'])(
+    'cancels deferred authorization through %s without later effects',
+    async (kind) => {
+      const fixture = harness()
+      const sender = new FakeSender(kind === 'renderer cancel' ? 12 : 13)
+      const authorization = deferred<{ backgroundImage: null }>()
+      fixture.authorizeExport.mockImplementationOnce(() => authorization.promise)
+      const running = run(fixture.coordinator, sender)
+      await vi.waitFor(() => expect(fixture.coordinator.hasActiveExport()).toBe(true))
+      const operation = fixture.coordinator.activeExportForOwner(sender.id)!
+
+      let cancellation: Promise<void> | null = null
+      if (kind === 'renderer cancel') {
+        expect(operation.commitState.tryBeginCancellation()).toBe(true)
+        operation.controller.abort()
+      } else {
+        cancellation = fixture.coordinator.abortActiveExport()
+      }
+      authorization.resolve({ backgroundImage: null })
+
+      await expect(running).rejects.toMatchObject({ name: 'AbortError' })
+      await cancellation
+      expect(fixture.prepareExport).not.toHaveBeenCalled()
+      expect(fixture.selectDestination).not.toHaveBeenCalled()
+      expect(fixture.executeExport).not.toHaveBeenCalled()
+      expect(fixture.sendProgress).not.toHaveBeenCalled()
+      expectClean(fixture, sender)
+    },
+  )
+
+  it('rejects a concurrent export while authorization owns the lifecycle', async () => {
+    const fixture = harness()
+    const sender = new FakeSender(14)
+    const authorization = deferred<{ backgroundImage: null }>()
+    fixture.authorizeExport.mockImplementationOnce(() => authorization.promise)
+    const running = run(fixture.coordinator, sender)
+    await vi.waitFor(() => expect(fixture.authorizeExport).toHaveBeenCalledOnce())
+
+    await expect(run(fixture.coordinator, new FakeSender(15))).rejects.toThrow(
+      'Another karaoke video export is already running',
+    )
+    expect(fixture.createCommitState).toHaveBeenCalledOnce()
+    authorization.resolve({ backgroundImage: null })
+    await expect(running).resolves.toEqual(RESULT)
     expectClean(fixture, sender)
   })
 
@@ -194,8 +241,8 @@ describe('video export operation preflight and lifecycle', () => {
     await expect(run(fixture.coordinator, sender)).resolves.toEqual(RESULT)
     expect(fixture.events).toEqual([
       'parse',
-      'authorize',
       'begin',
+      'authorize',
       'prepare',
       'destination',
       'execute',

@@ -1136,6 +1136,11 @@ export default function App() {
           background,
         })
         if (!result) return
+        if ('status' in result) {
+          backgroundImages.invalidateExportCapability(result.background)
+          showToast(result.message, 'warning')
+          return
+        }
         setExportDialogOpen(false)
         const fallback = result.fontFallbacks?.[0]
         showToast(

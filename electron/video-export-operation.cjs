@@ -39,8 +39,6 @@ function createVideoExportOperation({
     // first so lifecycle and I/O cannot begin before it accepts the request.
     const project = parseProject(request.projectJson)
     if (activeExport) throw new Error('Another karaoke video export is already running')
-    const authorization = await authorizeExport({ project, request, sender })
-    if (activeExport) throw new Error('Another karaoke video export is already running')
     if (sender.isDestroyed()) throw new Error('The video export owner is no longer available')
 
     const operation = beginExport(sender.id)
@@ -52,6 +50,14 @@ function createVideoExportOperation({
     try {
       sender.once('destroyed', abortWhenOwnerCloses)
       ownerListenerAttached = true
+
+      const authorization = await authorizeExport({
+        project,
+        request,
+        sender,
+        signal: operation.controller.signal,
+      })
+      throwIfCanceled(operation.controller.signal)
 
       const preparation = await prepareExport({
         owner, request, signal: operation.controller.signal,
