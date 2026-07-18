@@ -21,8 +21,9 @@ merge a checkpoint wholesale merely because its integrated test suite passed.
 
 ## Durable Issue and authorship record
 
-The lead agent acts as the **Orchestrator** for repository lifecycle and required
-GitHub I/O. Before the Orchestrator assigns or resumes any implementation chunk,
+The lead agent acts as the **Orchestrator** for repository lifecycle, Issue and
+queue arbitration, and coordination of the GitHub record.
+Before the Orchestrator assigns or resumes any implementation chunk,
 a durable, scoped GitHub Issue must exist. The Issue records the motivating
 problem or evidence, scope, deliberate exclusions, acceptance criteria,
 dependencies, and assignment. A roadmap entry, chat instruction, branch name,
@@ -89,25 +90,60 @@ decision, not whose credentials transported it.
 
 Developer and Reviewer execution never depends on GitHub, a connector, a
 browser, `gh`, or direct network access. The Orchestrator supplies the scoped
-Issue/PR snapshot and exact local commits or diff, then transports GitHub-ready
-text when needed. A relay preserves the originating `## Developer` or
+Issue/PR snapshot and exact local commits or diff. Agents other than the
+Orchestrator are local-only by default and return GitHub-ready text for relay.
+
+Direct GitHub participation is a fail-closed exception that requires an
+explicit per-task assignment. The assignment must name the participating role,
+the existing assigned branch, the linked delivery Issue, any existing linked
+pull request, and each permitted remote operation. General repository access,
+tool availability, silence, or permission from an earlier task is not
+authorization. The exception cannot expand the user's authority, the Issue's
+scope, or the writer's exclusive file and behavior ownership.
+
+Within that explicit assignment:
+
+- The sole assigned writer may commit only its own scoped changes, push without
+  force only its already assigned branch, open or update only that branch's
+  linked pull request, read that pull request's review feedback, and post only
+  its own comments whose first nonblank line is `## Developer`.
+- An independent Reviewer may read that linked pull request and post only its
+  own findings-first review whose first nonblank line is `## Reviewer`. Before
+  posting, it confirms that the pull-request head exactly matches the locally
+  reviewed commit. A changed head requires local rereview and a new exact-head
+  recommendation.
+
+Only the Orchestrator may create, switch, move, or remove worktrees; create,
+switch, merge, or delete branches; arbitrate Issues, labels, assignments, or the
+delivery queue; change a pull request's base; merge a pull request; perform
+post-merge verification or cleanup; or prune worktree metadata. A remote
+participation assignment never transfers those operations. Repository policy
+authorization also does not provide credentials, network, keychain, sandbox, or
+approval access, or permit bypassing inherited or managed permissions. Use a
+connector or `gh` only for an operation named in the assignment; if the required
+access is unavailable, return the local handoff for relay.
+
+An authorized agent posts only its own substantive analysis under its own role
+marker. When the Orchestrator transports text instead, the relay contract
+applies. A relay preserves the originating `## Developer` or
 `## Reviewer` marker and the authored text verbatim. When the authored text does
-not already disclose transport, an immediately adjacent `## Orchestrator` post
-must state that the content was relayed verbatim and identify its originating
-role. Any new Orchestrator interpretation, acceptance, or decision belongs in a
-separate `## Orchestrator` post. Transport never grants the originating agent or
-the Orchestrator authority beyond the user's task, and it does not transfer the
-lead-owned lifecycle operations listed in `AGENTS.md`.
+not already disclose transport,
+an immediately adjacent `## Orchestrator` post must state that the content was
+relayed verbatim and identify its originating role. Any new Orchestrator
+interpretation, acceptance, or decision belongs in a separate `## Orchestrator` post.
+Direct posting and relay never grant either role authority beyond the user's
+task or transfer the Orchestrator-only operations above.
 
 ## Change flow
 
 1. Establish the scoped delivery Issue above before assigning implementation.
    Start its work from an observed MVP workflow blocker, roadmap decision, bug,
    or other recorded evidence.
-2. Create a short-lived branch from current `main`. Use a descriptive prefix such
-   as `feature/`, `fix/`, `docs/`, or `chore/`.
-3. Open a draft pull request early, and link and close the delivery Issue. Keep
-   unrelated changes in separate pull requests. Aim for 750–1000 changed lines,
+2. The Orchestrator creates a short-lived branch from current `main`. Use a
+   descriptive prefix such as `feature/`, `fix/`, `docs/`, or `chore/`.
+3. The Orchestrator or an explicitly authorized writer opens a draft pull
+   request early and links and closes the delivery Issue. Keep unrelated changes
+   in separate pull requests. Aim for 750–1000 changed lines,
    counting additions and deletions, so an adversarial reviewer can understand
    the complete diff. This is a soft limit: a documented invariant class may
    exceed it when splitting schema, trust-boundary, persistence, or
@@ -131,7 +167,8 @@ lead-owned lifecycle operations listed in `AGENTS.md`.
    a linked GitHub issue created before merge. Merge only after the review
    passes at the exact head, all review conversations are resolved, and the
    required protected CI checks pass.
-7. Squash merge, delete the branch, and leave `main` green and releasable.
+7. The Orchestrator squash merges, deletes the branch, and leaves `main` green
+   and releasable.
 
 One human approval becomes required when a second maintainer is reliably available.
 Until then, pull requests still provide the change record, while a zero-approval

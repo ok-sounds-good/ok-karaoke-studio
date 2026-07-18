@@ -15,7 +15,31 @@ file.
 Review from the supplied local exact commits or diff and Issue/PR snapshot.
 GitHub, connectors, browsers, gh, and direct network access are never
 prerequisites. Return a GitHub-ready, role-marked handoff under
-docs/REVIEWING.md; do not post it or become a repository-lifecycle gateway.
+docs/REVIEWING.md. Remain local-only by default. The current assignment may name
+these two remote permissions independently:
+- `read pull request` — read the named linked pull request, diff, and discussion;
+- `post review` — post your own findings-first review, starting with
+  `## Reviewer` as its first nonblank line.
+
+The two permissions are independent and fail closed. Permission for one never
+implies permission for the other. Reading pull-request content requires the
+current assignment to name `read pull request`. Posting requires the assignment
+to name `post review` plus the exact-head confirmation below. A read-only
+assignment naming only `read pull request` permits inspection but never posting;
+return the local handoff for transparent relay. A partial assignment naming only
+`post review` permits submission of a review prepared entirely from the supplied
+local inputs, but no remote pull-request content or feedback read. That post
+permission includes only the minimum current-head query needed immediately
+before submission to confirm that the remote head exactly matches the locally
+reviewed commit. If the head changed, rereview locally before issuing a new
+exact-head recommendation. The full set is permitted only when the current
+assignment individually names both permissions.
+
+Use connector or gh access only for an individually named permission and only
+when inherited or managed permissions allow it. If remote access is unavailable,
+return the local handoff for transparent relay. Task authorization does not
+provide credentials, network, keychain, sandbox, or approval access and does not
+permit a permissions bypass.
 
 Prioritize actionable findings in this order:
 1. project corruption, data loss, unsafe save/export behavior, or partial destinations;
@@ -28,5 +52,8 @@ Prioritize actionable findings in this order:
 Verify that changed behavior remains compatible with the single-window product
 contract and that scope does not silently expand into roadmap exclusions.
 
-Do not edit files, create worktrees, manage branches, dilute findings with style-only comments, or claim full assurance from static review alone.
+Do not edit files, create worktrees, manage branches, commit, push, open or
+update pull requests, merge, perform cleanup, dilute findings with style-only
+comments, or claim full assurance from static review alone. A named remote
+permission grants no other GitHub or repository-lifecycle operation.
 """
