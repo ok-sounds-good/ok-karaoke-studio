@@ -31,19 +31,24 @@ roadmap boundary.
 
 ## Branches and worktrees
 
-- The lead agent is the Orchestrator for the Issue, repository lifecycle, and
-  GitHub record defined in `docs/SDLC.md`. Before assigning or resuming an
-  implementation chunk, confirm that its scoped delivery Issue exists; an
-  existing branch without one requires a reconciliation Issue first.
+- The lead agent is the Orchestrator for the Issue, queue arbitration,
+  repository lifecycle, and GitHub record defined in `docs/SDLC.md`. Before
+  assigning or resuming an implementation chunk, confirm that its scoped
+  delivery Issue exists; an existing branch without one requires a
+  reconciliation Issue first.
 - For nontrivial change work, the lead agent should create or use a short-lived
   branch in an isolated worktree before editing.
 - Place repository-local worktrees under `.worktrees/<task-slug>/`. The
   `.worktrees/` directory is intentionally ignored and must never be committed.
 - If the task already runs inside an assigned worktree, use it.
-- Subagents must not create, switch, move, or remove worktrees; create, switch,
-  merge, or delete branches; push commits; open, update, or merge pull requests;
-  or prune worktree metadata. The lead agent owns all lifecycle and
-  remote-repository operations.
+- Only the Orchestrator may create, switch, move, or remove worktrees; create,
+  switch, merge, or delete branches; arbitrate Issues or the delivery queue;
+  merge pull requests; perform post-merge verification or cleanup; or prune
+  worktree metadata. Delegation never transfers these operations.
+- Agents other than the Orchestrator are local-only by default. Without the
+  explicit per-task authorization defined under **Delegation and review**, they
+  must not commit or push, open or update a pull request, read remote review
+  feedback, post to GitHub, or use a connector or `gh` for repository work.
 - Follow the pull-request and merge policy in `docs/SDLC.md`. Do not commit
   directly to `main` unless the user explicitly requests that workflow.
 - Flag pre-existing or concurrent changes whose provenance or intent is unclear.
@@ -105,7 +110,9 @@ delegating work.
   security review, or adversarial review.
 - Prefer parallel delegation for read-heavy tasks. Do not let multiple agents
   edit the same worktree concurrently.
-- Give each write-capable agent an explicit file and behavior scope.
+- Give each write-capable agent an exclusive file and behavior scope. While that
+  assignment is active, one writer owns its changes and no other agent edits,
+  commits, or pushes them concurrently.
 - For nontrivial changes, obtain an independent adversarial review before merge.
   Use the canonical reachability rubric and finding template in
   `docs/REVIEWING.md`, and pass that document to reviewer agents.
@@ -116,8 +123,29 @@ delegating work.
   the final synthesis, validation statement, and merge recommendation.
 - Developer and Reviewer work must be possible from the assigned local
   worktree, exact commit range, and supplied Issue/PR snapshot without GitHub, a
-  connector, a browser, `gh`, or direct network access. They return
-  GitHub-ready text to the Orchestrator instead of becoming repository gateways.
+  connector, a browser, `gh`, or direct network access. By default, they return
+  GitHub-ready text to the Orchestrator for transparent relay.
+- GitHub participation is a fail-closed, per-task exception. The assignment must
+  identify the agent's role, the existing assigned branch, the linked delivery
+  Issue, and each permitted remote operation. Silence, general repository
+  access, or an earlier assignment is not authorization, and no assignment can
+  grant authority beyond the user's task or the agent's exclusive scope.
+- An explicitly authorized writer may commit only its own scoped changes, push
+  without force only its already assigned branch, open or update only that
+  branch's linked pull request, read that pull request's review feedback, and
+  post only its own role-marked `## Developer` comments. It may not create or
+  switch branches, change the pull request's base, arbitrate Issues or labels,
+  merge, or perform cleanup.
+- An explicitly authorized independent Reviewer may read the linked pull
+  request and post only its own findings-first, role-marked `## Reviewer` review
+  after confirming that the remote head exactly matches the locally reviewed
+  commit. A changed head requires a local rereview and new exact-head
+  recommendation; review authorization never grants write or lifecycle access.
+- A connector or `gh` may be used only when the per-task assignment explicitly
+  authorizes the relevant operation. Repository authorization does not supply
+  credentials, network, keychain, sandbox, or approval access and never permits
+  bypassing inherited or managed permissions; if access is unavailable, return
+  the local handoff for relay.
 - Follow the substantive-author role-marker and transparent-relay rules in
   `docs/SDLC.md`. Relaying a `## Developer` or `## Reviewer` handoff does not
   transfer worktree, branch, commit, pull-request, merge, or other lifecycle

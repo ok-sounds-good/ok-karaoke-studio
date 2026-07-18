@@ -193,6 +193,57 @@ describe('reviewer infrastructure contract', () => {
     }
   })
 
+  it('makes direct agent GitHub participation narrow, explicit, and optional', () => {
+    const agents = source('AGENTS.md')
+    const sdlc = source('docs/SDLC.md')
+    const reviewer = source('.codex/agents/oks_reviewer.toml')
+    const electronWorker = source('.codex/agents/oks_electron_worker.toml')
+    const generalWorker = source('.codex/agents/oks_worker.toml')
+
+    for (const contract of [agents, sdlc]) {
+      expect(contract).toContain('local-only by default')
+      expect(contract).toContain('explicit per-task')
+      expect(contract).toMatch(/push\s+without\s+force/)
+      expect(contract).toContain('already assigned branch')
+      expect(contract).toContain('linked pull request')
+      expect(contract).toContain('review feedback')
+      expect(contract).toContain('findings-first')
+      expect(contract).toContain('exactly matches')
+      expect(contract).toContain('credentials, network, keychain, sandbox, or')
+    }
+
+    expect(sdlc).toMatch(
+      /Only the Orchestrator may create, switch, move, or remove worktrees; create,\s+switch, merge, or delete branches/,
+    )
+    expect(sdlc).toContain('arbitrate Issues, labels, assignments, or the\ndelivery queue')
+    expect(sdlc).toContain("change a pull request's base; merge a pull request")
+    expect(sdlc).toContain('post-merge verification or cleanup')
+    expect(sdlc).toContain('A remote\nparticipation assignment never transfers those operations')
+    expect(sdlc).toContain('does not provide credentials, network, keychain, sandbox, or')
+    expect(sdlc).toContain('bypassing inherited or managed permissions')
+    expect(sdlc).toContain('An authorized agent posts only its own substantive analysis')
+
+    for (const worker of [generalWorker, electronWorker]) {
+      expect(worker).toContain('Remain local-only by default')
+      expect(worker).toContain('current task assignment explicitly names')
+      expect(worker).toContain('commit only your own scoped changes')
+      expect(worker).toMatch(/push\s+without\s+force only the assigned branch/)
+      expect(worker).toMatch(/open or update only its linked pull\s+request/)
+      expect(worker).toMatch(/comments beginning\s+with `## Developer`/)
+      expect(worker).toContain('Never create, switch, merge, or delete branches')
+      expect(worker).toContain('perform post-merge verification or cleanup')
+      expect(worker).toContain('follow inherited and managed permissions')
+    }
+
+    expect(reviewer).toContain('sandbox_mode = "read-only"')
+    expect(reviewer).toContain('Remain local-only by default')
+    expect(reviewer).toContain('current task assignment explicitly authorizes remote review')
+    expect(reviewer).toContain('post your own findings-first review')
+    expect(reviewer).toContain('head exactly matches the locally reviewed commit')
+    expect(reviewer).toContain('starts with `## Reviewer` as its first nonblank line')
+    expect(reviewer).toContain('Remote review\nauthorization grants no other GitHub')
+  })
+
   it('makes review local, exact-head, and COMMENT-compatible', () => {
     const contract = source('docs/REVIEWING.md')
     const agents = source('AGENTS.md')

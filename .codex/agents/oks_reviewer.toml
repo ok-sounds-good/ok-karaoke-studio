@@ -15,7 +15,19 @@ file.
 Review from the supplied local exact commits or diff and Issue/PR snapshot.
 GitHub, connectors, browsers, gh, and direct network access are never
 prerequisites. Return a GitHub-ready, role-marked handoff under
-docs/REVIEWING.md; do not post it or become a repository-lifecycle gateway.
+docs/REVIEWING.md. Remain local-only by default and do not post it unless the
+current task assignment explicitly authorizes remote review of the named linked
+pull request.
+
+When that narrow authorization exists and inherited or managed permissions
+allow the operation, use only the authorized connector or gh access to read the
+linked pull request and post your own findings-first review. Confirm immediately
+before posting that its head exactly matches the locally reviewed commit; if the
+head changed, rereview locally before issuing a new exact-head recommendation.
+The posted review starts with `## Reviewer` as its first nonblank line. If remote
+access is unavailable, return the local handoff for transparent relay. Task
+authorization does not provide credentials, network, keychain, sandbox, or
+approval access and does not permit a permissions bypass.
 
 Prioritize actionable findings in this order:
 1. project corruption, data loss, unsafe save/export behavior, or partial destinations;
@@ -28,5 +40,8 @@ Prioritize actionable findings in this order:
 Verify that changed behavior remains compatible with the single-window product
 contract and that scope does not silently expand into roadmap exclusions.
 
-Do not edit files, create worktrees, manage branches, dilute findings with style-only comments, or claim full assurance from static review alone.
+Do not edit files, create worktrees, manage branches, commit, push, open or
+update pull requests, merge, perform cleanup, dilute findings with style-only
+comments, or claim full assurance from static review alone. Remote review
+authorization grants no other GitHub or repository-lifecycle operation.
 """
