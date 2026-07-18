@@ -300,8 +300,11 @@ function fakeStyleSessionWindow(
       .mockResolvedValueOnce(stageFrameState('footer', { applied: true, changedClock: true }))
       .mockResolvedValueOnce(styleActionTarget('reopen'))
       .mockResolvedValueOnce(styleActionTarget('lead'))
+      .mockResolvedValueOnce(styleActionTarget('sync-aid'))
       .mockResolvedValueOnce(
         options.leadState ?? {
+          controls: 4,
+          cueProgress: 0.5,
           height: 720,
           resourcesReady: true,
           stageHeight: 540,
@@ -502,8 +505,8 @@ describe('production-window visual smoke', () => {
       ),
     ).resolves.toEqual({ ok: true })
     const inputEvents = window.webContents.sendInputEvent.mock.calls.map(([event]) => event)
-    expect(inputEvents).toHaveLength(124)
-    expect(inputEvents.filter(({ type }) => type === 'mouseDown')).toHaveLength(23)
+    expect(inputEvents).toHaveLength(127)
+    expect(inputEvents.filter(({ type }) => type === 'mouseDown')).toHaveLength(24)
     const expectedKeys = [
       'Tab',
       'Tab',
@@ -579,6 +582,7 @@ describe('production-window visual smoke', () => {
       'apply-stage',
       'reopen',
       'lead',
+      'sync-aid',
     ])
     expect(window.setContentSize.mock.calls).toContainEqual([1280, 720, false])
     expect(window.setContentSize.mock.calls).toContainEqual([1440, 900, false])
@@ -630,7 +634,7 @@ describe('production-window visual smoke', () => {
       ),
     ).resolves.toEqual({ ok: true })
 
-    expect(window.webContents.sendInputEvent).toHaveBeenCalledTimes(124)
+    expect(window.webContents.sendInputEvent).toHaveBeenCalledTimes(127)
     expect(window.webContents.sendInputEvent.mock.calls[0][0]).toEqual({
       type: 'mouseMove',
       x: 61,
@@ -796,6 +800,30 @@ describe('production-window visual smoke', () => {
     expect(window.webContents.capturePage).toHaveBeenCalledTimes(28)
     expect(publish).not.toHaveBeenCalled()
     expect(writeFailure).toHaveBeenCalledOnce()
+  })
+
+  it('requires native-valid spinner-free timing with an explicit 100 ms Arrow contract', async () => {
+    const readiness = smoke.projectLyricsReadinessScript(
+      { height: 720, width: 1280 },
+      { kind: 'lead-vocal' },
+    )
+    const styles = await readFile(new URL('../src/video-style.css', import.meta.url), 'utf8')
+    expect(readiness).toContain("input.step !== 'any'")
+    expect(readiness).toContain("input.dataset.stepMs !== '100'")
+    expect(readiness).toContain("input.min !== '0' || input.max !== '60000'")
+    expect(readiness).toContain("getComputedStyle(input).appearance !== 'textfield'")
+    expect(readiness).toContain('input.validity.stepMismatch || !input.checkValidity()')
+    expect(readiness).toContain('Arrow Up or Arrow Down')
+    expect(styles).toContain(`.vocal-timing-input input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}`)
+    expect(styles).toContain(`.vocal-timing-input input[type='number']::-webkit-inner-spin-button,
+.vocal-timing-input input[type='number']::-webkit-outer-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+  appearance: none;
+}`)
   })
 
   it('publishes no authoritative evidence for duplicate same-size Style captures', async () => {

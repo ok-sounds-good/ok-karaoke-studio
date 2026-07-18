@@ -6,6 +6,7 @@ import type {
   ProjectStyleSession,
   StageStyleDraftChange,
 } from '../hooks/useProjectStyleSession'
+import { canonicalVocalStyle } from '../hooks/useProjectStyleSession'
 import type { KaraokeProject } from '../lib/model'
 import {
   FONT_SIZE_OPTIONS,
@@ -40,6 +41,8 @@ export interface ProjectStyleEditorProps {
   onTogglePlayback: () => void
   onCancel: ProjectStyleSession['cancel']
   onApply: ProjectStyleSession['apply']
+  canApply: boolean
+  applyBlockedReason: string | null
 }
 
 function isEditableTarget(target: EventTarget | null) {
@@ -99,6 +102,8 @@ export function ProjectStyleEditor({
   onTogglePlayback,
   onCancel,
   onApply,
+  canApply,
+  applyBlockedReason,
 }: ProjectStyleEditorProps) {
   const titleId = useId()
   const headingRef = useRef<HTMLHeadingElement>(null)
@@ -106,6 +111,7 @@ export function ProjectStyleEditor({
   const [titleCardPreviewRole, setTitleCardPreviewRole] = useState<TitleCardRole>('eyebrow')
   const [stageFramePreviewRole, setStageFramePreviewRole] = useState<StageFrameRole>('brand')
   const stageStyle = draft.stageStyle
+  const canonicalVocal = canonicalVocalStyle(draft)
   const lyrics = stageStyle.lyrics
   const background = stageStyle.background
   const changeStageStyle = (change: StageStyleDraftChange) =>
@@ -358,10 +364,21 @@ export function ProjectStyleEditor({
         </div>
 
         <footer className="style-editor__actions">
+          {applyBlockedReason && (
+            <p id={`${titleId}-apply-error`} role="alert">
+              {applyBlockedReason}
+            </p>
+          )}
           <Button variant="ghost" data-style-action="cancel" onClick={onCancel}>
             Cancel
           </Button>
-          <Button variant="primary" data-style-action="apply" onClick={onApply}>
+          <Button
+            variant="primary"
+            aria-describedby={applyBlockedReason ? `${titleId}-apply-error` : undefined}
+            data-style-action="apply"
+            disabled={!canApply}
+            onClick={onApply}
+          >
             Apply &amp; close
           </Button>
         </footer>
@@ -379,7 +396,12 @@ export function ProjectStyleEditor({
             : destination === 'stage-frame'
               ? { target: 'stage-frame', role: stageFramePreviewRole, stageStyle }
               : destination === 'lead-vocal'
-                ? { target: 'lead-vocal', stageStyle, vocalStyle: draft.vocalStyle }
+                ? {
+                    target: 'lead-vocal',
+                    stageStyle,
+                    vocalStyle: canonicalVocal ?? draft.vocalStyle,
+                    timingValid: Boolean(canonicalVocal),
+                  }
                 : { target: destination, stageStyle }
         }
       />

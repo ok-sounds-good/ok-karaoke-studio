@@ -4,6 +4,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  createProjectStyleDraft,
   sameStageStyle,
   sameVocalStyle,
   useProjectStyleSession,
@@ -58,10 +59,7 @@ function projectStyleDraft(
   unsungColor = '#72687D',
   sungColor = '#FF8A2B',
 ): ProjectStyleDraft {
-  return {
-    stageStyle: stageStyle(family, unsungColor, sungColor),
-    vocalStyle: cloneVocalStyle(),
-  }
+  return createProjectStyleDraft(stageStyle(family, unsungColor, sungColor), cloneVocalStyle())
 }
 
 function visibleTextStyles(style: StageStyle) {
@@ -81,6 +79,7 @@ function expectIsolatedClone(actual: ProjectStyleDraft, expected: ProjectStyleDr
   expect(actual.stageStyle).not.toBe(expected.stageStyle)
   expect(actual.vocalStyle).not.toBe(expected.vocalStyle)
   expect(actual.vocalStyle.syncAid).not.toBe(expected.vocalStyle.syncAid)
+  expect(actual.vocalTiming).not.toBe(expected.vocalTiming)
   const actualStage = actual.stageStyle
   const expectedStage = expected.stageStyle
   expect(actualStage.background).not.toBe(expectedStage.background)
@@ -253,12 +252,14 @@ describe('project Style session', () => {
     const replacement = projectStyleDraft('Value Sans')
     replacement.stageStyle.background.imagePath = '/replacement.png'
     replacement.vocalStyle.previewMs = 4_500
+    replacement.vocalTiming.previewMs = '4500'
     await change(replacement)
     replacement.stageStyle.lyrics.typeface.family = 'Mutated after change'
     replacement.stageStyle.lyrics.typeface.faces[0].fullName = 'Mutated after change'
     replacement.stageStyle.lyrics.fontStyle.fullName = 'Mutated after change'
     replacement.stageStyle.background.imagePath = '/mutated.png'
     replacement.vocalStyle.previewMs = 1
+    replacement.vocalTiming.previewMs = '1'
     expect(currentSession.draft?.stageStyle.lyrics.typeface.family).toBe('Value Sans')
     expect(currentSession.draft?.stageStyle.lyrics.fontStyle.fullName).toBe('Value Sans Regular')
     expect(currentSession.draft?.stageStyle.background.imagePath).toBe('/replacement.png')
@@ -272,6 +273,7 @@ describe('project Style session', () => {
         draft.stageStyle.lyrics.typeface.faces[0].fullName = 'Updater result'
         draft.stageStyle.titleCard.title.visible = false
         draft.vocalStyle.syncAid.minLeadMs = 2_500
+        draft.vocalTiming.minLeadMs = '2500'
         return draft
       })
     })
@@ -279,6 +281,7 @@ describe('project Style session', () => {
     updaterInput!.stageStyle.lyrics.typeface.faces[0].fullName = 'Mutated callback result'
     updaterInput!.stageStyle.titleCard.title.visible = true
     updaterInput!.vocalStyle.syncAid.minLeadMs = 1
+    updaterInput!.vocalTiming.minLeadMs = '1'
     await render()
 
     expect(currentSession.draft?.stageStyle.lyrics.sungColor).toBe('#123456')
@@ -327,6 +330,66 @@ describe('project Style session', () => {
     })
     expect(currentSession.isOpen).toBe(false)
   })
+
+  it.each([
+    ['empty', 'previewMs', ''],
+    ['fractional', 'minLeadMs', '1000.5'],
+    ['unsafe', 'maxLeadMs', '9007199254740992'],
+    ['negative', 'minLeadMs', '-1'],
+    ['over-limit', 'previewMs', '60001'],
+    ['minimum ordering', 'minLeadMs', '3001'],
+    ['maximum ordering', 'maxLeadMs', '4001'],
+  ] as const)('retains a %s raw timing draft and rejects Apply', async (_case, field, value) => {
+    await start()
+    await act(async () =>
+      currentSession.change((draft) => ({
+        ...draft,
+        vocalTiming: { ...draft.vocalTiming, [field]: value },
+      })),
+    )
+
+    expect(currentSession.draft?.vocalTiming[field]).toBe(value)
+    expect(currentSession.canApply).toBe(false)
+    expect(currentSession.applyBlockedReason).toContain('Fix the Lead Vocal')
+    expect(currentSession.apply()).toBe(false)
+    expect(commitDraft).not.toHaveBeenCalled()
+    expect(currentSession.isOpen).toBe(true)
+    expect(currentSession.draft?.vocalTiming[field]).toBe(value)
+  })
+
+  it.each([
+    ['all-zero equality', '0', '0', '0'],
+    ['maximum boundary', '60000', '0', '60000'],
+    ['maximum equality', '60000', '60000', '60000'],
+    ['non-step integers', '451', '149', '307'],
+  ])(
+    'accepts %s timing and passes only canonical integers to commit',
+    async (_case, previewMs, minLeadMs, maxLeadMs) => {
+      await start()
+      await act(async () =>
+        currentSession.change((draft) => ({
+          ...draft,
+          vocalTiming: { previewMs, minLeadMs, maxLeadMs },
+        })),
+      )
+
+      expect(currentSession.canApply).toBe(true)
+      expect(currentSession.applyBlockedReason).toBeNull()
+      expect(currentSession.apply()).toBe(true)
+      expect(commitDraft).toHaveBeenCalledWith(
+        ownerKey,
+        expect.objectContaining({
+          vocalStyle: expect.objectContaining({
+            previewMs: Number(previewMs),
+            syncAid: expect.objectContaining({
+              minLeadMs: Number(minLeadMs),
+              maxLeadMs: Number(maxLeadMs),
+            }),
+          }),
+        }),
+      )
+    },
+  )
 
   it.each<ProjectStyleCommitResult>(['applied', 'noop'])(
     'closes and restores focus once after a %s acknowledgement',
@@ -401,6 +464,7 @@ describe('project Style session', () => {
     const changed = projectStyleDraft('Retry Sans')
     changed.stageStyle.background.imagePath = '/latent-retry.png'
     changed.vocalStyle.previewMs = 7_000
+    changed.vocalTiming.previewMs = '7000'
     await change(changed)
     const heldDraft = structuredClone(currentSession.draft!)
     commitDraft.mockImplementationOnce(() => {
@@ -592,7 +656,7 @@ describe('project Style session', () => {
     })
   })
 
-  it('compares complete vocal overrides semantically, including unexposed timing fields', () => {
+  it('compares complete vocal overrides semantically, including timing fields', () => {
     const baseline = cloneVocalStyle(source.vocalStyle)
     baseline.typeface = lyricStyle().typeface
     baseline.fontStyle = lyricStyle().fontStyle

@@ -11,6 +11,12 @@ import {
   type VisibleTextStyle,
   type VocalStyle,
 } from '../lib/video-style'
+import {
+  VOCAL_STYLE_TIMING_ERROR,
+  vocalStyleTimingDraft,
+  vocalStyleWithTiming,
+  type VocalStyleTimingDraft,
+} from '../lib/vocal-style-timing'
 
 export interface ProjectStyleOwnerKey {
   readonly projectId: string
@@ -24,6 +30,7 @@ export type ProjectStyleCommitResult = 'applied' | 'noop' | 'blocked' | 'stale'
 export interface ProjectStyleDraft {
   stageStyle: StageStyle
   vocalStyle: VocalStyle
+  vocalTiming: VocalStyleTimingDraft
 }
 
 export type ProjectStyleDraftChange =
@@ -47,6 +54,8 @@ export interface ProjectStyleSession {
   readonly isOpen: boolean
   readonly blocksProjectActions: boolean
   readonly isDirty: boolean
+  readonly canApply: boolean
+  readonly applyBlockedReason: string | null
   start: (trigger: HTMLElement) => void
   change: (change: ProjectStyleDraftChange) => void
   apply: () => boolean
@@ -144,13 +153,32 @@ export function cloneProjectStyleDraft(draft: ProjectStyleDraft): ProjectStyleDr
   return {
     stageStyle: cloneStageStyle(draft.stageStyle),
     vocalStyle: cloneVocalStyle(draft.vocalStyle),
+    vocalTiming: { ...draft.vocalTiming },
   }
+}
+
+export function createProjectStyleDraft(
+  stageStyle: StageStyle,
+  vocalStyle: VocalStyle,
+): ProjectStyleDraft {
+  return {
+    stageStyle,
+    vocalStyle,
+    vocalTiming: vocalStyleTimingDraft(vocalStyle),
+  }
+}
+
+export function canonicalVocalStyle(draft: ProjectStyleDraft): VocalStyle | null {
+  return vocalStyleWithTiming(draft.vocalStyle, draft.vocalTiming)
 }
 
 export function sameProjectStyleDraft(left: ProjectStyleDraft, right: ProjectStyleDraft): boolean {
   return (
     sameStageStyle(left.stageStyle, right.stageStyle) &&
-    sameVocalStyle(left.vocalStyle, right.vocalStyle)
+    sameVocalStyle(left.vocalStyle, right.vocalStyle) &&
+    left.vocalTiming.previewMs === right.vocalTiming.previewMs &&
+    left.vocalTiming.minLeadMs === right.vocalTiming.minLeadMs &&
+    left.vocalTiming.maxLeadMs === right.vocalTiming.maxLeadMs
   )
 }
 
@@ -274,13 +302,16 @@ export function useProjectStyleSession({
     if (!active || applyingRef.current === active || !canInteractRef.current()) {
       return false
     }
+    const canonicalVocal = canonicalVocalStyle(active.draft)
+    if (!canonicalVocal) return false
+    const canonicalDraft = { ...active.draft, vocalStyle: canonicalVocal }
 
     applyingRef.current = active
     let result: ProjectStyleCommitResult
     try {
       result = commitDraftRef.current(
         cloneOwnerKey(active.ownerKey),
-        cloneProjectStyleDraft(active.draft),
+        cloneProjectStyleDraft(canonicalDraft),
       )
     } catch (error) {
       if (applyingRef.current === active) applyingRef.current = null
@@ -310,12 +341,15 @@ export function useProjectStyleSession({
 
   const active =
     storedSession && sameOwnerKey(storedSession.ownerKey, ownerKey) ? storedSession : null
+  const canApply = Boolean(active && canonicalVocalStyle(active.draft))
 
   return {
     draft: active ? cloneProjectStyleDraft(active.draft) : null,
     isOpen: active !== null,
     blocksProjectActions: active !== null,
     isDirty: active ? !sameProjectStyleDraft(active.baseline, active.draft) : false,
+    canApply,
+    applyBlockedReason: active && !canApply ? VOCAL_STYLE_TIMING_ERROR : null,
     start,
     change,
     apply,

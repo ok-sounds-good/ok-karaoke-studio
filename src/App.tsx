@@ -26,6 +26,8 @@ import { useWaveform } from './hooks/useWaveform'
 import { useProjectActionArbiter } from './hooks/useProjectActionArbiter'
 import { useProjectBackgroundImage } from './hooks/useProjectBackgroundImage'
 import {
+  canonicalVocalStyle,
+  createProjectStyleDraft,
   sameStageStyle,
   sameVocalStyle,
   useProjectStyleSession,
@@ -440,15 +442,17 @@ export default function App() {
         return 'stale'
       }
       if (projectMutationIsBlocked()) return 'blocked'
+      const canonicalVocal = canonicalVocalStyle(draft)
+      if (!canonicalVocal) return 'blocked'
       if (
         sameStageStyle(current.stageStyle, draft.stageStyle) &&
-        (!currentTrack || sameVocalStyle(currentTrack.vocalStyle, draft.vocalStyle))
+        (!currentTrack || sameVocalStyle(currentTrack.vocalStyle, canonicalVocal))
       ) {
         return 'noop'
       }
 
       const acceptedStageStyle = cloneStageStyle(draft.stageStyle)
-      const acceptedVocalStyle = cloneVocalStyle(draft.vocalStyle)
+      const acceptedVocalStyle = cloneVocalStyle(canonicalVocal)
       commitHistory((latest) => {
         const targetIndex =
           ownerKey.trackId === null
@@ -483,10 +487,8 @@ export default function App() {
     [commitHistory, projectMutationIsBlocked],
   )
   const projectStyleSource = useMemo<ProjectStyleDraft>(
-    () => ({
-      stageStyle: project.stageStyle,
-      vocalStyle: activeTrack?.vocalStyle ?? DEFAULT_VOCAL_STYLE,
-    }),
+    () =>
+      createProjectStyleDraft(project.stageStyle, activeTrack?.vocalStyle ?? DEFAULT_VOCAL_STYLE),
     [activeTrack?.vocalStyle, project.stageStyle],
   )
   const styleSession = useProjectStyleSession({
@@ -1619,6 +1621,8 @@ export default function App() {
           onTogglePlayback={playback.toggle}
           onCancel={styleSession.cancel}
           onApply={styleSession.apply}
+          canApply={styleSession.canApply}
+          applyBlockedReason={styleSession.applyBlockedReason}
         />
       ) : (
         <main className="studio-main">
@@ -1769,6 +1773,8 @@ export default function App() {
           phase={projectActionPhase}
           error={projectActionError}
           hasDraft={styleSession.blocksProjectActions}
+          canApplyDraft={styleSession.canApply}
+          applyBlockedReason={styleSession.applyBlockedReason}
           onApply={applyPendingProjectAction}
           onDiscard={discardPendingProjectAction}
           onKeep={keepPendingProjectAction}

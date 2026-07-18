@@ -9,6 +9,7 @@ import type {
   ProjectStyleDraftChange,
   ProjectStyleSession,
 } from '../src/hooks/useProjectStyleSession'
+import { createProjectStyleDraft } from '../src/hooks/useProjectStyleSession'
 import { createProject } from '../src/lib/model'
 import {
   FONT_SIZE_OPTIONS,
@@ -34,7 +35,7 @@ const READY_FONTS: EditorProps['fonts'] = {
 function applyChange(change: ProjectStyleDraftChange | undefined, current: StageStyle) {
   expect(change).toBeTypeOf('function')
   if (typeof change !== 'function') throw new Error('Expected a functional draft update')
-  return change({ stageStyle: current, vocalStyle: cloneVocalStyle() }).stageStyle
+  return change(createProjectStyleDraft(current, cloneVocalStyle())).stageStyle
 }
 
 function applyDraftChange(change: ProjectStyleDraftChange | undefined, current: ProjectStyleDraft) {
@@ -43,11 +44,11 @@ function applyDraftChange(change: ProjectStyleDraftChange | undefined, current: 
   return change(current)
 }
 
-function replaceInput(input: HTMLInputElement, value: string) {
+function replaceInput(input: HTMLInputElement, value: string, publish = true) {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
   if (!setter) throw new Error('Input value setter is unavailable')
   setter.call(input, value)
-  input.dispatchEvent(new InputEvent('input', { bubbles: true, data: value }))
+  if (publish) input.dispatchEvent(new InputEvent('input', { bubbles: true, data: value }))
 }
 
 function keyDown(target: Element, init: KeyboardEventInit) {
@@ -120,10 +121,10 @@ describe('ProjectStyleEditor', () => {
     const draft: ProjectStyleDraft =
       suppliedDraft && 'stageStyle' in suppliedDraft
         ? suppliedDraft
-        : {
-            stageStyle: suppliedDraft ?? project.stageStyle,
-            vocalStyle: cloneVocalStyle(project.tracks[0]?.vocalStyle),
-          }
+        : createProjectStyleDraft(
+            suppliedDraft ?? project.stageStyle,
+            cloneVocalStyle(project.tracks[0]?.vocalStyle),
+          )
     const props: EditorProps = {
       project,
       playbackMs: 1_250,
@@ -135,6 +136,8 @@ describe('ProjectStyleEditor', () => {
       onTogglePlayback: vi.fn(),
       onCancel: vi.fn(),
       onApply: vi.fn(),
+      canApply: true,
+      applyBlockedReason: null,
       ...overrides,
       draft,
     }
@@ -213,7 +216,7 @@ describe('ProjectStyleEditor', () => {
     expect(document.activeElement).toBe(stageFrameTab)
   })
 
-  it('edits independent Lead Vocal overrides without exposing latent vocal timing fields', async () => {
+  it('edits Lead Vocal overrides and exposes planner-backed timing controls', async () => {
     const project = createProject({ id: 'lead-vocal-style' })
     const face = project.stageStyle.lyrics.fontStyle
     const vocalStyle = {
@@ -225,10 +228,7 @@ describe('ProjectStyleEditor', () => {
       previewMs: 7_000,
       syncAid: { enabled: true, minLeadMs: 2_500, maxLeadMs: 6_000 },
     }
-    let draft: ProjectStyleDraft = {
-      stageStyle: structuredClone(project.stageStyle),
-      vocalStyle,
-    }
+    let draft = createProjectStyleDraft(structuredClone(project.stageStyle), vocalStyle)
     const onDraftChange = vi.fn<ProjectStyleSession['change']>()
     await renderEditor({ project, draft, onDraftChange })
     await act(async () => findButton(container, 'Lead Vocal').click())
@@ -244,15 +244,67 @@ describe('ProjectStyleEditor', () => {
         (output) => output.textContent,
       ),
     ).toEqual(['#123456', '#654321'])
-    expect(container.textContent).not.toContain('Preview time')
-    expect(container.textContent).not.toContain('Sync aid')
-    expect(container.querySelector('[aria-label="Lead Vocal design preview"]')).not.toBeNull()
-    expect(container.querySelector('[data-design-preview="lead-vocal"] .sync-aid')).toBeNull()
+    expect(panel.textContent).toContain('Preview Time')
+    expect(panel.textContent).toContain('Sync Aid')
+    expect(panel.textContent).toContain('literal blank row starts a new lyric section')
+    expect(panel.textContent).toContain('literal first word itself has valid start and end timing')
+    expect(panel.textContent).toContain('Arrow Up or Arrow Down adjusts by 100 ms')
+    const timingInputs = [
+      panel.querySelector<HTMLInputElement>('[aria-label="Lead Vocal Preview Time"]')!,
+      panel.querySelector<HTMLInputElement>('[aria-label="Lead Vocal Sync Aid Minimum lead"]')!,
+      panel.querySelector<HTMLInputElement>('[aria-label="Lead Vocal Sync Aid Maximum lead"]')!,
+    ]
+    expect(timingInputs.map(({ value }) => value)).toEqual(['7000', '2500', '6000'])
+    expect(
+      timingInputs.map(({ dataset, max, min, step, type }) => [
+        type,
+        step,
+        dataset.stepMs,
+        min,
+        max,
+      ]),
+    ).toEqual(Array(3).fill(['number', 'any', '100', '0', '60000']))
+    const designPreview = container.querySelector<HTMLElement>(
+      '[aria-label="Lead Vocal design preview"]',
+    )!
+    expect(designPreview.querySelectorAll('.stage-line')).toHaveLength(2)
+    expect(
+      [
+        ...designPreview
+          .querySelectorAll<HTMLElement>('.stage-line')[1]!
+          .querySelectorAll('.stage-word'),
+      ].map((word) => word.style.getPropertyValue('--word-progress')),
+    ).toEqual(['100%', '50%', '0%'])
+    expect(
+      designPreview
+        .querySelector<HTMLElement>('.sync-aid')
+        ?.style.getPropertyValue('--sync-progress'),
+    ).toBe('0.5')
     expect(
       [
         ...panel.querySelectorAll<HTMLSelectElement>('[aria-label="Lead Vocal font size"] option'),
       ].map((option) => Number(option.value)),
     ).toEqual(FONT_SIZE_OPTIONS)
+
+    const syncEnabled = panel.querySelector<HTMLInputElement>(
+      '[aria-label="Enable Lead Vocal Sync Aid"]',
+    )!
+    await act(async () => syncEnabled.click())
+    draft = applyDraftChange(onDraftChange.mock.calls.at(-1)?.[0], draft)
+    expect(draft.vocalStyle.syncAid.enabled).toBe(false)
+    expect(draft.vocalTiming).toEqual({
+      previewMs: '7000',
+      minLeadMs: '2500',
+      maxLeadMs: '6000',
+    })
+    await renderEditor({ project, draft, onDraftChange })
+    expect(container.querySelector('[aria-label="Lead Vocal design preview"] .sync-aid')).toBeNull()
+    await act(async () =>
+      container
+        .querySelector<HTMLInputElement>('[aria-label="Enable Lead Vocal Sync Aid"]')!
+        .click(),
+    )
+    draft = applyDraftChange(onDraftChange.mock.calls.at(-1)?.[0], draft)
 
     await act(async () =>
       panel.querySelector<HTMLInputElement>('[aria-label="Override Lead Vocal Typeface"]')!.click(),
@@ -324,6 +376,93 @@ describe('ProjectStyleEditor', () => {
       minLeadMs: 2_500,
       maxLeadMs: 6_000,
     })
+  })
+
+  it('preserves invalid linked timing text with associated errors and blocks direct Apply', async () => {
+    const project = createProject({ id: 'invalid-lead-vocal-timing' })
+    let draft = createProjectStyleDraft(project.stageStyle, project.tracks[0]!.vocalStyle)
+    const onDraftChange = vi.fn<ProjectStyleSession['change']>()
+    const onApply = vi.fn()
+    await renderEditor({ project, draft, onDraftChange, onApply })
+    await act(async () => findButton(container, 'Lead Vocal').click())
+
+    const preview = container.querySelector<HTMLInputElement>(
+      '[aria-label="Lead Vocal Preview Time"]',
+    )!
+    await act(async () => replaceInput(preview, '1000.5'))
+    draft = applyDraftChange(onDraftChange.mock.calls.at(-1)?.[0], draft)
+    expect(draft.vocalTiming.previewMs).toBe('1000.5')
+    expect(draft.vocalStyle.previewMs).toBe(3_000)
+    expect(draft.vocalStyle.syncAid.enabled).toBe(false)
+
+    const reason = 'Fix the Lead Vocal Preview Time and Sync Aid timing errors before applying.'
+    await renderEditor({
+      project,
+      draft,
+      onDraftChange,
+      onApply,
+      canApply: false,
+      applyBlockedReason: reason,
+    })
+    await act(async () => findButton(container, 'Background').click())
+    await act(async () => findButton(container, 'Lead Vocal').click())
+    const retained = container.querySelector<HTMLInputElement>(
+      '[aria-label="Lead Vocal Preview Time"]',
+    )!
+    expect(retained.value).toBe('1000.5')
+    expect(retained.getAttribute('aria-invalid')).toBe('true')
+    const describedBy = retained.getAttribute('aria-describedby')!.split(' ')
+    expect(
+      describedBy.some((id) => document.getElementById(id)?.getAttribute('role') === 'alert'),
+    ).toBe(true)
+    onDraftChange.mockClear()
+    const invalidStep = keyDown(retained, { code: 'ArrowUp', key: 'ArrowUp' })
+    expect(invalidStep.defaultPrevented).toBe(true)
+    expect(onDraftChange).not.toHaveBeenCalled()
+    expect(retained.value).toBe('1000.5')
+    expect(container.querySelector('[aria-label="Lead Vocal design preview"] .sync-aid')).toBeNull()
+    const apply = findButton(container, 'Apply & close')
+    expect(apply.disabled).toBe(true)
+    expect(container.textContent).toContain(reason)
+    await act(async () => apply.click())
+    expect(onApply).not.toHaveBeenCalled()
+
+    await act(async () => replaceInput(retained, '4501'))
+    draft = applyDraftChange(onDraftChange.mock.calls.at(-1)?.[0], draft)
+    expect(draft.vocalTiming.previewMs).toBe('4501')
+    expect(draft.vocalStyle.previewMs).toBe(4_501)
+    await renderEditor({ project, draft, onDraftChange, onApply, canApply: true })
+    expect(
+      container
+        .querySelector<HTMLInputElement>('[aria-label="Lead Vocal Preview Time"]')!
+        .getAttribute('aria-invalid'),
+    ).toBe('false')
+    const accepted = container.querySelector<HTMLInputElement>(
+      '[aria-label="Lead Vocal Preview Time"]',
+    )!
+    expect(accepted.validity.stepMismatch).toBe(false)
+    expect(accepted.checkValidity()).toBe(true)
+    expect(findButton(container, 'Apply & close').disabled).toBe(false)
+
+    replaceInput(accepted, '60000', false)
+    onDraftChange.mockClear()
+    expect(keyDown(accepted, { code: 'ArrowUp', key: 'ArrowUp' }).defaultPrevented).toBe(true)
+    expect(onDraftChange).not.toHaveBeenCalled()
+    expect(accepted.value).toBe('60000')
+    replaceInput(accepted, '4501', false)
+    const arrowUp = keyDown(accepted, { code: 'ArrowUp', key: 'ArrowUp' })
+    expect(arrowUp.defaultPrevented).toBe(true)
+    draft = applyDraftChange(onDraftChange.mock.calls.at(-1)?.[0], draft)
+    expect([draft.vocalTiming.previewMs, draft.vocalStyle.previewMs]).toEqual(['4601', 4_601])
+    await renderEditor({ project, draft, onDraftChange })
+    const stepped = container.querySelector<HTMLInputElement>(
+      '[aria-label="Lead Vocal Preview Time"]',
+    )!
+    onDraftChange.mockClear()
+    const arrowDown = keyDown(stepped, { code: 'ArrowDown', key: 'ArrowDown' })
+    expect(arrowDown.defaultPrevented).toBe(true)
+    draft = applyDraftChange(onDraftChange.mock.calls.at(-1)?.[0], draft)
+    expect([draft.vocalTiming.previewMs, draft.vocalStyle.previewMs]).toEqual(['4501', 4_501])
   })
 
   it('makes Lead Vocal unavailable when the project has no track', async () => {

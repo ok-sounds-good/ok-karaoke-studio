@@ -114,6 +114,81 @@ function blankVideoLine() {
 }
 
 describe('karaoke video frame planning', () => {
+  it('keeps the 50 ms synchronization clock path unchanged', () => {
+    const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
+    expect(app).toContain('refreshIntervalMs: syncMode ? 50 : 16')
+  })
+
+  it('uses visible lead, configured caps, and the exact minimum threshold for section cues', () => {
+    const project = videoProject()
+    const track = project.tracks[0]!
+    project.offsetMs = 0
+    project.durationMs = 15_000
+    project.lyricDisplay = { lineCount: 1, advanceMode: 'clear' }
+    track.vocalStyle.previewMs = 6_000
+    track.vocalStyle.syncAid = { enabled: true, minLeadMs: 2_000, maxLeadMs: 4_000 }
+    track.lines = [
+      timedVideoLine('Prior', 7_000, 8_000),
+      blankVideoLine(),
+      timedVideoLine('Section start', 10_000, 11_000),
+    ]
+
+    expect(previewFrameStateAt(project, 7_999).syncAids).toHaveLength(0)
+    expect(previewFrameStateAt(project, 8_000).syncAids[0]).toMatchObject({
+      lineId: track.lines[2]!.id,
+      startMs: 8_000,
+      endMs: 10_000,
+      durationMs: 2_000,
+      progress: 0,
+    })
+    expect(previewFrameStateAt(project, 9_000).syncAids[0]?.progress).toBe(0.5)
+    expect(previewFrameStateAt(project, 10_000).syncAids).toHaveLength(0)
+
+    track.lines[0] = timedVideoLine('Prior', 7_500, 8_001)
+    expect(previewFrameStateAt(project, 8_001).syncAids).toHaveLength(0)
+    for (const time of [8_000, 8_001, 9_000, 10_000]) {
+      expect(previewFrameStateAt(project, time)).toEqual(videoExport.frameStateAt(project, time))
+    }
+  })
+
+  it('never transfers a section cue beyond the literal first line or its literal first word', () => {
+    const project = videoProject()
+    const track = project.tracks[0]!
+    project.offsetMs = 0
+    project.durationMs = 15_000
+    project.lyricDisplay = { lineCount: 2, advanceMode: 'clear' }
+    track.vocalStyle.previewMs = 4_000
+    track.vocalStyle.syncAid = { enabled: true, minLeadMs: 2_000, maxLeadMs: 4_000 }
+    track.lines = [
+      createLyricLine('Untimed first word timed second', {
+        id: 'literal-first-word-line',
+        startMs: 10_000,
+        endMs: 12_000,
+        words: [
+          createLyricWord('Untimed', { id: 'literal-untimed-word' }),
+          createLyricWord('timed', {
+            id: 'later-timed-word',
+            startMs: 10_000,
+            endMs: 11_000,
+          }),
+        ],
+      }),
+      timedVideoLine('Later line', 12_000, 13_000),
+    ]
+    expect(previewFrameStateAt(project, 8_000).lines).toHaveLength(2)
+    expect(previewFrameStateAt(project, 8_000).syncAids).toHaveLength(0)
+
+    track.lines = [
+      createLyricLine('Literal untimed line', { id: 'literal-untimed-line' }),
+      timedVideoLine('Later timed line', 10_000, 11_000),
+    ]
+    expect(previewFrameStateAt(project, 8_000).lines.map(({ text }) => text)).toEqual([
+      'Later timed line',
+    ])
+    expect(previewFrameStateAt(project, 8_000).syncAids).toHaveLength(0)
+    expect(previewFrameStateAt(project, 8_000)).toEqual(videoExport.frameStateAt(project, 8_000))
+  })
+
   it('refuses cancellation once an existing destination enters atomic promotion', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'okay-video-promotion-'))
     const partialPath = join(directory, 'song.partial.mp4')

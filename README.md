@@ -66,8 +66,12 @@ in-app first-project guide.
    appear in Live and Design Preview after their immutable snapshot loads, with
    a gradient fallback and retry after failures. Choosing, replacing, or
    clearing an image and exporting an image-backed MP4 remain unavailable. Use
-   the 16:9 Design preview to compare changes, then choose **Apply & close** or
-   **Cancel**.
+   **Lead Vocal** to set the line **Preview Time** and configure the section-start
+   **Sync Aid**. A literal blank lyric row starts a section; the cue requires
+   that section's literal first line and its literal first word to have valid
+   timing. It is skipped when the minimum useful lead is unavailable and ends
+   at that first word. Use the 16:9 Design preview to compare changes, then
+   choose **Apply & close** or **Cancel**.
 
 6. **Save the editable project.** Choose **Save project** in the top bar or use
    Command/Ctrl+S. **Save As** is also available from the File menu.

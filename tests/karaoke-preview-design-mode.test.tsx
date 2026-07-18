@@ -164,11 +164,13 @@ describe('Karaoke Preview project-lyrics design mode', () => {
       previewMs: 8_000,
       syncAid: { enabled: true, minLeadMs: 2_000, maxLeadMs: 6_000 },
     })
-    rendered.innerHTML = previewMarkup({
+    const leadDesignMode = {
       target: 'lead-vocal',
       stageStyle: designMode.stageStyle,
       vocalStyle,
-    })
+      timingValid: true,
+    } satisfies KaraokePreviewDesignMode
+    rendered.innerHTML = previewMarkup(leadDesignMode, project)
     const vocalPanel = rendered.querySelector<HTMLElement>(
       '[aria-label="Lead Vocal design preview"]',
     )!
@@ -179,10 +181,50 @@ describe('Karaoke Preview project-lyrics design mode', () => {
     expect(vocalLine.dataset.stageFontSize).toBe('96')
     expect(vocalLine.style.getPropertyValue('--track-color')).toBe('#102030')
     expect(vocalLine.style.getPropertyValue('--unsung-color')).toBe('#405060')
-    expect(vocalPanel.querySelectorAll('.stage-line')).toHaveLength(1)
-    expect(vocalPanel.querySelector('.sync-aid')).toBeNull()
+    const vocalLines = [...vocalPanel.querySelectorAll<HTMLElement>('.stage-line')]
+    expect(vocalLines).toHaveLength(2)
+    expect(
+      [...vocalLines[0]!.querySelectorAll<HTMLElement>('.stage-word')].map((word) =>
+        word.style.getPropertyValue('--word-progress'),
+      ),
+    ).toEqual(Array.from({ length: 8 }, () => '0%'))
+    expect(
+      [...vocalLines[1]!.querySelectorAll<HTMLElement>('.stage-word')].map((word) =>
+        word.style.getPropertyValue('--word-progress'),
+      ),
+    ).toEqual(['100%', '50%', '0%'])
+    expect(
+      vocalPanel.querySelector<HTMLElement>('.sync-aid')?.style.getPropertyValue('--sync-progress'),
+    ).toBe('0.5')
     expect(vocalPanel.textContent).not.toContain('This is')
+    expect(previewMarkup(leadDesignMode, project, 54_321)).toBe(
+      previewMarkup(leadDesignMode, project, 0),
+    )
   })
+
+  it.each([
+    ['disabled', false, 8_000, 2_000, 6_000, true],
+    ['minimum lead unavailable', true, 5_000, 5_000, 5_000, true],
+    ['invalid raw timing', true, 8_000, 2_000, 6_000, false],
+    ['empty zero-duration interval', true, 0, 0, 0, true],
+  ])(
+    'omits the Lead Vocal design cue when timing is %s',
+    (_case, enabled, previewMs, minLeadMs, maxLeadMs, timingValid) => {
+      const project = createProject()
+      const vocalStyle = cloneVocalStyle()
+      vocalStyle.previewMs = previewMs
+      vocalStyle.syncAid = { enabled, minLeadMs, maxLeadMs }
+      const rendered = document.createElement('div')
+      rendered.innerHTML = previewMarkup(
+        { target: 'lead-vocal', stageStyle: project.stageStyle, vocalStyle, timingValid },
+        project,
+        32_100,
+      )
+
+      expect(rendered.querySelector('[data-design-preview="lead-vocal"]')).not.toBeNull()
+      expect(rendered.querySelector('.sync-aid')).toBeNull()
+    },
+  )
 
   it('renders canonical content through the complete Background draft with exact CSS evidence', () => {
     const project = createProject({ title: 'Canonical title', artist: 'Canonical artist' })
