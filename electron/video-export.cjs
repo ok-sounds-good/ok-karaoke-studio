@@ -515,7 +515,7 @@ function projectFonts(project) {
   ])).values()]
 }
 
-async function prepareStyleRuntime(project, readLinkedImage) {
+async function prepareStyleRuntime(project, backgroundImage) {
   const runtime = {
     backgroundDataUrl: '',
     fonts: projectFonts(project),
@@ -524,12 +524,14 @@ async function prepareStyleRuntime(project, readLinkedImage) {
   }
   const background = project.stageStyle.background
   if (background.mode !== 'image') return runtime
-  if (typeof readLinkedImage !== 'function') {
-    throw new Error('The linked background image decoder is unavailable')
+  if (
+    !backgroundImage ||
+    !Buffer.isBuffer(backgroundImage.bytes) ||
+    (backgroundImage.mime !== 'image/png' && backgroundImage.mime !== 'image/jpeg')
+  ) {
+    throw new Error('The linked background image snapshot is unavailable')
   }
-  const image = await readLinkedImage(background.imagePath)
-  const mime = image.format === 'jpeg' ? 'image/jpeg' : 'image/png'
-  runtime.backgroundDataUrl = `data:${mime};base64,${image.bytes.toString('base64')}`
+  runtime.backgroundDataUrl = `data:${backgroundImage.mime};base64,${backgroundImage.bytes.toString('base64')}`
   return runtime
 }
 
@@ -643,7 +645,7 @@ async function exportKaraokeVideo({
   audioPath,
   outputPath,
   ffmpegPath,
-  readLinkedImage,
+  backgroundImage,
   resolution = DEFAULT_VIDEO_RESOLUTION,
   fps = DEFAULT_VIDEO_FPS,
   onProgress,
@@ -665,7 +667,7 @@ async function exportKaraokeVideo({
   if (!audioStats?.isFile()) throw new Error('The linked audio file could not be read')
   const timeline = buildFrameTimelineForProject(project, durationMs, settings.fps)
   throwIfAborted(signal)
-  const runtime = await prepareStyleRuntime(project, readLinkedImage)
+  const runtime = await prepareStyleRuntime(project, backgroundImage)
   throwIfAborted(signal)
   const executable = ffmpegPath || await findFfmpeg(undefined, signal)
   const parsedOutput = path.parse(resolvedOutputPath)

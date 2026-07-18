@@ -12,6 +12,7 @@ function throwIfCanceled(signal) {
 
 function createVideoExportOperation({
   parseProject,
+  authorizeExport,
   createCommitState,
   prepareExport,
   selectDestination,
@@ -36,8 +37,11 @@ function createVideoExportOperation({
   async function run({ owner, sender, request }) {
     // The injected parser owns project-format policy. Keep it synchronous and
     // first so lifecycle and I/O cannot begin before it accepts the request.
-    parseProject(request.projectJson)
+    const project = parseProject(request.projectJson)
     if (activeExport) throw new Error('Another karaoke video export is already running')
+    const authorization = await authorizeExport({ project, request, sender })
+    if (activeExport) throw new Error('Another karaoke video export is already running')
+    if (sender.isDestroyed()) throw new Error('The video export owner is no longer available')
 
     const operation = beginExport(sender.id)
     const abortWhenOwnerCloses = () => {
@@ -64,7 +68,14 @@ function createVideoExportOperation({
       const onProgress = (progress) => {
         if (!sender.isDestroyed()) sendProgress(sender, progress)
       }
-      return await executeExport({ request, preparation, destination, operation, onProgress })
+      return await executeExport({
+        authorization,
+        request,
+        preparation,
+        destination,
+        operation,
+        onProgress,
+      })
     } finally {
       if (ownerListenerAttached) sender.removeListener('destroyed', abortWhenOwnerCloses)
       if (activeExport === operation) activeExport = null

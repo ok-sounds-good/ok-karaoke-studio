@@ -132,6 +132,39 @@ describe('project background image Preview capability', () => {
     expect(latest.preview.onRetryResolution).toBeUndefined()
   })
 
+  it('authorizes Image export only for the exact current Preview-ready capability generation', async () => {
+    const first = restored('/media/background.png', 'studio-media://asset/first', 'first-1')
+    const second = restored('/media/background.png', 'studio-media://asset/second', 'second-2')
+    const resolveProjectBackground = vi
+      .fn<StudioApi['resolveProjectBackground']>()
+      .mockResolvedValueOnce(first)
+      .mockResolvedValueOnce(second)
+    installStudio({ resolveProjectBackground })
+
+    await render(probeProps('/media/background.png', 40, '/projects/first.oks'))
+    const staleReadiness = latest.preview.onLoadStatusChange
+    expect(latest.getExportCapability()).toBeNull()
+    await act(async () => latest.preview.onLoadStatusChange?.(first.media.url, 'ready'))
+    expect(latest.getExportCapability()).toEqual(first.state)
+    const firstGenerationReadiness = latest.preview.onLoadStatusChange
+    const refreshedFirst = { activeUrl: first.media.url, revision: 'first-2' }
+    await act(async () => {
+      latest.setCapability(refreshedFirst)
+    })
+    await act(async () => firstGenerationReadiness?.(first.media.url, 'ready'))
+    expect(latest.getExportCapability()).toBeNull()
+    await act(async () => latest.preview.onLoadStatusChange?.(first.media.url, 'ready'))
+    expect(latest.getExportCapability()).toEqual(refreshedFirst)
+    await act(async () => latest.preview.onLoadStatusChange?.(first.media.url, 'error'))
+    expect(latest.getExportCapability()).toBeNull()
+
+    await render(probeProps('/media/background.png', 41, '/projects/second.oks'))
+    await act(async () => staleReadiness?.(first.media.url, 'ready'))
+    expect(latest.getExportCapability()).toBeNull()
+    await act(async () => latest.preview.onLoadStatusChange?.(second.media.url, 'ready'))
+    expect(latest.getExportCapability()).toEqual(second.state)
+  })
+
   it.each([
     ['POSIX', '/media/assets/../background.png', '/media/background.png'],
     ['Windows', 'C:/media/background.png', 'C:\\media\\background.png'],

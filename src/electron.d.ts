@@ -94,6 +94,7 @@ declare global {
     durationMs: number
     resolution: StudioVideoResolution
     fps: StudioVideoFps
+    background: StudioBackgroundCapabilityState | null
   }
 
   interface StudioVideoExportResult extends StudioPathResult {
