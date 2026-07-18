@@ -246,6 +246,47 @@ describe('owner-and-kind media capabilities', () => {
     expect(capabilities.get(active)).not.toBeNull()
   })
 
+  it('preserves a draft candidate until a validated replacement atomically succeeds', () => {
+    const capabilities = registry()
+    const active = retainedBackground(capabilities, 20, '/media/active.png', image(20))
+    const first = capabilities.registerBackgroundCandidate(
+      20,
+      '/media/first-draft.png',
+      image(21),
+      capabilities.beginRequest(20, 'background'),
+    )
+
+    const cancelled = capabilities.beginRequest(20, 'background')
+    expect(capabilities.get(first)).not.toBeNull()
+    expect(capabilities.settleBackgroundCandidate(20, first, true)).toBe(false)
+    expect(capabilities.finishRequest(20, 'background', cancelled)).toBe(true)
+    expect(capabilities.get(first)).not.toBeNull()
+    expect(capabilities.activeToken(20, 'background')).toBe(active)
+
+    const invalid = capabilities.beginRequest(20, 'background')
+    expect(() =>
+      capabilities.registerBackgroundCandidate(
+        20,
+        '/media/invalid.png',
+        { bytes: Buffer.from([1]), mime: 'image/webp' },
+        invalid,
+      ),
+    ).toThrow('A validated PNG or JPEG snapshot is required')
+    expect(capabilities.finishRequest(20, 'background', invalid)).toBe(true)
+    expect(capabilities.get(first)).not.toBeNull()
+
+    const replacement = capabilities.registerBackgroundCandidate(
+      20,
+      '/media/replacement.png',
+      image(22),
+      capabilities.beginRequest(20, 'background'),
+    )
+    expect(capabilities.get(first)).toBeNull()
+    expect(capabilities.settleBackgroundCandidate(20, first, true)).toBe(false)
+    expect(capabilities.settleBackgroundCandidate(20, replacement, true)).toBe(true)
+    expect(capabilities.activeToken(20, 'background')).toBe(replacement)
+  })
+
   it('settles only the current candidate and retains the prior active capability', () => {
     const capabilities = registry()
     const first = retainedBackground(capabilities, 3, '/media/first.png', image(10))

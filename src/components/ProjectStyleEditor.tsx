@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import type { InstalledFontState } from '../hooks/useInstalledFonts'
+import type { BackgroundImageStyleControls } from '../hooks/useBackgroundImageStyleSession'
 import type { BackgroundImagePreviewSource } from '../hooks/useProjectBackgroundImage'
 import type {
   ProjectStyleDraft,
@@ -36,11 +37,12 @@ export interface ProjectStyleEditorProps {
   leadVocalAvailable: boolean
   fonts: InstalledFontState
   backgroundPreview?: BackgroundImagePreviewSource
+  backgroundControls?: BackgroundImageStyleControls
   onDraftChange: ProjectStyleSession['change']
   onRetryFonts: () => void
   onTogglePlayback: () => void
-  onCancel: ProjectStyleSession['cancel']
-  onApply: ProjectStyleSession['apply']
+  onCancel: () => Promise<boolean> | boolean
+  onApply: () => Promise<boolean> | boolean
   canApply: boolean
   applyBlockedReason: string | null
 }
@@ -97,6 +99,7 @@ export function ProjectStyleEditor({
   leadVocalAvailable,
   fonts,
   backgroundPreview,
+  backgroundControls,
   onDraftChange,
   onRetryFonts,
   onTogglePlayback,
@@ -157,7 +160,7 @@ export function ProjectStyleEditor({
     if (event.key === 'Escape' && !event.defaultPrevented) {
       event.preventDefault()
       event.stopPropagation()
-      onCancel()
+      void onCancel()
     }
   }
 
@@ -297,10 +300,12 @@ export function ProjectStyleEditor({
                       name={`${titleId}-background-mode`}
                       value={mode}
                       checked={background.mode === mode}
-                      disabled={mode === 'image'}
-                      onChange={() => {
-                        if (mode !== 'image') updateBackground({ mode })
-                      }}
+                      disabled={
+                        mode === 'image' &&
+                        (!backgroundControls ||
+                          (!background.imagePath && !backgroundControls.available))
+                      }
+                      onChange={() => updateBackground({ mode })}
                     />
                     {mode[0].toUpperCase() + mode.slice(1)}
                   </label>
@@ -334,10 +339,49 @@ export function ProjectStyleEditor({
                 />
               </section>
             )}
-            <p className="style-field-help">
-              Existing linked images can be checked in Preview. Image authoring remains unavailable
-              in this Style destination.
-            </p>
+            {backgroundControls ? (
+              <section className="style-background-image-controls" aria-label="Linked image">
+                <div>
+                  <Button
+                    variant="secondary"
+                    disabled={!backgroundControls.available || backgroundControls.busy}
+                    onClick={() => void backgroundControls.choose()}
+                  >
+                    {background.imagePath ? 'Replace image' : 'Choose image'}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    disabled={!background.imagePath || backgroundControls.busy}
+                    onClick={() => void backgroundControls.clear()}
+                  >
+                    Clear image
+                  </Button>
+                  {backgroundControls.canRetryPreview && (
+                    <Button
+                      variant="ghost"
+                      disabled={backgroundControls.busy}
+                      onClick={backgroundControls.retryPreview}
+                    >
+                      Retry image preview
+                    </Button>
+                  )}
+                </div>
+                <p className="style-field-help">
+                  Images stay linked to their original file and are previewed from an immutable
+                  snapshot before Apply.
+                </p>
+                {backgroundControls.message && (
+                  <p className="style-background-image-message" role="alert">
+                    {backgroundControls.message}
+                  </p>
+                )}
+              </section>
+            ) : (
+              <p className="style-field-help">
+                Existing linked images can be checked in Preview. Image authoring is available in
+                the desktop app.
+              </p>
+            )}
           </section>
 
           <TitleCardStylePanel
@@ -369,7 +413,7 @@ export function ProjectStyleEditor({
               {applyBlockedReason}
             </p>
           )}
-          <Button variant="ghost" data-style-action="cancel" onClick={onCancel}>
+          <Button variant="ghost" data-style-action="cancel" onClick={() => void onCancel()}>
             Cancel
           </Button>
           <Button
@@ -377,7 +421,7 @@ export function ProjectStyleEditor({
             aria-describedby={applyBlockedReason ? `${titleId}-apply-error` : undefined}
             data-style-action="apply"
             disabled={!canApply}
-            onClick={onApply}
+            onClick={() => void onApply()}
           >
             Apply &amp; close
           </Button>

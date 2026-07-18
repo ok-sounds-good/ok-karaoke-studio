@@ -170,6 +170,32 @@
   line-height: 1.45;
 }
 
+.style-background-image-controls {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.style-background-image-controls > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.style-background-image-controls .style-field-help,
+.style-background-image-message {
+  margin: 0;
+}
+
+.style-background-image-message {
+  color: var(--danger);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
 .style-field > span,
 .style-color-field > span {
   margin: 0;

@@ -2,10 +2,17 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { BackgroundStyle } from '../lib/video-style'
 
 export type BackgroundImageResolutionStatus = 'none' | 'loading' | 'available' | 'missing' | 'error'
+export type BackgroundImageLoadStatus = 'idle' | 'loading' | 'ready' | 'error'
 
 export interface BackgroundImagePreviewSource {
   readonly url: string | null
   readonly resolutionStatus: BackgroundImageResolutionStatus
+  readonly reloadKey?: number
+  readonly onLoadStatusChange?: (
+    url: string,
+    status: Exclude<BackgroundImageLoadStatus, 'idle'>,
+  ) => void
+  readonly onRetryLoad?: () => void
   readonly onRetryResolution?: () => void
 }
 
@@ -21,12 +28,37 @@ interface ProjectBackgroundResource {
   readonly linkedPath: string | null
   readonly ready: boolean
   readonly resolutionStatus: BackgroundImageResolutionStatus
-  readonly retained: RetainedBackgroundSnapshot | null
+  readonly retained: readonly RetainedBackgroundSnapshot[]
 }
 
-export interface ProjectBackgroundImagePreview {
+export interface ProjectBackgroundImageController {
   readonly preview: BackgroundImagePreviewSource
   readonly ready: boolean
+  beginSettlement(): number | null
+  endSettlement(settlement: number): boolean
+  forgetSnapshot(path: string, url: string): boolean
+  getCapability(): StudioBackgroundCapabilityState | null
+  reconcileCapability(): Promise<StudioBackgroundCapabilityState | null>
+  rememberSnapshot(path: string, url: string, capability?: StudioBackgroundCapabilityState): boolean
+  setCapability(capability: StudioBackgroundCapabilityState): boolean
+  sourceFor(background: BackgroundStyle): BackgroundImagePreviewSource
+  urlForPath(path: string | null): string | null
+}
+
+export type ProjectBackgroundImagePreview = ProjectBackgroundImageController
+
+function retainedForPath(
+  retained: readonly RetainedBackgroundSnapshot[],
+  path: string | null,
+): RetainedBackgroundSnapshot | null {
+  return path ? (retained.find((snapshot) => snapshot.path === path) ?? null) : null
+}
+
+function withRetainedSnapshot(
+  retained: readonly RetainedBackgroundSnapshot[],
+  snapshot: RetainedBackgroundSnapshot,
+): readonly RetainedBackgroundSnapshot[] {
+  return [...retained.filter(({ path }) => path !== snapshot.path), snapshot]
 }
 
 function previewStatus(
@@ -52,7 +84,7 @@ export function useProjectBackgroundImage({
   acceptedProjectPath: string | null
   background: BackgroundStyle
   lifecycle: number
-}): ProjectBackgroundImagePreview {
+}): ProjectBackgroundImageController {
   const studio = window.studio
   const initialReady = !studio?.getBackgroundState
   const [resource, setStoredResource] = useState<ProjectBackgroundResource>({
@@ -62,12 +94,14 @@ export function useProjectBackgroundImage({
     ready: initialReady,
     resolutionStatus:
       initialReady && background.mode === 'image' ? 'missing' : initialReady ? 'none' : 'loading',
-    retained: null,
+    retained: [],
   })
   const resourceRef = useRef(resource)
   const requestGenerationRef = useRef(0)
   const reconciliationGenerationRef = useRef(0)
   const reconciliationInFlightRef = useRef<number | null>(null)
+  const settlementRef = useRef<{ id: number; lifecycle: number } | null>(null)
+  const settlementSequenceRef = useRef(0)
   const currentRef = useRef({ acceptedProjectPath, background, lifecycle })
   currentRef.current = { acceptedProjectPath, background, lifecycle }
 
@@ -83,7 +117,7 @@ export function useProjectBackgroundImage({
       requestGenerationRef.current = generation
       reconciliationGenerationRef.current += 1
       reconciliationInFlightRef.current = null
-      const retained = resetRetained ? null : resourceRef.current.retained
+      const retained = resetRetained ? [] : resourceRef.current.retained
       const linkedPath = resetRetained
         ? request.acceptedProjectPath && request.background.mode === 'image'
           ? request.background.imagePath
@@ -95,7 +129,7 @@ export function useProjectBackgroundImage({
       const finish = (
         capability: StudioBackgroundCapabilityState | null,
         resolutionStatus: BackgroundImageResolutionStatus,
-        nextRetained = retained,
+        nextRetained: readonly RetainedBackgroundSnapshot[] = retained,
       ) => {
         if (!isCurrent()) return false
         publish({
@@ -135,10 +169,14 @@ export function useProjectBackgroundImage({
             // Main authorizes this result from the accepted project scope and may
             // native-normalize its path. Bind the URL to the serialized intent
             // whose trusted restore produced it instead of comparing raw strings.
-            finish(restored.state, 'available', {
-              path: request.background.imagePath,
-              url: restored.media.url,
-            })
+            finish(
+              restored.state,
+              'available',
+              withRetainedSnapshot(retained, {
+                path: request.background.imagePath,
+                url: restored.media.url,
+              }),
+            )
             return
           }
           if (restored.status === 'missing') {
@@ -168,6 +206,7 @@ export function useProjectBackgroundImage({
       requestGenerationRef.current += 1
       reconciliationGenerationRef.current += 1
       reconciliationInFlightRef.current = null
+      settlementRef.current = null
     }
   }, [acceptedProjectPath, lifecycle, resolveCurrentProjectBackground])
 
@@ -191,8 +230,7 @@ export function useProjectBackgroundImage({
         reconciliationInFlightRef.current = null
         const current = resourceRef.current
         const currentBackground = currentRef.current.background
-        const url =
-          current.retained?.path === currentBackground.imagePath ? current.retained.url : null
+        const url = retainedForPath(current.retained, currentBackground.imagePath)?.url ?? null
         publish({
           ...current,
           capability,
@@ -255,6 +293,7 @@ export function useProjectBackgroundImage({
       resource.lifecycle !== lifecycle ||
       !resource.capability ||
       reconciliationInFlightRef.current !== null ||
+      settlementRef.current !== null ||
       !studio?.retainBackground
     )
       return
@@ -266,8 +305,8 @@ export function useProjectBackgroundImage({
     }
 
     const targetUrl =
-      background.mode === 'image' && resource.retained?.path === background.imagePath
-        ? resource.retained.url
+      background.mode === 'image'
+        ? (retainedForPath(resource.retained, background.imagePath)?.url ?? null)
         : null
     const status = previewStatus(
       background,
@@ -321,10 +360,8 @@ export function useProjectBackgroundImage({
 
   const resourceIsCurrent = resource.ready && resource.lifecycle === lifecycle
   const retained =
-    resourceIsCurrent &&
-    background.mode === 'image' &&
-    resource.retained?.path === background.imagePath
-      ? resource.retained
+    resourceIsCurrent && background.mode === 'image'
+      ? retainedForPath(resource.retained, background.imagePath)
       : null
   const capabilityPaused = resource.failedIntent === backgroundIntent(background)
   const retainedIsActive = Boolean(retained && resource.capability?.activeUrl === retained.url)
@@ -349,17 +386,143 @@ export function useProjectBackgroundImage({
       background.imagePath &&
       resource.linkedPath === background.imagePath,
     )
+  const acceptedPreview: BackgroundImagePreviewSource = {
+    url,
+    resolutionStatus,
+    ...(capabilityPaused
+      ? { onRetryResolution: retryCapability }
+      : canRetry
+        ? { onRetryResolution: retryResolution }
+        : {}),
+  }
+
+  const isOwnedLifecycle = useCallback(
+    () => currentRef.current.lifecycle === lifecycle && resourceRef.current.lifecycle === lifecycle,
+    [lifecycle],
+  )
+
+  const getCapability = useCallback(
+    () => (isOwnedLifecycle() ? resourceRef.current.capability : null),
+    [isOwnedLifecycle],
+  )
+
+  const setCapability = useCallback(
+    (capability: StudioBackgroundCapabilityState) => {
+      if (!isOwnedLifecycle()) return false
+      publish({
+        ...resourceRef.current,
+        capability,
+        failedIntent: undefined,
+        ready: true,
+      })
+      return true
+    },
+    [isOwnedLifecycle, publish],
+  )
+
+  const reconcileCapability = useCallback(async () => {
+    if (!isOwnedLifecycle() || !studio?.getBackgroundState) return null
+    try {
+      const capability = await studio.getBackgroundState()
+      if (!isOwnedLifecycle()) return null
+      publish({ ...resourceRef.current, capability, ready: true })
+      return capability
+    } catch {
+      return null
+    }
+  }, [isOwnedLifecycle, publish, studio])
+
+  const rememberSnapshot = useCallback(
+    (path: string, snapshotUrl: string, capability?: StudioBackgroundCapabilityState) => {
+      if (!isOwnedLifecycle()) return false
+      const current = resourceRef.current
+      publish({
+        ...current,
+        capability: capability ?? current.capability,
+        failedIntent: undefined,
+        ready: true,
+        retained: withRetainedSnapshot(current.retained, { path, url: snapshotUrl }),
+      })
+      return true
+    },
+    [isOwnedLifecycle, publish],
+  )
+
+  const forgetSnapshot = useCallback(
+    (path: string, snapshotUrl: string) => {
+      if (!isOwnedLifecycle()) return false
+      const current = resourceRef.current
+      const snapshot = retainedForPath(current.retained, path)
+      if (snapshot?.url !== snapshotUrl) return false
+      publish({
+        ...current,
+        retained: current.retained.filter((candidate) => candidate !== snapshot),
+      })
+      return true
+    },
+    [isOwnedLifecycle, publish],
+  )
+
+  const urlForPath = useCallback(
+    (path: string | null) =>
+      isOwnedLifecycle()
+        ? (retainedForPath(resourceRef.current.retained, path)?.url ?? null)
+        : null,
+    [isOwnedLifecycle],
+  )
+
+  const sourceFor = useCallback(
+    (target: BackgroundStyle): BackgroundImagePreviewSource => {
+      if (!isOwnedLifecycle()) {
+        return { url: null, resolutionStatus: target.mode === 'image' ? 'loading' : 'none' }
+      }
+      if (target.mode !== 'image') return { url: null, resolutionStatus: 'none' }
+      if (!target.imagePath) return { url: null, resolutionStatus: 'missing' }
+      const current = resourceRef.current
+      const accepted = currentRef.current.background
+      if (accepted.mode === 'image' && accepted.imagePath === target.imagePath) {
+        return acceptedPreview
+      }
+      const snapshot = retainedForPath(current.retained, target.imagePath)
+      if (snapshot) return { url: snapshot.url, resolutionStatus: 'available' }
+      return { url: null, resolutionStatus: 'missing' }
+    },
+    [acceptedPreview, isOwnedLifecycle],
+  )
+
+  const beginSettlement = useCallback(() => {
+    if (!isOwnedLifecycle() || settlementRef.current) return null
+    const id = settlementSequenceRef.current + 1
+    settlementSequenceRef.current = id
+    settlementRef.current = { id, lifecycle }
+    reconciliationGenerationRef.current += 1
+    reconciliationInFlightRef.current = null
+    return id
+  }, [isOwnedLifecycle, lifecycle])
+
+  const endSettlement = useCallback(
+    (settlement: number) => {
+      const owned = settlementRef.current
+      if (!owned || owned.id !== settlement || owned.lifecycle !== lifecycle) return false
+      settlementRef.current = null
+      if (!isOwnedLifecycle()) return false
+      publish({ ...resourceRef.current })
+      return true
+    },
+    [isOwnedLifecycle, lifecycle, publish],
+  )
 
   return {
-    preview: {
-      url,
-      resolutionStatus,
-      ...(capabilityPaused
-        ? { onRetryResolution: retryCapability }
-        : canRetry
-          ? { onRetryResolution: retryResolution }
-          : {}),
-    },
+    preview: acceptedPreview,
     ready: resource.ready && resource.lifecycle === lifecycle,
+    beginSettlement,
+    endSettlement,
+    forgetSnapshot,
+    getCapability,
+    reconcileCapability,
+    rememberSnapshot,
+    setCapability,
+    sourceFor,
+    urlForPath,
   }
 }

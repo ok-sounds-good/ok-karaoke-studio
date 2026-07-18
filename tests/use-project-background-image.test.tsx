@@ -160,6 +160,7 @@ describe('project background image Preview capability', () => {
     await render(props)
     expect(latest.preview.resolutionStatus).toBe('missing')
     expect(latest.preview.onRetryResolution).toBeTypeOf('function')
+    expect(latest.sourceFor(props.background).onRetryResolution).toBeTypeOf('function')
     await act(async () => {
       latest.preview.onRetryResolution?.()
       await Promise.resolve()
@@ -171,6 +172,7 @@ describe('project background image Preview capability', () => {
     await render({ ...props, background: imageBackground('/media/other.jpg') })
     expect(latest.preview.resolutionStatus).toBe('missing')
     expect(latest.preview.onRetryResolution).toBeUndefined()
+    expect(latest.sourceFor(props.background).onRetryResolution).toBeUndefined()
   })
 
   it('deactivates an Image capability in Gradient mode and reactivates it on undo', async () => {

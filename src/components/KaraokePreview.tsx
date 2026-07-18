@@ -24,7 +24,10 @@ import {
   type TextStyle,
   type VocalStyle,
 } from '../lib/video-style'
-import type { BackgroundImagePreviewSource } from '../hooks/useProjectBackgroundImage'
+import type {
+  BackgroundImageLoadStatus,
+  BackgroundImagePreviewSource,
+} from '../hooks/useProjectBackgroundImage'
 import { Button } from './ui'
 
 export type KaraokePreviewDesignMode =
@@ -47,7 +50,6 @@ export type KaraokePreviewDesignMode =
     }
 
 type StageFrameTextRole = 'brand' | 'clock' | 'footer'
-type BackgroundImageLoadStatus = 'idle' | 'loading' | 'ready' | 'error'
 
 interface KaraokePreviewProps {
   project: KaraokeProject
@@ -289,6 +291,9 @@ export function KaraokePreview({
   }>({ status: 'idle', url: null })
   const imageUrl = backgroundImage?.url ?? null
   const imageResolutionStatus = backgroundImage?.resolutionStatus ?? 'missing'
+  const imageReloadKey = backgroundImage?.reloadKey ?? 0
+  const imageLoadStatusChangeRef = useRef(backgroundImage?.onLoadStatusChange)
+  imageLoadStatusChangeRef.current = backgroundImage?.onLoadStatusChange
 
   useEffect(() => {
     setLocalImageReload(0)
@@ -308,6 +313,7 @@ export function KaraokePreview({
     const publish = (status: Exclude<BackgroundImageLoadStatus, 'idle'>) => {
       if (!current) return
       setImageLoad({ status, url: imageUrl })
+      imageLoadStatusChangeRef.current?.(imageUrl, status)
     }
     publish('loading')
     const image = new Image()
@@ -319,7 +325,7 @@ export function KaraokePreview({
       image.onload = null
       image.onerror = null
     }
-  }, [imageResolutionStatus, imageUrl, localImageReload])
+  }, [imageReloadKey, imageResolutionStatus, imageUrl, localImageReload])
 
   const imageReady =
     background.mode === 'image' &&
@@ -342,7 +348,10 @@ export function KaraokePreview({
             backgroundRepeat: 'no-repeat',
             backgroundSize: 'cover',
           }
-  const retryImageLoad = () => setLocalImageReload((current) => current + 1)
+  const retryImageLoad = () => {
+    if (backgroundImage?.onRetryLoad) backgroundImage.onRetryLoad()
+    else setLocalImageReload((current) => current + 1)
+  }
   const imageWarning =
     background.mode !== 'image'
       ? null

@@ -61,11 +61,13 @@ in-app first-project guide.
    sections separate.
 
    Choose **Style** to set the project lyric appearance, customize the active
-   Lead Vocal, choose a solid or gradient background, edit the title card, and
-   control the Stage frame's Brand, Clock, and Footer. Existing linked images
-   appear in Live and Design Preview after their immutable snapshot loads, with
-   a gradient fallback and retry after failures. Choosing, replacing, or
-   clearing an image and exporting an image-backed MP4 remain unavailable. Use
+   Lead Vocal, choose a solid, gradient, or linked-image background, edit the
+   title card, and control the Stage frame's Brand, Clock, and Footer. Choose,
+   replace, or clear one PNG or JPEG linked to its original file. A newly
+   selected image appears in Design Preview only after its immutable snapshot
+   loads; Apply promotes it with the complete Style edit, while Cancel or a
+   failed Apply discards it. Live and Design Preview use a gradient fallback and
+   offer retry after failures. Image-backed MP4 export remains unavailable. Use
    **Lead Vocal** to set the line **Preview Time** and configure the section-start
    **Sync Aid**. A literal blank lyric row starts a section; the cue requires
    that section's literal first line and its literal first word to have valid

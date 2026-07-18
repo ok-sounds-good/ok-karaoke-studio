@@ -137,6 +137,35 @@ describe('Karaoke Preview linked background loading', () => {
     expect(stage().dataset.backgroundImageReady).toBe('true')
   })
 
+  it('reports candidate readiness and honors its retry key before rendering it', async () => {
+    const onLoadStatusChange = vi.fn()
+    const onRetryLoad = vi.fn()
+    const source = {
+      url: 'studio-media://asset/style-candidate',
+      resolutionStatus: 'available' as const,
+      reloadKey: 0,
+      onLoadStatusChange,
+      onRetryLoad,
+    }
+    await render(source)
+
+    expect(onLoadStatusChange).toHaveBeenLastCalledWith(source.url, 'loading')
+    expect(stage().dataset.backgroundImageReady).toBe('false')
+    await act(async () => ControlledImage.instances[0]?.onerror?.(new Event('error')))
+    expect(onLoadStatusChange).toHaveBeenLastCalledWith(source.url, 'error')
+    expect(stage().style.backgroundImage).toContain('linear-gradient')
+
+    await act(async () => warning()?.querySelector('button')?.click())
+    expect(onRetryLoad).toHaveBeenCalledOnce()
+    expect(ControlledImage.instances).toHaveLength(1)
+    await render({ ...source, reloadKey: 1 })
+    expect(ControlledImage.instances).toHaveLength(2)
+    await act(async () => ControlledImage.instances[1]?.onload?.(new Event('load')))
+    expect(onLoadStatusChange).toHaveBeenLastCalledWith(source.url, 'ready')
+    expect(stage().dataset.backgroundImageReady).toBe('true')
+    expect(stage().style.backgroundSize).toBe('cover')
+  })
+
   it('offers an exact relink retry for a fixed missing-state fallback', async () => {
     const onRetryResolution = vi.fn()
     await render({
