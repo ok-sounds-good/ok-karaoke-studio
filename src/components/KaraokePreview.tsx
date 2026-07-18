@@ -13,6 +13,7 @@ import { formatTime } from '../lib/model'
 import { fontFamilyFor } from '../lib/font-runtime'
 import { logicalStagePx, previewStageLayoutVariables } from '../lib/stage-layout'
 import { previewFrameStateAt, type StageFrameLine } from '../lib/stage-frame-state'
+import { DESIGN_LYRIC_WORDS, leadVocalDesignFrame } from '../lib/lead-vocal-design-frame'
 import { SYNC_AID_GEOMETRY, syncAidBrightness, syncAidPosition } from '../lib/sync-aid-geometry'
 import {
   DEFAULT_VOCAL_STYLE,
@@ -28,7 +29,12 @@ import { Button } from './ui'
 
 export type KaraokePreviewDesignMode =
   | { target: 'project-lyrics' | 'background'; stageStyle: StageStyle }
-  | { target: 'lead-vocal'; stageStyle: StageStyle; vocalStyle: VocalStyle }
+  | {
+      target: 'lead-vocal'
+      stageStyle: StageStyle
+      vocalStyle: VocalStyle
+      timingValid: boolean
+    }
   | {
       target: 'title-card'
       role: keyof StageStyle['titleCard']
@@ -70,30 +76,14 @@ function lineKey(trackId: string, lineId: string) {
   return JSON.stringify([trackId, lineId])
 }
 
-const PROJECT_LYRICS_DESIGN_WORDS = ['Sing', 'the', 'first', 'words', 'and', 'see', 'the', 'rest']
-
 function projectLyricsDesignLine(style: LyricTextStyle): StageFrameLine {
   return {
     id: 'project-lyrics-design-line',
     trackId: 'project-lyrics-design-track',
-    text: PROJECT_LYRICS_DESIGN_WORDS.join(' '),
+    text: DESIGN_LYRIC_WORDS.join(' '),
     style: resolveVocalStyle(style, DEFAULT_VOCAL_STYLE),
-    words: PROJECT_LYRICS_DESIGN_WORDS.map((text, index) => ({
+    words: DESIGN_LYRIC_WORDS.map((text, index) => ({
       id: `project-lyrics-design-word-${index}`,
-      text,
-      progress: index === 0 ? 1 : index === 1 ? 0.5 : 0,
-    })),
-  }
-}
-
-function leadVocalDesignLine(stageStyle: StageStyle, vocalStyle: VocalStyle): StageFrameLine {
-  return {
-    id: 'lead-vocal-design-line',
-    trackId: 'lead-vocal-design-track',
-    text: PROJECT_LYRICS_DESIGN_WORDS.join(' '),
-    style: resolveVocalStyle(stageStyle.lyrics, vocalStyle),
-    words: PROJECT_LYRICS_DESIGN_WORDS.map((text, index) => ({
-      id: `lead-vocal-design-word-${index}`,
       text,
       progress: index === 0 ? 1 : index === 1 ? 0.5 : 0,
     })),
@@ -260,15 +250,25 @@ export function KaraokePreview({
     () => previewFrameStateAt(previewProject, playbackMs),
     [playbackMs, previewProject],
   )
-  const designLine = useMemo(() => {
+  const projectDesignLine = useMemo(() => {
     if (designMode?.target === 'project-lyrics') {
       return projectLyricsDesignLine(designMode.stageStyle.lyrics)
     }
-    if (designMode?.target === 'lead-vocal') {
-      return leadVocalDesignLine(designMode.stageStyle, designMode.vocalStyle)
-    }
     return null
   }, [designMode])
+  const vocalDesignFrame = useMemo(
+    () =>
+      designMode?.target === 'lead-vocal'
+        ? leadVocalDesignFrame(
+            project,
+            designMode.stageStyle,
+            designMode.vocalStyle,
+            designMode.timingValid,
+          )
+        : null,
+    [designMode, project],
+  )
+  const designLines = projectDesignLine ? [projectDesignLine] : (vocalDesignFrame?.lines ?? null)
   const isTitleCardDesign = designMode?.target === 'title-card'
   const stageFrameDesign = designMode?.target === 'stage-frame' ? designMode : null
   const selectedFonts =
@@ -362,14 +362,17 @@ export function KaraokePreview({
   const stageFrame = stageStyle.stageFrame
   const stageVars = {
     ...backgroundStyle,
-    ...previewStageLayoutVariables(designLine || isTitleCardDesign ? 1 : frame.lines.length),
+    ...previewStageLayoutVariables(
+      designLines ? designLines.length : isTitleCardDesign ? 1 : frame.lines.length,
+    ),
     '--stage-frame-color': stageFrame.lineColor,
     '--stage-frame-width': logicalStagePx(stageFrame.lineWidthPx),
   } as CSSProperties
-  const lines = new Map(frame.lines.map((line) => [lineKey(line.trackId, line.id), line]))
+  const cueFrame = vocalDesignFrame ?? frame
+  const lines = new Map(cueFrame.lines.map((line) => [lineKey(line.trackId, line.id), line]))
   const isDesigning = Boolean(designMode)
-  const stageClassName = designLine
-    ? 'karaoke-stage karaoke-stage--lines-1 is-designing'
+  const stageClassName = designLines
+    ? `karaoke-stage karaoke-stage--lines-${designLines.length} is-designing`
     : isTitleCardDesign
       ? 'karaoke-stage karaoke-stage--lines-1 is-designing is-designing-title-card'
       : stageFrameDesign
@@ -570,17 +573,20 @@ export function KaraokePreview({
             {...clockPresentation.data}
             style={textStyle(stageFrame.clock, fontRuntime.aliases)}
           >
-            {formatTime(playbackMs)}
+            {formatTime(vocalDesignFrame?.playbackMs ?? playbackMs)}
           </div>
         )}
         <div className="karaoke-stage__content">
-          {designLine ? (
+          {designLines ? (
             <div className="active-lines" data-design-preview={designMode?.target}>
-              <PreviewLine
-                line={designLine}
-                selectedWordIds={selectedWordIds}
-                aliases={fontRuntime.aliases}
-              />
+              {designLines.map((line) => (
+                <PreviewLine
+                  key={lineKey(line.trackId, line.id)}
+                  line={line}
+                  selectedWordIds={selectedWordIds}
+                  aliases={fontRuntime.aliases}
+                />
+              ))}
             </div>
           ) : isTitleCardDesign || frame.showTitle ? (
             <PreviewTitleCard
@@ -603,9 +609,9 @@ export function KaraokePreview({
             </div>
           ) : null}
         </div>
-        {!designLine &&
+        {!projectDesignLine &&
           !isTitleCardDesign &&
-          frame.syncAids.map((aid) => {
+          cueFrame.syncAids.map((aid) => {
             const line = lines.get(lineKey(aid.trackId, aid.lineId))
             return line ? (
               <SyncAidCue

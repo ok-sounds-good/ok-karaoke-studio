@@ -453,6 +453,106 @@
   color: var(--accent-soft);
 }
 
+.vocal-timing-controls,
+.vocal-sync-aid-controls {
+  min-width: 0;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 9px;
+}
+
+.vocal-timing-controls > h3,
+.vocal-sync-aid-controls legend {
+  margin: 0;
+  padding: 0 4px;
+  color: var(--muted-strong);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.vocal-timing-controls > h3 {
+  margin: 0 0 8px;
+  padding: 0;
+}
+
+.vocal-sync-aid-enabled {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-soft);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.vocal-sync-aid-values {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 9px;
+}
+
+.vocal-timing-field {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  color: var(--muted-strong);
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.vocal-timing-input {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  min-width: 0;
+  height: 34px;
+  border: 1px solid var(--control-line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.vocal-timing-input:has(input[aria-invalid='true']) {
+  border-color: var(--danger);
+}
+
+.vocal-timing-input input {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  padding: 0 4px 0 9px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+}
+
+.vocal-timing-input input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.vocal-timing-input input[type='number']::-webkit-inner-spin-button,
+.vocal-timing-input input[type='number']::-webkit-outer-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.vocal-timing-input > span {
+  padding-right: 8px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.vocal-timing-error {
+  color: var(--danger);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
 .style-unavailable {
   margin: 0;
   padding: 12px;
@@ -503,6 +603,14 @@
   padding: 10px 12px;
   border-top: 1px solid var(--line-soft);
   background: var(--panel);
+}
+
+.style-editor__actions > p {
+  min-width: 0;
+  margin: 0 auto 0 0;
+  color: var(--danger);
+  font-size: 9px;
+  line-height: 1.35;
 }
 
 .project-action-decision {
