@@ -246,6 +246,47 @@ describe('owner-and-kind media capabilities', () => {
     expect(capabilities.get(active)).not.toBeNull()
   })
 
+  it('preserves a draft candidate until a validated replacement atomically succeeds', () => {
+    const capabilities = registry()
+    const active = retainedBackground(capabilities, 20, '/media/active.png', image(20))
+    const first = capabilities.registerBackgroundCandidate(
+      20,
+      '/media/first-draft.png',
+      image(21),
+      capabilities.beginRequest(20, 'background'),
+    )
+
+    const cancelled = capabilities.beginRequest(20, 'background')
+    expect(capabilities.get(first)).not.toBeNull()
+    expect(capabilities.settleBackgroundCandidate(20, first, true)).toBe(false)
+    expect(capabilities.finishRequest(20, 'background', cancelled)).toBe(true)
+    expect(capabilities.get(first)).not.toBeNull()
+    expect(capabilities.activeToken(20, 'background')).toBe(active)
+
+    const invalid = capabilities.beginRequest(20, 'background')
+    expect(() =>
+      capabilities.registerBackgroundCandidate(
+        20,
+        '/media/invalid.png',
+        { bytes: Buffer.from([1]), mime: 'image/webp' },
+        invalid,
+      ),
+    ).toThrow('A validated PNG or JPEG snapshot is required')
+    expect(capabilities.finishRequest(20, 'background', invalid)).toBe(true)
+    expect(capabilities.get(first)).not.toBeNull()
+
+    const replacement = capabilities.registerBackgroundCandidate(
+      20,
+      '/media/replacement.png',
+      image(22),
+      capabilities.beginRequest(20, 'background'),
+    )
+    expect(capabilities.get(first)).toBeNull()
+    expect(capabilities.settleBackgroundCandidate(20, first, true)).toBe(false)
+    expect(capabilities.settleBackgroundCandidate(20, replacement, true)).toBe(true)
+    expect(capabilities.activeToken(20, 'background')).toBe(replacement)
+  })
+
   it('settles only the current candidate and retains the prior active capability', () => {
     const capabilities = registry()
     const first = retainedBackground(capabilities, 3, '/media/first.png', image(10))
@@ -332,6 +373,7 @@ describe('owner-and-kind media capabilities', () => {
     let active = retainedBackground(capabilities, 11, '/media/first.png', image(121))
     for (let byte = 122; byte < 126; byte += 1) {
       const previous = active
+      const stale = capabilities.backgroundState(11)
       const candidate = capabilities.registerBackgroundCandidate(
         11,
         `/media/${byte}.png`,
@@ -341,6 +383,11 @@ describe('owner-and-kind media capabilities', () => {
       expect(pruneCurrent(capabilities, 11, candidate)).toBe(false)
       expect(capabilities.settleBackgroundCandidate(11, candidate, true)).toBe(true)
       active = candidate
+      expect(
+        capabilities.releaseBackgroundSnapshot(11, stale.revision, stale.activeToken, previous),
+      ).toBe(false)
+      expect(capabilities.activeToken(11, 'background')).toBe(active)
+      expect(capabilities.get(audio)).not.toBeNull()
       expect(retainCurrent(capabilities, 11, active, null)).toBe(true)
       expect(capabilities.activeToken(11, 'background')).toBeNull()
       expect(retainCurrent(capabilities, 11, null, active)).toBe(true)

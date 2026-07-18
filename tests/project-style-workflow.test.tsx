@@ -17,11 +17,14 @@ const captures = new WeakMap<HTMLElement, Set<number>>()
 
 interface StudioHarness {
   studio: StudioApi
+  chooseBackgroundImage: ReturnType<typeof vi.fn>
   emitClose: (request: StudioWindowCloseRequest) => void
   importAudio: ReturnType<typeof vi.fn>
   importLrc: ReturnType<typeof vi.fn>
   openProject: ReturnType<typeof vi.fn>
+  releaseBackgroundSnapshot: ReturnType<typeof vi.fn>
   resetProjectScope: ReturnType<typeof vi.fn>
+  resolveProjectBackground: ReturnType<typeof vi.fn>
   resolveWindowClose: ReturnType<typeof vi.fn>
   saveProject: ReturnType<typeof vi.fn>
 }
@@ -59,13 +62,42 @@ function createStudioHarness(): StudioHarness {
   const openProject = vi.fn(async () => null)
   const importAudio = vi.fn(async () => null)
   const importLrc = vi.fn(async () => null)
-  const resetProjectScope = vi.fn(async () => true)
+  let backgroundSequence = 0
+  let backgroundState: StudioBackgroundCapabilityState = {
+    activeUrl: null,
+    revision: `background-${backgroundSequence}`,
+  }
+  const nextBackgroundState = (activeUrl: string | null) => {
+    backgroundSequence += 1
+    backgroundState = { activeUrl, revision: `background-${backgroundSequence}` }
+    return backgroundState
+  }
+  const resetProjectScope = vi.fn(async () => {
+    nextBackgroundState(null)
+    return true
+  })
   const saveProject = vi.fn(async () => ({ path: '/saved/project.oks' }))
+  const chooseBackgroundImage = vi.fn<StudioApi['chooseBackgroundImage']>(async () => null)
+  const resolveProjectBackground = vi.fn<StudioApi['resolveProjectBackground']>(async () => ({
+    status: 'missing',
+    state: backgroundState,
+  }))
   const resolveWindowClose = vi.fn(async (requestId: string) => {
     if (pendingClose?.requestId !== requestId) return false
     pendingClose = null
     return true
   })
+  const releaseBackgroundSnapshot = vi.fn<StudioApi['releaseBackgroundSnapshot']>(
+    async (expected, url) => {
+      if (
+        expected.revision !== backgroundState.revision ||
+        expected.activeUrl !== backgroundState.activeUrl ||
+        url === backgroundState.activeUrl
+      )
+        return null
+      return nextBackgroundState(backgroundState.activeUrl)
+    },
+  )
   const studio = {
     openProject,
     settleProjectOpen: vi.fn(async () => true),
@@ -74,6 +106,15 @@ function createStudioHarness(): StudioHarness {
     importAudio,
     resolveProjectAudio: vi.fn(async () => null),
     releaseAudio: vi.fn(async () => undefined),
+    getBackgroundState: vi.fn(async () => backgroundState),
+    chooseBackgroundImage,
+    resolveProjectBackground,
+    settleBackgroundImage: vi.fn(async (url: string, accepted: boolean) =>
+      accepted ? nextBackgroundState(url) : backgroundState,
+    ),
+    retainBackground: vi.fn(async (_expected, url) => nextBackgroundState(url)),
+    releaseBackground: vi.fn(async () => nextBackgroundState(null)),
+    releaseBackgroundSnapshot,
     importLrc,
     exportText: vi.fn(async () => ({ path: '/exports/project.oks' })),
     exportVideo: vi.fn(async () => null),
@@ -92,6 +133,7 @@ function createStudioHarness(): StudioHarness {
 
   return {
     studio,
+    chooseBackgroundImage,
     emitClose(request) {
       pendingClose = request
       closeListener?.(request)
@@ -99,7 +141,9 @@ function createStudioHarness(): StudioHarness {
     importAudio,
     importLrc,
     openProject,
+    releaseBackgroundSnapshot,
     resetProjectScope,
+    resolveProjectBackground,
     resolveWindowClose,
     saveProject,
   }
@@ -139,6 +183,18 @@ class TestAudio extends EventTarget {
   publishDuration(durationMs: number) {
     this.duration = durationMs / 1_000
     this.dispatchEvent(new Event('loadedmetadata'))
+  }
+}
+
+class ControlledImage {
+  static instances: ControlledImage[] = []
+
+  onerror: ((event: Event) => void) | null = null
+  onload: ((event: Event) => void) | null = null
+  src = ''
+
+  constructor() {
+    ControlledImage.instances.push(this)
   }
 }
 
@@ -430,6 +486,7 @@ describe('project Style App integration', () => {
     expect(applied.stageStyle.lyrics.sizePx).toBe(96)
     expect(applied.tracks[0].vocalStyle.sungColor).toBe('#123456')
     await click(buttonByLabel('Undo'))
+    expect(buttonByLabel('Undo').disabled).toBe(true)
     await click(buttonByLabel('Save project'))
     const undone = parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents)
     expect(undone.stageStyle.lyrics.sizePx).toBe(82)
@@ -440,6 +497,157 @@ describe('project Style App integration', () => {
     const redone = parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents)
     expect(redone.stageStyle.lyrics.sizePx).toBe(96)
     expect(redone.tracks[0].vocalStyle.sungColor).toBe('#123456')
+  })
+
+  it('applies one verified linked Image through strict-v0 save, undo, redo, and missing reopen', async () => {
+    ControlledImage.instances = []
+    vi.stubGlobal('Image', ControlledImage)
+    const imageUrl = 'studio-media://asset/style-image'
+    harness.chooseBackgroundImage.mockResolvedValueOnce({
+      path: '/media/style-image.png',
+      name: 'style-image.png',
+      url: imageUrl,
+    })
+
+    await click(buttonByText('Style'))
+    await click(buttonByText('Background'))
+    await chooseColor('Background gradient start color', '#112233')
+    await chooseColor('Background gradient end color', '#445566')
+    await click(buttonByText('Choose image'))
+    expect(document.body.textContent).not.toContain('/media/style-image.png')
+    expect(buttonByText('Apply & close').disabled).toBe(true)
+    expect(ControlledImage.instances).toHaveLength(1)
+    await act(async () => ControlledImage.instances[0]!.onload?.(new Event('load')))
+    await settle()
+    await click(buttonByText('Apply & close'))
+
+    expect(document.querySelector('.style-workspace')).toBeNull()
+    expect(buttonByLabel('Undo').disabled).toBe(false)
+    await click(buttonByLabel('Save project'))
+    const acceptedContents = harness.saveProject.mock.calls.at(-1)![0].contents as string
+    const acceptedJson = JSON.parse(acceptedContents)
+    expect(acceptedJson.schemaVersion).toBe(0)
+    expect(acceptedContents).not.toContain(imageUrl)
+    expect(acceptedContents).not.toContain('bytes')
+    expect(acceptedJson.stageStyle.background).toEqual({
+      gradientEndColor: '#445566',
+      gradientStartColor: '#112233',
+      imagePath: '/media/style-image.png',
+      mode: 'image',
+      solidColor: '#21182D',
+    })
+
+    await click(buttonByLabel('Undo'))
+    expect(buttonByLabel('Undo').disabled).toBe(true)
+    await click(buttonByLabel('Save project'))
+    expect(
+      parseProject(harness.saveProject.mock.calls.at(-1)![0].contents).stageStyle.background,
+    ).toMatchObject({ imagePath: null, mode: 'gradient' })
+    await click(buttonByLabel('Redo'))
+    await click(buttonByLabel('Save project'))
+    expect(
+      parseProject(harness.saveProject.mock.calls.at(-1)![0].contents).stageStyle.background,
+    ).toEqual(acceptedJson.stageStyle.background)
+
+    harness.openProject.mockResolvedValueOnce({
+      requestId: 'missing-image-open',
+      path: '/projects/missing-image.oks',
+      contents: acceptedContents,
+    })
+    harness.resolveProjectBackground.mockResolvedValueOnce({
+      status: 'missing',
+      state: { activeUrl: null, revision: 'missing-image' },
+    })
+    await click(buttonByLabel('Open project'))
+    expect(document.body.textContent).toContain('Linked background is missing')
+    await click(buttonByLabel('Save project'))
+    expect(
+      parseProject(harness.saveProject.mock.calls.at(-1)![0].contents).stageStyle.background,
+    ).toEqual(acceptedJson.stageStyle.background)
+  })
+
+  it('releases an Image snapshot when an unrelated edit prunes its redo entry', async () => {
+    ControlledImage.instances = []
+    vi.stubGlobal('Image', ControlledImage)
+    const pathA = '/media/history-a.png'
+    const pathB = '/media/pruned-redo-b.png'
+    const urlA = 'studio-media://asset/history-a'
+    const urlB = 'studio-media://asset/pruned-redo-b'
+    harness.chooseBackgroundImage
+      .mockResolvedValueOnce({ path: pathA, name: 'history-a.png', url: urlA })
+      .mockResolvedValueOnce({ path: pathB, name: 'pruned-redo-b.png', url: urlB })
+
+    const applyNextImage = async (firstImage: boolean) => {
+      await click(buttonByText('Style'))
+      await click(buttonByText('Background'))
+      const previousImageCount = ControlledImage.instances.length
+      await click(buttonByText(firstImage ? 'Choose image' : 'Replace image'))
+      expect(ControlledImage.instances.length).toBeGreaterThan(previousImageCount)
+      await act(async () => ControlledImage.instances.at(-1)!.onload?.(new Event('load')))
+      await settle()
+      await click(buttonByText('Apply & close'))
+    }
+
+    await applyNextImage(true)
+    await applyNextImage(false)
+    await click(buttonByLabel('Undo'))
+    expect(buttonByLabel('Redo').disabled).toBe(false)
+    expect(document.querySelector('.karaoke-stage')?.getAttribute('data-background-mode')).toBe(
+      'image',
+    )
+
+    const title = document.querySelector<HTMLInputElement>('.inspector-section .field input')
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+    if (!title || !setter) throw new Error('Project title input was not mounted')
+    await act(async () => {
+      setter.call(title, 'Unrelated title edit')
+      title.dispatchEvent(new InputEvent('input', { bubbles: true, data: 'Unrelated title edit' }))
+    })
+    await settle()
+
+    expect(buttonByLabel('Redo').disabled).toBe(true)
+    expect(harness.releaseBackgroundSnapshot).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ activeUrl: urlA }),
+      urlB,
+    )
+    expect(harness.releaseBackgroundSnapshot.mock.calls.map(([, url]) => url)).toEqual([urlB])
+
+    await click(buttonByLabel('Undo'))
+    await click(buttonByLabel('Undo'))
+    expect(document.querySelector('.karaoke-stage')?.getAttribute('data-background-mode')).toBe(
+      'gradient',
+    )
+    await click(buttonByLabel('Redo'))
+    expect(document.querySelector('.karaoke-stage')?.getAttribute('data-background-mode')).toBe(
+      'image',
+    )
+    expect(vi.mocked(harness.studio.retainBackground).mock.calls.at(-1)?.[1]).toBe(urlA)
+    expect(harness.releaseBackgroundSnapshot.mock.calls.map(([, url]) => url)).toEqual([urlB])
+  })
+
+  it('rejects an uncommitted Image before New resets project and capability scope', async () => {
+    const candidateUrl = 'studio-media://asset/new-reset'
+    harness.chooseBackgroundImage.mockResolvedValueOnce({
+      path: '/media/new-reset.jpg',
+      name: 'new-reset.jpg',
+      url: candidateUrl,
+    })
+    const settleBackgroundImage = vi.mocked(harness.studio.settleBackgroundImage)
+
+    await click(buttonByText('Style'))
+    await click(buttonByText('Background'))
+    await click(buttonByText('Choose image'))
+    await click(buttonByLabel('New project'))
+    expect(document.body.textContent).toContain('Finish editing project Style?')
+    await click(buttonByText('Discard changes'))
+
+    expect(settleBackgroundImage).toHaveBeenCalledWith(candidateUrl, false)
+    expect(harness.resetProjectScope).toHaveBeenCalledOnce()
+    expect(document.querySelector('.style-workspace')).toBeNull()
+    expect(document.querySelector('.karaoke-stage')?.getAttribute('data-background-mode')).toBe(
+      'gradient',
+    )
+    expect(buttonByLabel('Undo').disabled).toBe(true)
   })
 
   it('targets the selected preserved vocal by stable ID through Apply and reopen', async () => {

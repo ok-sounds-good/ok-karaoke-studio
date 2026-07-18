@@ -25,6 +25,7 @@ import { useInstalledFonts } from './hooks/useInstalledFonts'
 import { useWaveform } from './hooks/useWaveform'
 import { useProjectActionArbiter } from './hooks/useProjectActionArbiter'
 import { useProjectBackgroundImage } from './hooks/useProjectBackgroundImage'
+import { useBackgroundImageStyleSession } from './hooks/useBackgroundImageStyleSession'
 import {
   canonicalVocalStyle,
   createProjectStyleDraft,
@@ -132,6 +133,14 @@ function useProjectHistory(initialProject: KaraokeProject | (() => KaraokeProjec
   }, [])
 
   const markSaved = useCallback((revision: number) => setSavedRevision(revision), [])
+  const reachableBackgroundImagePaths = useMemo(() => {
+    const paths = new Set<string>()
+    for (const candidate of [...pastRef.current, entry, ...futureRef.current]) {
+      const imagePath = candidate.project.stageStyle.background.imagePath
+      if (imagePath) paths.add(imagePath)
+    }
+    return [...paths]
+  }, [entry, historyVersion])
 
   return {
     project: entry.project,
@@ -140,6 +149,7 @@ function useProjectHistory(initialProject: KaraokeProject | (() => KaraokeProjec
     canUndo: pastRef.current.length > 0,
     canRedo: futureRef.current.length > 0,
     historyVersion,
+    reachableBackgroundImagePaths,
     commit,
     replaceCurrent,
     reset,
@@ -395,6 +405,7 @@ export default function App() {
     acceptedProjectPath: acceptedProjectBackgroundPathRef.current,
     background: project.stageStyle.background,
     lifecycle: projectLifecycleSequenceRef.current,
+    reachableImagePaths: history.reachableBackgroundImagePaths,
   })
 
   const updateTimingDraft = useCallback((timings: ProjectTimingDraft | null) => {
@@ -502,6 +513,14 @@ export default function App() {
     requestFonts: installedFonts.request,
     commitDraft: commitProjectStyle,
   })
+  const backgroundStyleSession = useBackgroundImageStyleSession({
+    backgroundImages,
+    session: styleSession,
+    sourceBackground: project.stageStyle.background,
+  })
+  const styleApplyBlockedReason =
+    styleSession.applyBlockedReason ?? backgroundStyleSession.controls.applyBlockedReason
+  const canApplyStyle = styleSession.canApply && !styleApplyBlockedReason
   useEffect(() => {
     if (!toast) return
     const timer = window.setTimeout(() => setToast(null), 3200)
@@ -1231,7 +1250,8 @@ export default function App() {
     nativeClose: nativeCloseBridge,
     draftGuard: {
       needsResolution: () => styleSession.blocksProjectActions,
-      settle: (decision) => (decision === 'apply' ? styleSession.apply() : styleSession.cancel()),
+      settle: (decision) =>
+        decision === 'apply' ? backgroundStyleSession.apply() : backgroundStyleSession.cancel(),
     },
     executors: {
       new: handleNew,
@@ -1595,7 +1615,7 @@ export default function App() {
         styleDisabledReason={styleDisabledReason}
         workflowDisabled={styleSession.isOpen}
         validationDisabled={styleSession.isOpen}
-        onStyle={styleSession.start}
+        onStyle={backgroundStyleSession.start}
         onNew={() => requestProjectAction('new')}
         onOpen={() => requestProjectAction('open')}
         onSave={() => requestProjectAction('save')}
@@ -1616,13 +1636,14 @@ export default function App() {
           leadVocalAvailable={Boolean(activeTrack)}
           fonts={installedFonts}
           onDraftChange={styleSession.change}
-          backgroundPreview={backgroundImages.preview}
+          backgroundPreview={backgroundStyleSession.preview}
+          backgroundControls={backgroundStyleSession.controls}
           onRetryFonts={installedFonts.request}
           onTogglePlayback={playback.toggle}
-          onCancel={styleSession.cancel}
-          onApply={styleSession.apply}
-          canApply={styleSession.canApply}
-          applyBlockedReason={styleSession.applyBlockedReason}
+          onCancel={backgroundStyleSession.cancel}
+          onApply={backgroundStyleSession.apply}
+          canApply={canApplyStyle}
+          applyBlockedReason={styleApplyBlockedReason}
         />
       ) : (
         <main className="studio-main">
@@ -1773,8 +1794,8 @@ export default function App() {
           phase={projectActionPhase}
           error={projectActionError}
           hasDraft={styleSession.blocksProjectActions}
-          canApplyDraft={styleSession.canApply}
-          applyBlockedReason={styleSession.applyBlockedReason}
+          canApplyDraft={canApplyStyle}
+          applyBlockedReason={styleApplyBlockedReason}
           onApply={applyPendingProjectAction}
           onDiscard={discardPendingProjectAction}
           onKeep={keepPendingProjectAction}

@@ -199,7 +199,6 @@ function createMediaCapabilityRegistry({
 
   const beginRequest = (ownerId, kind) => {
     const key = scopeKey(ownerId, kind)
-    deleteCandidate(ownerId, kind)
     const sequence = advanceSequence(ownerId, kind)
     pendingByScope.set(key, sequence)
     return sequence
@@ -247,9 +246,15 @@ function createMediaCapabilityRegistry({
       sequence,
       state,
     })
-    pendingByScope.delete(scopeKey(ownerId, 'background'))
-    if (state === 'candidate') candidateByScope.set(scopeKey(ownerId, 'background'), token)
-    else activeByScope.set(scopeKey(ownerId, 'background'), token)
+    const key = scopeKey(ownerId, 'background')
+    pendingByScope.delete(key)
+    if (state === 'candidate') {
+      const replaced = candidateByScope.get(key)
+      candidateByScope.set(key, token)
+      if (replaced && replaced !== token) deleteToken(replaced)
+    } else {
+      activeByScope.set(key, token)
+    }
     return token
   }
 
@@ -401,18 +406,17 @@ function createMediaCapabilityRegistry({
     settleBackgroundCandidate(ownerId, candidateToken, accepted) {
       if (typeof accepted !== 'boolean') throw new TypeError('accepted must be a boolean')
       const candidate = entries.get(candidateToken)
+      const key = scopeKey(ownerId, 'background')
       if (
         !candidate ||
         candidate.ownerId !== ownerId ||
         candidate.kind !== 'background' ||
-        candidate.state !== 'candidate'
+        candidate.state !== 'candidate' ||
+        candidateByScope.get(key) !== candidateToken ||
+        pendingByScope.has(key)
       )
         return false
-      if (!requestIsCurrent(ownerId, 'background', candidate.sequence)) {
-        deleteToken(candidateToken)
-        return false
-      }
-      candidateByScope.delete(scopeKey(ownerId, 'background'))
+      candidateByScope.delete(key)
       if (!accepted) {
         deleteToken(candidateToken)
         return true
