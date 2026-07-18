@@ -225,23 +225,59 @@ describe('reviewer infrastructure contract', () => {
 
     for (const worker of [generalWorker, electronWorker]) {
       expect(worker).toContain('Remain local-only by default')
-      expect(worker).toContain('current task assignment explicitly names')
+      expect(worker).toContain('the specific operation')
+      expect(worker).toContain('Remote permissions\nare independent and fail closed')
+      expect(worker).toContain(
+        'perform only operations individually named in\nthe current assignment',
+      )
+      expect(worker).toContain('Permission for one never implies permission for another')
       expect(worker).toContain('commit only your own scoped changes')
       expect(worker).toMatch(/push\s+without\s+force only the assigned branch/)
-      expect(worker).toMatch(/open or update only its linked pull\s+request/)
-      expect(worker).toMatch(/comments beginning\s+with `## Developer`/)
+      expect(worker).toContain('`open/update pull request`')
+      expect(worker).toContain('`read review feedback`')
+      expect(worker).toContain('`post Developer comment`')
+      expect(worker).toContain('A `read review feedback`-only assignment is read-only')
+      expect(worker).toMatch(/permits no commit,\s+push, pull-request mutation, or comment/)
+      expect(worker).toMatch(
+        /A partial assignment naming only\s+`commit` and `push` permits only those two operations/,
+      )
+      expect(worker).toMatch(
+        /The full set is permitted\s+only when the current assignment individually names all five operations/,
+      )
+      expect(worker).toContain('connector or gh only for an individually named remote operation')
       expect(worker).toContain('Never create, switch, merge, or delete branches')
       expect(worker).toContain('perform post-merge verification or cleanup')
       expect(worker).toContain('follow inherited and managed permissions')
+      expect(worker).not.toMatch(
+        /When\s+that narrow authorization exists,[\s\S]{0,500}you may commit[\s\S]{0,500}post only/,
+      )
     }
 
     expect(reviewer).toContain('sandbox_mode = "read-only"')
     expect(reviewer).toContain('Remain local-only by default')
-    expect(reviewer).toContain('current task assignment explicitly authorizes remote review')
-    expect(reviewer).toContain('post your own findings-first review')
-    expect(reviewer).toContain('head exactly matches the locally reviewed commit')
-    expect(reviewer).toContain('starts with `## Reviewer` as its first nonblank line')
-    expect(reviewer).toContain('Remote review\nauthorization grants no other GitHub')
+    expect(reviewer).toContain('these two remote permissions independently')
+    expect(reviewer).toContain('`read pull request`')
+    expect(reviewer).toContain('`post review`')
+    expect(reviewer).toContain('The two permissions are independent and fail closed')
+    expect(reviewer).toContain('Permission for one never\nimplies permission for the other')
+    expect(reviewer).toContain('Reading pull-request content requires the')
+    expect(reviewer).toContain('current assignment to name `read pull request`')
+    expect(reviewer).toContain('Posting requires the assignment\nto name `post review`')
+    expect(reviewer).toMatch(/A read-only\s+assignment naming only/)
+    expect(reviewer).toMatch(/`read pull request` permits inspection but never posting/)
+    expect(reviewer).toMatch(/A partial assignment naming only\s+`post review`/)
+    expect(reviewer).toMatch(/but no remote pull-request content or feedback read/)
+    expect(reviewer).toContain('includes only the minimum current-head query')
+    expect(reviewer).toMatch(/remote head exactly matches the locally\s+reviewed/)
+    expect(reviewer).toMatch(
+      /The full set is permitted only when the current\s+assignment\s+individually names both permissions/,
+    )
+    expect(reviewer).toContain('starting with\n  `## Reviewer` as its first nonblank line')
+    expect(reviewer).toContain('A named remote\npermission grants no other GitHub')
+    expect(reviewer).not.toContain('authorizes remote review')
+    expect(reviewer).not.toMatch(
+      /When\s+that narrow authorization exists[\s\S]{0,500}read the\s+linked pull request and post/,
+    )
   })
 
   it('makes review local, exact-head, and COMMENT-compatible', () => {

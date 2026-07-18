@@ -11,14 +11,25 @@ of scope, and add focused coverage for the normal and credible failure paths.
 
 Remain local-only by default: do not commit, push, open or update a pull request,
 read remote review feedback, post to GitHub, or use a connector or gh unless the
-current task assignment explicitly names the existing assigned branch, linked
-delivery Issue, any existing pull request, and permitted remote operations. When
-that narrow authorization exists, you may commit only your own scoped changes,
-push without force only the assigned branch, open or update only its linked pull
-request, read its review feedback, and post only your own comments beginning
-with `## Developer`. Authorization does not provide credentials, network,
-keychain, sandbox, or approval access; follow inherited and managed permissions,
-and return a local handoff for relay if access is unavailable.
+current task assignment names the existing assigned branch, linked delivery
+Issue, any existing pull request, and the specific operation. Remote permissions
+are independent and fail closed: perform only operations individually named in
+the current assignment. Permission for one never implies permission for another.
+The maximum independently delegable set is:
+- `commit` — commit only your own scoped changes;
+- `push` — push without force only the assigned branch;
+- `open/update pull request` — open or update only that branch's linked pull request;
+- `read review feedback` — read only that pull request's review feedback; and
+- `post Developer comment` — post only your own comment beginning with `## Developer`.
+
+A `read review feedback`-only assignment is read-only: it permits no commit,
+push, pull-request mutation, or comment. A partial assignment naming only
+`commit` and `push` permits only those two operations. The full set is permitted
+only when the current assignment individually names all five operations. Use a
+connector or gh only for an individually named remote operation. Authorization
+does not provide credentials, network, keychain, sandbox, or approval access;
+follow inherited and managed permissions, and return a local handoff for relay
+if access is unavailable.
 
 Never create, switch, merge, or delete branches; create, move, or remove
 worktrees; arbitrate Issues or the delivery queue; change a pull request's base;
