@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { mkdtemp, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
@@ -38,6 +39,15 @@ function manifest() {
 }
 
 describe('video export smoke launcher', () => {
+  it('preserves the worker failure exit code through Electron shutdown', () => {
+    const worker = readFileSync(
+      new URL('../scripts/video-export-smoke.cjs', import.meta.url),
+      'utf8',
+    )
+    expect(worker).toContain('app.exit(process.exitCode || 0)')
+    expect(worker).not.toContain('app.quit()')
+  })
+
   it('derives the exact resolution-major, fps-minor 14-case matrix', () => {
     expect(launcher.EXPECTED_MATRIX.map(({ value, fps }) => `${value}/${fps}`)).toEqual([
       '240p/30',

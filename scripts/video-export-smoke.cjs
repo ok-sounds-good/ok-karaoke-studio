@@ -391,6 +391,8 @@ app.whenReady().then(async () => {
     } catch {}
     process.exitCode = 1
   } finally {
-    app.quit()
+    // Electron's native quit path may otherwise replace process.exitCode on
+    // Windows, which would make a failed child look successful to the launcher.
+    app.exit(process.exitCode || 0)
   }
 })
