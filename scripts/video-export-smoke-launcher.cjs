@@ -64,7 +64,7 @@ function validateManifest(value) {
         ? item.decodedLyricEvidence.every(validTransition)
         : item.decodedLyricEvidence.every(
             (evidence) =>
-              evidence?.observedFrame === (600 * item.fps) / 1_000 &&
+              evidence?.observedFrame === (900 * item.fps) / 1_000 &&
               Number.isSafeInteger(evidence.lyricPixels) &&
               evidence.lyricPixels > 0,
           ))

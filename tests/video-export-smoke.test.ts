@@ -29,12 +29,12 @@ function manifest() {
       decodedLyricEvidence:
         index < 2
           ? Array.from({ length: 2 }, () => ({
-              boundaryFrame: entry.fps === 30 ? 9 : 18,
-              observedFrame: entry.fps === 30 ? 10 : 19,
+              boundaryFrame: entry.fps === 30 ? 15 : 30,
+              observedFrame: entry.fps === 30 ? 16 : 31,
               changedPixels: 12,
               totalDifference: 400,
             }))
-          : [{ observedFrame: entry.fps === 30 ? 18 : 36, lyricPixels: 12 }],
+          : [{ observedFrame: entry.fps === 30 ? 27 : 54, lyricPixels: 12 }],
       bytes: 1_024,
       sha256: 'a'.repeat(64),
     })),

@@ -160,7 +160,7 @@ function lyricEvidence({ ffmpegPath, videoPath, width, height, fps, startMs, roo
 }
 
 function lyricPresenceEvidence({ ffmpegPath, videoPath, fps, root }) {
-  const observedFrame = (600 * fps) / 1_000
+  const observedFrame = (900 * fps) / 1_000
   const decoded = decodeLyricCrop(ffmpegPath, videoPath, observedFrame, 960, 540, root)
   const lyricPixels = countSungPixels(decoded)
   if (lyricPixels < 8) throw new Error(`decoded sung lyric evidence absent (${lyricPixels})`)
@@ -184,11 +184,11 @@ function projectFixture(project, audioPath) {
       {
         id: 'smoke-line',
         text: 'Smoke test',
-        startMs: 300,
-        endMs: 800,
+        startMs: 500,
+        endMs: 1_000,
         words: [
-          { id: 'smoke-word-1', text: 'Smoke', startMs: 300, endMs: 400 },
-          { id: 'smoke-word-2', text: 'test', startMs: 500, endMs: 600 },
+          { id: 'smoke-word-1', text: 'Smoke', startMs: 500, endMs: 700 },
+          { id: 'smoke-word-2', text: 'test', startMs: 700, endMs: 900 },
         ],
       },
     ],
@@ -307,7 +307,7 @@ async function exportCase(entry, context) {
     }
     decodedLyricEvidence =
       entry.ordinal <= 2
-        ? [300, 500].map((startMs) => lyricEvidence({ ...parameters, startMs }))
+        ? [500, 700].map((startMs) => lyricEvidence({ ...parameters, startMs }))
         : [lyricPresenceEvidence(parameters)]
   } catch (error) {
     throw failCase(entry, 'decode', error)
