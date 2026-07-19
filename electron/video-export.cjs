@@ -374,6 +374,8 @@ function presentRequestedFrame(contents, update, settings, signal, expectedSeque
   return new Promise((resolve, reject) => {
     let paintingStarted = false
     let settled = false
+    let updateCompleted = false
+    let pendingFrame = null
     const cleanup = () => {
       clearTimeout(timeout)
       contents.off('paint', onPaint)
@@ -396,6 +398,14 @@ function presentRequestedFrame(contents, update, settings, signal, expectedSeque
       cleanup()
       reject(error)
     }
+    const finish = (frame) => {
+      if (settled) return
+      settled = true
+      const stopError = stopPainting()
+      cleanup()
+      if (stopError) reject(stopError)
+      else resolve(frame)
+    }
     const timeout = setTimeout(() => {
       fail(new Error('Timed out while rendering a video frame'))
     }, 10_000)
@@ -405,11 +415,8 @@ function presentRequestedFrame(contents, update, settings, signal, expectedSeque
         if (expectedSequence !== null && paintedFrameSequence(image, settings) !== expectedSequence)
           return
         const frame = encodeJpegFrame(image, settings, expectedSequence !== null)
-        settled = true
-        const stopError = stopPainting()
-        cleanup()
-        if (stopError) reject(stopError)
-        else resolve(frame)
+        if (!updateCompleted) pendingFrame = frame
+        else finish(frame)
       } catch (error) {
         fail(error)
       }
@@ -420,17 +427,24 @@ function presentRequestedFrame(contents, update, settings, signal, expectedSeque
       return
     }
     signal?.addEventListener('abort', onAbort, { once: true })
+    const startPainting = () => {
+      if (settled) return
+      try {
+        contents.on('paint', onPaint)
+        paintingStarted = true
+        contents.startPainting()
+      } catch (error) {
+        fail(error)
+      }
+    }
+    if (expectedSequence !== null) startPainting()
     Promise.resolve()
       .then(() => (settled ? undefined : update()))
       .then(() => {
         if (settled) return
-        try {
-          contents.on('paint', onPaint)
-          paintingStarted = true
-          contents.startPainting()
-        } catch (error) {
-          fail(error)
-        }
+        updateCompleted = true
+        if (pendingFrame) finish(pendingFrame)
+        else if (expectedSequence === null) startPainting()
       }, fail)
   })
 }
