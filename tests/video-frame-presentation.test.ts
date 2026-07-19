@@ -126,14 +126,29 @@ describe('offscreen video frame presentation', () => {
       surfaceWidth: 1298,
       surfaceHeight: 720,
     })
-    expect(
-      videoExport.fittedWindowsCaptureGeometry(settings, { width: 1024, height: 720 }),
-    ).toEqual({
-      stageWidth: 1006,
-      stageHeight: 565,
+    const constrainedGeometry = videoExport.fittedWindowsCaptureGeometry(settings, {
+      width: 1024,
+      height: 720,
+    })
+    expect(constrainedGeometry).toEqual({
+      stageWidth: 992,
+      stageHeight: 558,
       surfaceWidth: 1024,
       surfaceHeight: 720,
     })
+    expect(constrainedGeometry.stageWidth * settings.height).toBe(
+      constrainedGeometry.stageHeight * settings.width,
+    )
+    for (const resolution of ['240p', '360p', '480p', '720p', '1080p', '1440p', '2160p']) {
+      const preset = videoExport.normalizeVideoSettings({ resolution, fps: 30 })
+      const fitted = videoExport.fittedWindowsCaptureGeometry(preset, {
+        width: 1024,
+        height: 720,
+      })
+      expect(fitted.stageWidth * preset.height).toBe(fitted.stageHeight * preset.width)
+      expect(fitted.stageWidth + FRAME_MARKER_BITS).toBeLessThanOrEqual(1024)
+      expect(fitted.stageHeight).toBeLessThanOrEqual(720)
+    }
     expect(() =>
       videoExport.fittedWindowsCaptureGeometry(settings, { width: 18, height: 720 }),
     ).toThrow('Windows video export surface is unavailable')
@@ -147,14 +162,14 @@ describe('offscreen video frame presentation', () => {
     })
     const bitmap = Buffer.alloc(1024 * 720 * 4)
     for (let y = 0; y < 720; y += 1) {
-      bitmap.fill(255, (y * 1024 + 1006) * 4, (y * 1024 + 1007) * 4)
+      bitmap.fill(255, (y * 1024 + 992) * 4, (y * 1024 + 993) * 4)
     }
     const finalImage = {
       getSize: () => ({ width: 1280, height: 720 }),
       toJPEG: () => Buffer.from('fitted-frame'),
     }
     const croppedImage = {
-      getSize: () => ({ width: 1006, height: 565 }),
+      getSize: () => ({ width: 992, height: 558 }),
       resize: vi.fn(() => finalImage),
     }
     const image = {
@@ -165,7 +180,7 @@ describe('offscreen video frame presentation', () => {
 
     expect(videoExport.paintedFrameSequence(image, geometry)).toBe(1)
     expect(videoExport.encodeJpegFrame(image, settings, geometry).toString()).toBe('fitted-frame')
-    expect(image.crop).toHaveBeenCalledWith({ x: 0, y: 0, width: 1006, height: 565 })
+    expect(image.crop).toHaveBeenCalledWith({ x: 0, y: 0, width: 992, height: 558 })
     expect(croppedImage.resize).toHaveBeenCalledWith({
       width: 1280,
       height: 720,
@@ -206,9 +221,9 @@ describe('offscreen video frame presentation', () => {
         {},
         {
           crop: (rect: unknown) => {
-            expect(rect).toEqual({ x: 0, y: 0, width: 1006, height: 565 })
+            expect(rect).toEqual({ x: 0, y: 0, width: 992, height: 558 })
             return {
-              getSize: () => ({ width: 1006, height: 565 }),
+              getSize: () => ({ width: 992, height: 558 }),
               resize: () => ({
                 getSize: () => ({ width: 1280, height: 720 }),
                 toJPEG: () => Buffer.from('paint-frame'),
@@ -257,7 +272,7 @@ describe('offscreen video frame presentation', () => {
 
     expect(contents.capturePage).toHaveBeenCalledTimes(1)
     expect(loadUrls).toHaveLength(2)
-    expect(decodeURIComponent(loadUrls[1].split(',')[1])).toContain('left: 1006px')
+    expect(decodeURIComponent(loadUrls[1].split(',')[1])).toContain('left: 992px')
     expect(frames.map((frame) => frame.toString())).toEqual(['paint-frame'])
     expect(destroyed).toBe(true)
   })

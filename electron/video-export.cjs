@@ -340,14 +340,24 @@ function fittedWindowsCaptureGeometry(settings, surfaceSize) {
   ) {
     throw new Error('The Windows video export surface is unavailable')
   }
-  const scale = Math.min(
-    1,
-    (surfaceSize.width - FRAME_MARKER_BITS) / settings.width,
-    surfaceSize.height / settings.height,
+  let widthDivisor = settings.width
+  let heightDivisor = settings.height
+  while (heightDivisor !== 0) {
+    const remainder = widthDivisor % heightDivisor
+    widthDivisor = heightDivisor
+    heightDivisor = remainder
+  }
+  const unitWidth = settings.width / widthDivisor
+  const unitHeight = settings.height / widthDivisor
+  const multiplier = Math.min(
+    widthDivisor,
+    Math.floor((surfaceSize.width - FRAME_MARKER_BITS) / unitWidth),
+    Math.floor(surfaceSize.height / unitHeight),
   )
+  if (multiplier < 1) throw new Error('The Windows video export surface is unavailable')
   return {
-    stageWidth: Math.max(1, Math.floor(settings.width * scale)),
-    stageHeight: Math.max(1, Math.floor(settings.height * scale)),
+    stageWidth: unitWidth * multiplier,
+    stageHeight: unitHeight * multiplier,
     surfaceWidth: surfaceSize.width,
     surfaceHeight: surfaceSize.height,
   }
