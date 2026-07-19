@@ -122,8 +122,8 @@ export function WorkflowGuideDialog({
           <div>
             <strong>Time each word</strong>
             <p>
-              Move the playhead, arm Tap sync, then press Space at each word onset. Hold the final
-              word of a line to extend it.
+              Move the playhead and arm Tap sync. Use Space naturally, or press Right to start the
+              displayed word and Down to end the active word. Shift+Left/Right moves one second.
             </p>
           </div>
           <Button size="sm" variant="secondary" disabled={!canStartSync} onClick={onStartSync}>

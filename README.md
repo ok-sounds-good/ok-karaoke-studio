@@ -45,8 +45,9 @@ in-app first-project guide.
 
 3. **Synchronize the words.** Move the playhead to the desired starting point
    and choose **Start sync** in Lyric Timing or the playback bar. Press Space at
-   each word onset. Each new onset on the same line closes the previous word;
-   hold Space through the final word of a line to extend its duration. Press
+   each word onset, or press Right to start the displayed word and Down to end
+   the active word. Each new onset on the same line closes the previous word
+   unless Down explicitly ended it. Hold Space through a final word. Press
    Escape when you are finished.
 
 4. **Correct the timing.** Select words in Lyric Timing, drag blocks to move
@@ -96,8 +97,9 @@ in-app first-project guide.
 | Space                    | Start the current word during synchronization; hold the final word of a line through its sung duration. |
 | Shift + Space            | Play or pause.                                                                                          |
 | Escape                   | Exit synchronization or cancel an open Style edit.                                                      |
-| Left / Right             | Move the playhead by 250 ms.                                                                            |
-| Shift + Left / Right     | Move the playhead by 1 second.                                                                          |
+| Left / Right             | Move by 250 ms; armed Right instead starts the displayed target word.                                   |
+| Down                     | End the active word while synchronization is armed.                                                     |
+| Shift + Left / Right     | Move the playhead by 1 second without timing a word.                                                    |
 | Delete / Backspace       | Clear timing from selected words.                                                                       |
 | Command/Ctrl + A         | Select every word in the active track when not editing text.                                            |
 | Command/Ctrl + Z         | Undo.                                                                                                   |

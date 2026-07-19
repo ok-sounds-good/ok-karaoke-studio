@@ -674,10 +674,10 @@ describe('mounted first-time workflow', () => {
 
     await press('Space')
     await releaseSpace()
-    await press('ArrowRight')
+    await press('ArrowRight', { shiftKey: true })
     await press('Space')
     await releaseSpace()
-    await press('ArrowRight')
+    await press('ArrowRight', { shiftKey: true })
     await press('Space')
     await press('ArrowRight', { shiftKey: true })
     await releaseSpace()
@@ -687,9 +687,9 @@ describe('mounted first-time workflow', () => {
     )
     expect(labels).toEqual(
       expect.arrayContaining([
-        'First timing block, 0:00.000–0:00.250',
-        'second timing block, 0:00.250–0:00.500',
-        'third timing block, 0:00.500–0:01.500',
+        'First timing block, 0:00.000–0:01.000',
+        'second timing block, 0:01.000–0:02.000',
+        'third timing block, 0:02.000–0:03.000',
       ]),
     )
     expect(document.querySelector('.sync-cue__line.is-current')?.textContent).toContain('Fourth')
@@ -702,13 +702,146 @@ describe('mounted first-time workflow', () => {
     const saved = parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents)
     const timed = saved.tracks[0].lines[0].words
     expect(timed.map(({ startMs, endMs }) => [startMs, endMs])).toEqual([
-      [0, 250],
-      [250, 500],
-      [500, 1_500],
+      [0, 1_000],
+      [1_000, 2_000],
+      [2_000, 3_000],
     ])
 
     await act(async () => harness.sendMenuAction('undo'))
     expect(document.querySelectorAll('.timeline-word')).toHaveLength(0)
+  })
+
+  it('times a complete line with Right and undoes the armed session once', async () => {
+    await clickButton('Edit text')
+    await replaceTextarea('One two')
+    await clickButton('Apply lyrics')
+    const startSync = buttonContaining('Start sync')
+    startSync.focus()
+    await clickButton('Start sync')
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+    expect(document.activeElement).not.toBe(startSync)
+
+    await pressKey('ArrowRight')
+    expect(document.querySelector('.sync-cue__line.is-current')?.textContent).toContain('two')
+    await pressKey('ArrowRight')
+
+    expect(timelineTimingLabels()).toEqual([
+      'One timing block, 0:00.000–0:00.100',
+      'two timing block, 0:00.100–0:00.200',
+    ])
+    expect(document.querySelector('.transport')?.classList.contains('is-syncing')).toBe(false)
+    await act(async () => harness.sendMenuAction('undo'))
+    expect(document.querySelectorAll('.timeline-word')).toHaveLength(0)
+  })
+
+  it('preserves Down-ended gaps before later Right and Space onsets', async () => {
+    await clickButton('Edit text')
+    await replaceTextarea('Alpha beta gamma')
+    await clickButton('Apply lyrics')
+    await clickButton('Start sync')
+
+    await pressKey('ArrowRight')
+    await pressKey('ArrowRight', { shiftKey: true })
+    await pressKey('ArrowDown')
+    await pressKey('ArrowRight', { shiftKey: true })
+    await pressKey('ArrowRight')
+    await pressKey('ArrowRight', { shiftKey: true })
+    await pressKey('ArrowDown')
+    await pressKey('ArrowRight', { shiftKey: true })
+    await tapSyncWord()
+
+    expect(timelineTimingLabels()).toEqual([
+      'Alpha timing block, 0:00.000–0:01.000',
+      'beta timing block, 0:02.000–0:03.000',
+      'gamma timing block, 0:04.000–0:04.100',
+    ])
+  })
+
+  it('clamps regressed and over-late Down endings at the legal timing bounds', async () => {
+    await clickButton('Edit text')
+    await replaceTextarea('Alpha beta')
+    await clickButton('Apply lyrics')
+    await pressKey('ArrowRight', { shiftKey: true })
+    await clickButton('Start sync')
+
+    await pressKey('ArrowRight')
+    await pressKey('ArrowLeft', { shiftKey: true })
+    await pressKey('ArrowDown')
+    expect(timelineTimingLabels()).toContain('Alpha timing block, 0:01.000–0:01.001')
+
+    await pressKey('ArrowRight', { shiftKey: true })
+    await pressKey('ArrowRight', { shiftKey: true })
+    await pressKey('ArrowRight')
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[aria-label="Stop"]')!.click()
+    })
+    await clickButton('Start sync')
+
+    await pressKey('ArrowRight')
+    await pressKey('ArrowRight', { shiftKey: true })
+    await pressKey('ArrowRight', { shiftKey: true })
+    await pressKey('ArrowRight', { shiftKey: true })
+    await pressKey('ArrowDown')
+    expect(timelineTimingLabels()).toContain('Alpha timing block, 0:00.000–0:02.000')
+  })
+
+  it('abandons a held Space on modal keyup without invalidating the armed scope', async () => {
+    await clickButton('Edit text')
+    await replaceTextarea('Alpha beta gamma')
+    await clickButton('Apply lyrics')
+    await clickButton('Start sync')
+
+    await pressKey('Space')
+    await clickButton('Edit text')
+    await releaseKey('Space')
+    await clickButton('Cancel')
+    await pressKey('ArrowRight', { shiftKey: true })
+    await pressKey('ArrowRight')
+
+    expect(document.querySelector('.transport')?.classList.contains('is-syncing')).toBe(true)
+    expect(document.querySelector('.sync-cue__line.is-current')?.textContent).toContain('beta')
+  })
+
+  it('guards explicit sync arrows and consumes a Space hold ended by Down once', async () => {
+    await clickButton('Edit text')
+    await replaceTextarea('First second third')
+    await clickButton('Apply lyrics')
+    await clickButton('Start sync')
+
+    await pressKey('ArrowRight', { repeat: true })
+    await pressKey('ArrowRight', { ctrlKey: true })
+    expect(document.querySelectorAll('.timeline-word')).toHaveLength(0)
+    expect(document.querySelector('.time-readout strong')?.textContent).toBe('0:00.250')
+
+    const editText = buttonContaining('Edit text')
+    editText.focus()
+    await act(async () =>
+      editText.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          bubbles: true,
+          cancelable: true,
+          code: 'ArrowRight',
+          key: 'ArrowRight',
+        }),
+      ),
+    )
+    expect(document.querySelectorAll('.timeline-word')).toHaveLength(0)
+    editText.blur()
+
+    await pressKey('ArrowRight')
+    await pressKey('Space')
+    await pressKey('ArrowRight')
+    await pressKey('ArrowDown')
+    await releaseKey('Space')
+
+    expect(document.querySelectorAll('.timeline-word')).toHaveLength(2)
+    expect(document.querySelector('.sync-cue__line.is-current')?.textContent).toContain('third')
+    await pressKey('Space')
+    await act(async () => window.dispatchEvent(new Event('blur')))
+    await releaseKey('Space')
+    await pressKey('ArrowDown')
+    expect(document.querySelectorAll('.timeline-word')).toHaveLength(3)
+    expect(document.querySelector('.sync-cue__line.is-current')?.textContent).toContain('third')
   })
 
   it('does not shrink the prior word or start the next word before it when the sync clock regresses', async () => {
@@ -718,13 +851,12 @@ describe('mounted first-time workflow', () => {
     await clickButton('Start sync')
 
     await tapSyncWord()
-    await pressKey('ArrowRight')
-    await pressKey('ArrowRight')
+    await pressKey('ArrowRight', { shiftKey: true })
     await tapSyncWord()
     expect(timelineTimingLabels()).toEqual(
       expect.arrayContaining([
-        'Alpha timing block, 0:00.000–0:00.500',
-        'beta timing block, 0:00.500–0:00.600',
+        'Alpha timing block, 0:00.000–0:01.000',
+        'beta timing block, 0:01.000–0:01.100',
       ]),
     )
 
@@ -739,8 +871,8 @@ describe('mounted first-time workflow', () => {
     await act(async () => harness.sendMenuAction('save'))
     const saved = parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents)
     expect(saved.tracks[0].lines[0].words.map(({ startMs, endMs }) => [startMs, endMs])).toEqual([
-      [0, 500],
-      [500, 600],
+      [0, 1_000],
+      [1_000, 1_100],
     ])
   })
 
@@ -751,24 +883,30 @@ describe('mounted first-time workflow', () => {
     await clickButton('Start sync')
 
     await tapSyncWord()
-    await pressKey('ArrowRight')
-    await pressKey('ArrowRight')
+    await pressKey('ArrowRight', { shiftKey: true })
+    await pressKey('ArrowRight', { shiftKey: true })
     await tapSyncWord()
     expect(timelineTimingLabels()).toEqual(
       expect.arrayContaining([
         'North timing block, 0:00.000–0:00.100',
-        'South timing block, 0:00.500–0:00.600',
+        'South timing block, 0:02.000–0:02.100',
       ]),
     )
 
     await act(async () => {
       document.querySelector<HTMLButtonElement>('[aria-label="Stop"]')!.click()
     })
+    const offsetInput = document.querySelector<HTMLInputElement>('.field--inline input')!
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      setter?.call(offsetInput, '-50')
+      offsetInput.dispatchEvent(new InputEvent('input', { bubbles: true, data: '-50' }))
+    })
     await clickButton('Start sync')
     await pressKey('Space')
-    await pressKey('ArrowRight')
-    await pressKey('ArrowRight')
-    await pressKey('ArrowRight')
+    await pressKey('ArrowRight', { shiftKey: true })
+    await pressKey('ArrowRight', { shiftKey: true })
+    await pressKey('ArrowRight', { shiftKey: true })
     await releaseKey('Space')
     await pressKey('Escape')
 
@@ -776,7 +914,7 @@ describe('mounted first-time workflow', () => {
     const saved = parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents)
     expect(
       saved.tracks[0].lines.map((line) => line.words.map(({ startMs, endMs }) => [startMs, endMs])),
-    ).toEqual([[[0, 500]], [[500, 600]]])
+    ).toEqual([[[50, 2_000]], [[2_000, 2_100]]])
   })
 
   it('ends an armed sync before Undo and keeps Redo and later bare Space outside that session', async () => {
@@ -786,7 +924,7 @@ describe('mounted first-time workflow', () => {
     await clickButton('Start sync')
 
     await tapSyncWord()
-    await pressKey('ArrowRight')
+    await pressKey('ArrowRight', { shiftKey: true })
     await tapSyncWord()
     expect(document.querySelectorAll('.timeline-word')).toHaveLength(2)
     expect(document.querySelector('.transport')?.classList.contains('is-syncing')).toBe(true)
@@ -841,19 +979,20 @@ describe('mounted first-time workflow', () => {
     expect(document.querySelectorAll('.timeline-word')).toHaveLength(0)
   })
 
-  it('keeps a changed re-sync undoable when its first timing mutation is identical', async () => {
+  it('keeps a changed re-sync retry undoable as one session', async () => {
     await clickButton('Edit text')
     await replaceTextarea('First\nSecond')
     await clickButton('Apply lyrics')
     await clickButton('Start sync')
 
     await tapSyncWord()
-    await pressKey('ArrowRight')
+    await pressKey('ArrowRight', { shiftKey: true })
+    await pressKey('ArrowRight', { shiftKey: true })
     await tapSyncWord()
     expect(timelineTimingLabels()).toEqual(
       expect.arrayContaining([
         'First timing block, 0:00.000–0:00.100',
-        'Second timing block, 0:00.250–0:00.350',
+        'Second timing block, 0:02.000–0:02.100',
       ]),
     )
 
@@ -861,14 +1000,12 @@ describe('mounted first-time workflow', () => {
       document.querySelector<HTMLButtonElement>('[aria-label="Stop"]')!.click()
     })
     await clickButton('Start sync')
-    await tapSyncWord()
-    await pressKey('ArrowRight')
-    await pressKey('ArrowRight')
+    await pressKey('ArrowRight', { shiftKey: true })
     await tapSyncWord()
     expect(timelineTimingLabels()).toEqual(
       expect.arrayContaining([
-        'First timing block, 0:00.000–0:00.100',
-        'Second timing block, 0:00.500–0:00.600',
+        'First timing block, 0:01.000–0:01.100',
+        'Second timing block, 0:02.000–0:02.100',
       ]),
     )
 
@@ -876,7 +1013,7 @@ describe('mounted first-time workflow', () => {
     expect(timelineTimingLabels()).toEqual(
       expect.arrayContaining([
         'First timing block, 0:00.000–0:00.100',
-        'Second timing block, 0:00.250–0:00.350',
+        'Second timing block, 0:02.000–0:02.100',
       ]),
     )
   })
@@ -895,6 +1032,10 @@ describe('mounted first-time workflow', () => {
       offsetInput.dispatchEvent(new InputEvent('input', { bubbles: true, data: '1000' }))
     })
     await clickButton('Start sync')
+
+    await pressKey('ArrowRight')
+    await pressKey('ArrowDown')
+    expect(document.querySelectorAll('.timeline-word')).toHaveLength(0)
 
     await act(async () => {
       window.dispatchEvent(

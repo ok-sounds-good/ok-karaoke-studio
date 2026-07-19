@@ -49,8 +49,9 @@ current format.
 2. Attach an audio backing track.
 3. Open **Edit text** to paste lyrics, preserving internal blank rows as section
    separators, or import an LRC file.
-4. Press Space at each word onset. Each same-line onset closes the preceding
-   word; hold Space on the final word of a line to extend its duration. The
+4. Press Space at each word onset, or use Right to start the displayed target
+   and Down to end the active word. Each same-line onset closes the preceding
+   word unless Down explicitly ended it; hold Space on a final word to extend it. The
    resulting timing cannot cross the preceding or following timed word in lyric
    order, including across line boundaries.
 5. Correct individual words by dragging and resizing them in Lyric Timing;
@@ -126,6 +127,10 @@ Karaoke Studio identity.
   key-up duration extends the final word of a line. The resulting start and end
   remain bounded by the preceding and following timed words in lyric order,
   including when either adjacent word is on another lyric line.
+- While synchronization is armed, bare Right starts the displayed target word
+  from the authoritative clock and bare Down explicitly ends the active word.
+  Shift+Left/Right always seeks by one second without timing; outside sync,
+  bare Right retains its short seek.
 - Sample synchronization timestamps from the authoritative playback clock.
   Convert them to lyric time with the project offset, and ignore taps that occur
   before lyric time `0:00` when a positive offset delays the lyrics.
@@ -391,6 +396,8 @@ Karaoke Studio identity.
 - [x] Space onsets backfill preceding same-line word ends, holding the final word
       extends that line's final duration, and taps before lyric time `0:00` are
       ignored.
+- [x] Armed Right starts the displayed target and Down ends the active word;
+      explicit endings preserve intentional gaps, while Shift+Left/Right only seek.
 - [x] One synchronization session is one undoable history step; Lyric Timing
       selection and correction behaviors remain available afterward.
 - [x] Command/Ctrl+A and marquee selection select the intended active-track words
