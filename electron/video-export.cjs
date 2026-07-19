@@ -447,10 +447,14 @@ function terminateChild(child) {
   return timeout
 }
 
-function runProcess(executable, args, { signal, inputWriter } = {}) {
+function isChildInputTermination(error) {
+  return error?.code === 'EPIPE' || error?.code === 'ECONNRESET'
+}
+
+function runProcess(executable, args, { signal, inputWriter, spawnImpl = spawn } = {}) {
   throwIfAborted(signal)
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, args, {
+    const child = spawnImpl(executable, args, {
       shell: false,
       windowsHide: true,
       stdio: [inputWriter ? 'pipe' : 'ignore', 'ignore', 'pipe'],
@@ -458,6 +462,7 @@ function runProcess(executable, args, { signal, inputWriter } = {}) {
     let stderr = ''
     let spawnError
     let writerError
+    let inputError
     let killTimeout
     let abortGraceTimer
     const finishAbort = () => {
@@ -485,7 +490,7 @@ function runProcess(executable, args, { signal, inputWriter } = {}) {
       if (stderr.length < 64_000) stderr += chunk.toString()
     })
     child.stdin?.on('error', (error) => {
-      writerError ||= error
+      inputError ||= error
     })
     child.once('error', (error) => {
       spawnError = error
@@ -496,8 +501,9 @@ function runProcess(executable, args, { signal, inputWriter } = {}) {
       signal?.removeEventListener?.('abort', onAbort)
       if (spawnError) reject(spawnError)
       else if (writerError?.name === 'AbortError' || signal?.aborted) reject(createAbortError())
-      else if (code === 0 && !writerError) resolve()
-      else if (code === 0) reject(writerError)
+      else if (writerError) reject(writerError)
+      else if (code === 0 && inputError) reject(inputError)
+      else if (code === 0) resolve()
       else
         reject(
           new Error(
@@ -514,7 +520,8 @@ function runProcess(executable, args, { signal, inputWriter } = {}) {
           child.stdin.end()
         })
         .catch((error) => {
-          writerError ||= error
+          if (isChildInputTermination(error)) inputError ||= error
+          else writerError ||= error
           if (error?.name === 'AbortError' || signal?.aborted) requestAbort()
           else {
             child.stdin.destroy(error)
@@ -582,7 +589,9 @@ async function prepareStyleRuntime(project, backgroundImage) {
 
 async function writeJpegFrame(stream, frame, signal) {
   throwIfAborted(signal)
-  if (stream.destroyed) throw new Error('FFmpeg stopped accepting video frames')
+  if (stream.destroyed) {
+    throw Object.assign(new Error('FFmpeg stopped accepting video frames'), { code: 'EPIPE' })
+  }
   if (!stream.write(frame)) {
     await once(stream, 'drain', signal ? { signal } : undefined)
   }
@@ -824,4 +833,6 @@ module.exports = {
   promoteVideoOutput,
   renderVideoFrames,
   renderDocument,
+  runProcess,
+  writeJpegFrame,
 }
