@@ -447,6 +447,10 @@ function terminateChild(child) {
   return timeout
 }
 
+function isChildInputTermination(error) {
+  return error?.code === 'EPIPE' || error?.code === 'ECONNRESET'
+}
+
 function runProcess(executable, args, { signal, inputWriter, spawnImpl = spawn } = {}) {
   throwIfAborted(signal)
   return new Promise((resolve, reject) => {
@@ -458,6 +462,7 @@ function runProcess(executable, args, { signal, inputWriter, spawnImpl = spawn }
     let stderr = ''
     let spawnError
     let writerError
+    let inputError
     let killTimeout
     let abortGraceTimer
     const finishAbort = () => {
@@ -485,7 +490,7 @@ function runProcess(executable, args, { signal, inputWriter, spawnImpl = spawn }
       if (stderr.length < 64_000) stderr += chunk.toString()
     })
     child.stdin?.on('error', (error) => {
-      writerError ||= error
+      inputError ||= error
     })
     child.once('error', (error) => {
       spawnError = error
@@ -497,6 +502,7 @@ function runProcess(executable, args, { signal, inputWriter, spawnImpl = spawn }
       if (spawnError) reject(spawnError)
       else if (writerError?.name === 'AbortError' || signal?.aborted) reject(createAbortError())
       else if (writerError) reject(writerError)
+      else if (code === 0 && inputError) reject(inputError)
       else if (code === 0) resolve()
       else
         reject(
@@ -514,7 +520,8 @@ function runProcess(executable, args, { signal, inputWriter, spawnImpl = spawn }
           child.stdin.end()
         })
         .catch((error) => {
-          writerError ||= error
+          if (isChildInputTermination(error)) inputError ||= error
+          else writerError ||= error
           if (error?.name === 'AbortError' || signal?.aborted) requestAbort()
           else {
             child.stdin.destroy(error)

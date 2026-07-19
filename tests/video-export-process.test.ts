@@ -41,6 +41,18 @@ function fakeChild() {
 }
 
 describe('video export FFmpeg process boundary', () => {
+  it('resolves after a successful writer and FFmpeg close', async () => {
+    const child = fakeChild()
+    const result = runProcess('ffmpeg', [], {
+      spawnImpl: () => child,
+      inputWriter: async () => {},
+    })
+
+    queueMicrotask(() => child.emit('close', 0, null))
+
+    await expect(result).resolves.toBeUndefined()
+  })
+
   it('preserves a writer failure when FFmpeg exits during teardown', async () => {
     const child = fakeChild()
     const writerError = new Error('renderer frame transaction failed')
@@ -67,6 +79,25 @@ describe('video export FFmpeg process boundary', () => {
     queueMicrotask(() => child.emit('close', 1, null))
 
     await expect(result).rejects.toThrow('FFmpeg failed: encoder rejected the stream')
+  })
+
+  it('retains FFmpeg diagnostics when child termination breaks the active writer pipe', async () => {
+    const child = fakeChild()
+    const pipeError = Object.assign(new Error('write EPIPE'), { code: 'EPIPE' })
+    const result = runProcess('ffmpeg', [], {
+      spawnImpl: () => child,
+      inputWriter: async () => {
+        await new Promise<void>((_resolve, reject) => {
+          child.stdin.once('error', reject)
+        })
+      },
+    })
+
+    child.stderr.write('encoder root cause')
+    child.stdin.emit('error', pipeError)
+    queueMicrotask(() => child.emit('close', 1, null))
+
+    await expect(result).rejects.toThrow('FFmpeg failed: encoder root cause')
   })
 
   it('preserves abort precedence during writer teardown', async () => {
