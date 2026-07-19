@@ -12,10 +12,10 @@ const MAX_CAPTURE_BYTES = 64 * 1_024
 const EXPECTED_MATRIX = presets.resolutions.flatMap((preset) =>
   presets.frameRates.map((fps) => ({ ...preset, fps })),
 )
-function validTransition(value) {
+function validTransition(value, boundaryFrame) {
   return (
     value &&
-    Number.isSafeInteger(value.boundaryFrame) &&
+    value.boundaryFrame === boundaryFrame &&
     value.observedFrame === value.boundaryFrame + 1 &&
     Number.isSafeInteger(value.changedPixels) &&
     value.changedPixels > 0 &&
@@ -37,7 +37,6 @@ function validateManifest(value) {
   }
   value.cases.forEach((item, index) => {
     const expected = EXPECTED_MATRIX[index]
-    const evidenceCount = index < 2 ? 2 : 1
     if (
       item?.ordinal !== index + 1 ||
       item.preset !== expected.value ||
@@ -59,9 +58,11 @@ function validateManifest(value) {
       item.bytes < 1 ||
       !/^[0-9a-f]{64}$/u.test(item.sha256) ||
       !Array.isArray(item.decodedLyricEvidence) ||
-      item.decodedLyricEvidence.length !== evidenceCount ||
+      item.decodedLyricEvidence.length !== (index < 2 ? 2 : 1) ||
       !(index < 2
-        ? item.decodedLyricEvidence.every(validTransition)
+        ? item.decodedLyricEvidence.every((evidence, evidenceIndex) =>
+            validTransition(evidence, item.fps * [0.5, 0.7][evidenceIndex]),
+          )
         : item.decodedLyricEvidence.every(
             (evidence) =>
               evidence?.observedFrame === (900 * item.fps) / 1_000 &&

@@ -1,5 +1,3 @@
-'use strict'
-
 function countSungPixels(decoded) {
   let lyricPixels = 0
   for (let pixel = 0; pixel < decoded.length; pixel += 3) {

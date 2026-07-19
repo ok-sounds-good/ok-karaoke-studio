@@ -28,9 +28,9 @@ function manifest() {
       durationSeconds: 1,
       decodedLyricEvidence:
         index < 2
-          ? Array.from({ length: 2 }, () => ({
-              boundaryFrame: entry.fps === 30 ? 15 : 30,
-              observedFrame: entry.fps === 30 ? 16 : 31,
+          ? [0.5, 0.7].map((startSeconds) => ({
+              boundaryFrame: entry.fps * startSeconds,
+              observedFrame: entry.fps * startSeconds + 1,
               changedPixels: 12,
               totalDifference: 400,
             }))
@@ -74,9 +74,10 @@ describe('video export smoke launcher', () => {
     const missingTiming = manifest()
     delete (missingTiming.cases[0].streamStarts as { videoSeconds?: number }).videoSeconds
     expect(() => launcher.validateManifest(missingTiming)).toThrow('invalid case 1')
-    const invalidDuration = manifest()
-    invalidDuration.cases[0].durationSeconds = Number.NaN
-    expect(() => launcher.validateManifest(invalidDuration)).toThrow('invalid case 1')
+    const duplicateEvidence = manifest()
+    duplicateEvidence.cases[0].decodedLyricEvidence[1] =
+      duplicateEvidence.cases[0].decodedLyricEvidence[0]
+    expect(() => launcher.validateManifest(duplicateEvidence)).toThrow('invalid case 1')
     const delayedStarts = manifest()
     delayedStarts.cases[0].streamStarts = { audioSeconds: 0.25, videoSeconds: 0.25 }
     expect(() => launcher.validateManifest(delayedStarts)).toThrow('invalid case 1')
