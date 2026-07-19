@@ -162,9 +162,9 @@ function lyricEvidence({ ffmpegPath, videoPath, width, height, fps, startMs, roo
 function lyricPresenceEvidence({ ffmpegPath, videoPath, fps, root }) {
   const observedFrame = (900 * fps) / 1_000
   const decoded = decodeLyricCrop(ffmpegPath, videoPath, observedFrame, 960, 540, root)
-  const lyricPixels = countSungPixels(decoded)
-  if (lyricPixels < 8)
-    throw new Error(`decoded lyric evidence absent (${lyricPixels}/${countSungPixels(decoded, 0)})`)
+  const counts = [30, 20, 10, 0].map((dominance) => countSungPixels(decoded, dominance))
+  const lyricPixels = counts[0]
+  if (lyricPixels < 8) throw new Error(`decoded lyric evidence absent (${counts})`)
   return { observedFrame, lyricPixels }
 }
 
