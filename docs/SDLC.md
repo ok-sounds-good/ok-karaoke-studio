@@ -268,10 +268,15 @@ than accepting the report on trust. The Orchestrator verifies that the two
 records and protected statuses agree; it need not become a third full-suite
 executor unless a discrepancy or uncovered risk requires investigation.
 
-Routine CircleCI does not capture visual artifacts or build application
-packages. For a visual change, the Developer captures the required local
-before/after evidence and the Reviewer independently inspects it and exercises
-the affected workflow. Electron and packaging changes still run
+Routine CircleCI does not capture visual artifacts. Its Windows job builds and
+retains the unsigned x64 NSIS installer and unpacked application, then validates
+their architecture, package inventory, bounded size, and external-FFmpeg
+executable and encoder exclusion while separately inventorying Electron's
+standard media runtime. It does not launch-smoke the package or replace the
+separately initiated final-candidate acceptance run. For a visual change, the
+Developer captures the required local before/after evidence and the Reviewer
+independently inspects it and exercises the affected workflow. Electron and
+packaging changes still run
 `bun run dist:dir` under the local validation matrix. The final Windows MVP
 candidate receives a separately initiated Windows acceptance run that produces
 the installer and unpacked application and exercises the package, font, visual,

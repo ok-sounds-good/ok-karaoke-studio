@@ -339,8 +339,10 @@ describe('hosted CI contract', () => {
       expect(job).not.toContain('bun run format:check')
       expect(job).not.toContain('bun run build')
       expect(job).not.toContain('bun run test:visual')
-      expect(job).not.toContain('electron-builder')
-      expect(job).not.toContain('store_artifacts')
+      if (platform === 'macOS') {
+        expect(job).not.toContain('electron-builder')
+        expect(job).not.toContain('store_artifacts')
+      }
     }
 
     const packageJson = JSON.parse(await repositoryFile('package.json'))
@@ -349,10 +351,10 @@ describe('hosted CI contract', () => {
     expect(packageJson.scripts['dist:dir']).toBe('bun run build && electron-builder --dir')
     expect(workflow).not.toContain('OKS_VISUAL_EVIDENCE_DIR')
     expect(workflow).not.toContain('.ci-artifacts')
-    expect(workflow).not.toContain('store_artifacts')
+    expect(jobBlock(workflow, 'macOS')).not.toContain('store_artifacts')
     expect(workflow).not.toContain('bun run test:visual')
     expect(jobBlock(workflow, 'macOS')).toContain('brew install ffmpeg')
     expect(jobBlock(workflow, 'Windows')).toContain('choco install ffmpeg --yes --no-progress')
-    expect(workflow).not.toContain('electron-builder')
+    expect(jobBlock(workflow, 'macOS')).not.toContain('electron-builder')
   })
 })
