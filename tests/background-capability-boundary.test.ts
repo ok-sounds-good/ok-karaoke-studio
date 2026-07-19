@@ -7,6 +7,7 @@ describe('linked-background Electron boundary', () => {
   const main = source('electron/main.cjs')
   const preload = source('electron/preload.cjs')
   const types = source('src/electron.d.ts')
+  const videoExport = source('electron/video-export.cjs')
 
   it('keeps selection native, trusted, and pathless from the renderer', () => {
     const start = main.indexOf('ipcMain.handle(CHANNELS.chooseBackgroundImage')
@@ -32,6 +33,27 @@ describe('linked-background Electron boundary', () => {
     expect(branch).toContain('Buffer.from(mediaFile.bytes.subarray')
     expect(branch).not.toContain('createReadStream')
     expect(main).toContain("mime: image.format === 'png' ? 'image/png' : 'image/jpeg'")
+  })
+
+  it('revalidates Image export before setup and gives offscreen rendering only snapshot bytes', () => {
+    const authorization = source('electron/video-export-authorization.cjs')
+    const operation = source('electron/video-export-operation.cjs')
+    const exportSetup = main.slice(
+      main.indexOf('function executeVideoExport'),
+      main.indexOf('function parseVideoExportProject'),
+    )
+    expect(operation.indexOf('beginExport(sender.id)')).toBeLessThan(
+      operation.indexOf('await authorizeExport'),
+    )
+    expect(operation).toContain('signal: operation.controller.signal')
+    expect(authorization).toContain('backgroundExportSnapshot(')
+    expect(authorization).toContain('await readLinkedImage(retained.filePath)')
+    expect(authorization).toContain('sameMedia(retained, current)')
+    expect(exportSetup).toContain('backgroundImage: authorization.backgroundImage')
+    expect(exportSetup).not.toContain('readLinkedImage')
+    expect(videoExport).not.toContain('readLinkedImage(background.imagePath)')
+    expect(preload).not.toContain('backgroundImage.bytes')
+    expect(main).toContain('linkedImageExportFailure(error, request.background, MEDIA_SCHEME)')
   })
 
   it('exposes only opaque settlement and exact-project restore operations', () => {

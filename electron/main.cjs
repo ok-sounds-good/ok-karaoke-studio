@@ -42,10 +42,15 @@ const { createElectronNativeImageDecoder } = require('./native-image-adapter.cjs
 const {
   createMediaCapabilityRegistry,
   mediaTokenFromUrl,
+  normalizeBackgroundCapabilityState,
   normalizeBackgroundMutationRequest,
   normalizeMediaCapabilityReference,
   prepareProjectMedia,
 } = require('./media-capabilities.cjs')
+const {
+  createVideoExportAuthorizer,
+  linkedImageExportFailure,
+} = require('./video-export-authorization.cjs')
 const { createProjectOpenCoordinator } = require('./project-open.cjs')
 const {
   createNativeCloseArbiter,
@@ -583,6 +588,7 @@ function normalizeVideoExportRequest(value) {
     resolution: videoSettings.resolution,
     fps: videoSettings.fps,
     suggestedName: optionalString(value.suggestedName, 'suggestedName'),
+    background: normalizeBackgroundCapabilityState(value.background, MEDIA_SCHEME),
   }
 }
 
@@ -645,7 +651,14 @@ function selectVideoExportDestination({ owner, request }) {
   )
 }
 
-function executeVideoExport({ request, preparation, destination, operation, onProgress }) {
+function executeVideoExport({
+  authorization,
+  request,
+  preparation,
+  destination,
+  operation,
+  onProgress,
+}) {
   return exportKaraokeVideo({
     BrowserWindow,
     projectJson: request.projectJson,
@@ -653,10 +666,7 @@ function executeVideoExport({ request, preparation, destination, operation, onPr
     audioPath: request.audioPath,
     outputPath: path.resolve(destination),
     ffmpegPath: preparation,
-    readLinkedImage: (imagePath) =>
-      readLinkedImage(imagePath, {
-        decode: createElectronNativeImageDecoder(),
-      }),
+    backgroundImage: authorization.backgroundImage,
     resolution: request.resolution,
     fps: request.fps,
     onProgress,
@@ -667,15 +677,22 @@ function executeVideoExport({ request, preparation, destination, operation, onPr
 }
 
 function parseVideoExportProject(projectJson) {
-  const project = parseProjectJson(projectJson)
-  if (project.stageStyle.background.mode === 'image')
-    throw new Error(
-      'Linked-image video export is deferred until Live Preview can verify the same image.',
-    )
-  return project
+  return parseProjectJson(projectJson)
 }
+const authorizeVideoExport = createVideoExportAuthorizer({
+  mediaCapabilities,
+  readLinkedImage: (imagePath) =>
+    readLinkedImage(imagePath, { decode: createElectronNativeImageDecoder() }),
+})
 const videoExportOperation = createVideoExportOperation({
   parseProject: parseVideoExportProject,
+  authorizeExport: ({ project, request, sender, signal }) =>
+    authorizeVideoExport({
+      ownerId: sender.id,
+      project,
+      expectedBackground: request.background,
+      signal,
+    }),
   createCommitState: createVideoExportCommitState,
   prepareExport: prepareVideoExport,
   selectDestination: selectVideoExportDestination,
@@ -1066,7 +1083,13 @@ function registerIpcHandlers() {
   ipcMain.handle(CHANNELS.exportVideo, async (event, value) => {
     const owner = assertTrustedSender(event)
     const request = normalizeVideoExportRequest(value)
-    return videoExportOperation.run({ owner, sender: event.sender, request })
+    try {
+      return await videoExportOperation.run({ owner, sender: event.sender, request })
+    } catch (error) {
+      const failure = linkedImageExportFailure(error, request.background, MEDIA_SCHEME)
+      if (failure) return failure
+      throw error
+    }
   })
 
   ipcMain.handle(CHANNELS.cancelVideoExport, async (event) => {

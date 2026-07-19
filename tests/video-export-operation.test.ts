@@ -41,7 +41,12 @@ function changedProject(change: (project: Record<string, unknown>) => void) {
   change(project)
   return JSON.stringify(project)
 }
-const parseVideoExportProject = (json: string) => { expect(readFileSync(new URL('../electron/main.cjs', import.meta.url), 'utf8')).toContain('parseProject: parseVideoExportProject'); const project = parseProjectJson(json); if (project.stageStyle.background.mode === 'image') throw new Error('Linked-image video export is deferred until Live Preview can verify the same image.'); return project }
+const parseVideoExportProject = (json: string) => {
+  expect(readFileSync(new URL('../electron/main.cjs', import.meta.url), 'utf8')).toContain(
+    'parseProject: parseVideoExportProject',
+  )
+  return parseProjectJson(json)
+}
 function deferred<T>() {
   let resolve = (_value: T) => {}
   const promise = new Promise<T>((done) => { resolve = done })
@@ -55,6 +60,10 @@ function harness() {
     events.push('begin')
     latestCommitState = createVideoExportCommitState()
     return latestCommitState
+  })
+  const authorizeExport = vi.fn(async () => {
+    events.push('authorize')
+    return { backgroundImage: null }
   })
   const prepareExport = vi.fn(async () => {
     events.push('prepare')
@@ -80,6 +89,7 @@ function harness() {
       events.push('parse')
       return parseVideoExportProject(json)
     },
+    authorizeExport,
     createCommitState,
     prepareExport,
     selectDestination,
@@ -87,8 +97,15 @@ function harness() {
     sendProgress,
   })
   return {
-    coordinator, createCommitState, events, executeExport, prepareExport,
-    selectDestination, sendProgress, latestCommitState: () => latestCommitState,
+    authorizeExport,
+    coordinator,
+    createCommitState,
+    events,
+    executeExport,
+    prepareExport,
+    selectDestination,
+    sendProgress,
+    latestCommitState: () => latestCommitState,
   }
 }
 
@@ -111,7 +128,6 @@ describe('video export operation preflight and lifecycle', () => {
     ['nonzero schema', changedProject((project) => { project.schemaVersion = 1 })],
     ['nonnumeric schema', changedProject((project) => { project.schemaVersion = '0' })],
     ['malformed current project', changedProject((project) => { project.title = 42 })],
-    ['linked-image background', GOLDEN_JSON],
   ])('rejects %s before any export effect or lifecycle mutation', async (_label, projectJson) => {
     const fixture = harness()
     const sender = new FakeSender(7)
@@ -123,6 +139,90 @@ describe('video export operation preflight and lifecycle', () => {
       fixture.createCommitState, fixture.prepareExport, fixture.selectDestination,
       fixture.executeExport, fixture.sendProgress,
     ]) expect(effect).not.toHaveBeenCalled()
+    expectClean(fixture, sender)
+  })
+
+  it('cleans failed authorization lifecycle before setup, destination, or progress effects', async () => {
+    const fixture = harness()
+    const sender = new FakeSender(8)
+    fixture.authorizeExport.mockRejectedValueOnce(new Error('fixed warning'))
+
+    await expect(run(fixture.coordinator, sender)).rejects.toThrow('fixed warning')
+
+    expect(fixture.events).toEqual(['parse', 'begin'])
+    for (const effect of [
+      fixture.prepareExport,
+      fixture.selectDestination,
+      fixture.executeExport,
+      fixture.sendProgress,
+    ])
+      expect(effect).not.toHaveBeenCalled()
+    expect(fixture.createCommitState).toHaveBeenCalledOnce()
+    expectClean(fixture, sender)
+  })
+
+  it('does not start export when the renderer is destroyed during authorization', async () => {
+    const fixture = harness()
+    const sender = new FakeSender(9)
+    const authorization = deferred<{ backgroundImage: null }>()
+    fixture.authorizeExport.mockImplementationOnce(() => authorization.promise)
+    const running = run(fixture.coordinator, sender)
+    await vi.waitFor(() => expect(fixture.authorizeExport).toHaveBeenCalledOnce())
+
+    sender.destroy()
+    authorization.resolve({ backgroundImage: null })
+    await expect(running).rejects.toMatchObject({ name: 'AbortError' })
+
+    expect(fixture.createCommitState).toHaveBeenCalledOnce()
+    expect(fixture.prepareExport).not.toHaveBeenCalled()
+    expect(fixture.selectDestination).not.toHaveBeenCalled()
+    expectClean(fixture, sender)
+  })
+
+  it.each(['renderer cancel', 'app or window abort'])(
+    'cancels deferred authorization through %s without later effects',
+    async (kind) => {
+      const fixture = harness()
+      const sender = new FakeSender(kind === 'renderer cancel' ? 12 : 13)
+      const authorization = deferred<{ backgroundImage: null }>()
+      fixture.authorizeExport.mockImplementationOnce(() => authorization.promise)
+      const running = run(fixture.coordinator, sender)
+      await vi.waitFor(() => expect(fixture.coordinator.hasActiveExport()).toBe(true))
+      const operation = fixture.coordinator.activeExportForOwner(sender.id)!
+
+      let cancellation: Promise<void> | null = null
+      if (kind === 'renderer cancel') {
+        expect(operation.commitState.tryBeginCancellation()).toBe(true)
+        operation.controller.abort()
+      } else {
+        cancellation = fixture.coordinator.abortActiveExport()
+      }
+      authorization.resolve({ backgroundImage: null })
+
+      await expect(running).rejects.toMatchObject({ name: 'AbortError' })
+      await cancellation
+      expect(fixture.prepareExport).not.toHaveBeenCalled()
+      expect(fixture.selectDestination).not.toHaveBeenCalled()
+      expect(fixture.executeExport).not.toHaveBeenCalled()
+      expect(fixture.sendProgress).not.toHaveBeenCalled()
+      expectClean(fixture, sender)
+    },
+  )
+
+  it('rejects a concurrent export while authorization owns the lifecycle', async () => {
+    const fixture = harness()
+    const sender = new FakeSender(14)
+    const authorization = deferred<{ backgroundImage: null }>()
+    fixture.authorizeExport.mockImplementationOnce(() => authorization.promise)
+    const running = run(fixture.coordinator, sender)
+    await vi.waitFor(() => expect(fixture.authorizeExport).toHaveBeenCalledOnce())
+
+    await expect(run(fixture.coordinator, new FakeSender(15))).rejects.toThrow(
+      'Another karaoke video export is already running',
+    )
+    expect(fixture.createCommitState).toHaveBeenCalledOnce()
+    authorization.resolve({ backgroundImage: null })
+    await expect(running).resolves.toEqual(RESULT)
     expectClean(fixture, sender)
   })
 
@@ -140,7 +240,13 @@ describe('video export operation preflight and lifecycle', () => {
     })
     await expect(run(fixture.coordinator, sender)).resolves.toEqual(RESULT)
     expect(fixture.events).toEqual([
-      'parse', 'begin', 'prepare', 'destination', 'execute', 'progress',
+      'parse',
+      'begin',
+      'authorize',
+      'prepare',
+      'destination',
+      'execute',
+      'progress',
     ])
     for (const effect of [
       fixture.createCommitState, fixture.prepareExport, fixture.selectDestination,
@@ -148,6 +254,7 @@ describe('video export operation preflight and lifecycle', () => {
     ]) expect(effect).toHaveBeenCalledOnce()
     expect(fixture.latestCommitState().state).toBe('committed')
     expect(fixture.executeExport.mock.calls[0][0]).toMatchObject({
+      authorization: { backgroundImage: null },
       request: REQUEST,
       preparation: '/tools/ffmpeg',
       destination: '/exports/Fixture Song.mp4',

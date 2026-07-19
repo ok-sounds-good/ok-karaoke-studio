@@ -35,7 +35,10 @@ const videoExport = require('../electron/video-export.cjs') as {
     finishPromotion(): void
   }
   effectiveVideoDuration(project: unknown, durationMs?: number): number
-  frameStateAt(project: unknown, playbackMs: number): {
+  frameStateAt(
+    project: unknown,
+    playbackMs: number,
+  ): {
     showTitle: boolean
     lines: Array<{
       style: { sungColor: string }
@@ -59,7 +62,10 @@ const videoExport = require('../electron/video-export.cjs') as {
       onPromotionComplete?: () => void
     },
   ): Promise<void>
-  prepareStyleRuntime(project: unknown, readLinkedImage?: (path: string) => Promise<unknown>): Promise<any>
+  prepareStyleRuntime(
+    project: unknown,
+    backgroundImage?: { bytes: Buffer; mime: 'image/png' | 'image/jpeg' },
+  ): Promise<any>
   renderDocument(settings?: { resolution?: string; fps?: number }): string
 }
 
@@ -612,9 +618,10 @@ describe('karaoke video frame planning', () => {
     const project = videoProject()
     project.stageStyle.background.mode = 'image'
     project.stageStyle.background.imagePath = '/linked/background.png'
-    const readLinkedImage = vi.fn(async () => ({ bytes: Buffer.from('png'), format: 'png' }))
-    const runtime = await videoExport.prepareStyleRuntime(project, readLinkedImage)
-    expect(readLinkedImage).toHaveBeenCalledWith('/linked/background.png')
+    const runtime = await videoExport.prepareStyleRuntime(project, {
+      bytes: Buffer.from('png'),
+      mime: 'image/png',
+    })
     expect(runtime.backgroundDataUrl).toBe('data:image/png;base64,cG5n')
   })
 })

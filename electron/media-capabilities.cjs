@@ -260,6 +260,31 @@ function createMediaCapabilityRegistry({
 
   return Object.freeze({
     activeToken,
+    backgroundExportSnapshot(ownerId, expectedRevision, expectedActiveToken, linkedPath) {
+      if (
+        !expectedActiveToken ||
+        typeof linkedPath !== 'string' ||
+        !backgroundStateMatches(ownerId, expectedRevision, expectedActiveToken)
+      )
+        return null
+      const key = scopeKey(ownerId, 'background')
+      const entry = entries.get(expectedActiveToken)
+      if (
+        pendingByScope.has(key) ||
+        candidateByScope.has(key) ||
+        !entry ||
+        entry.ownerId !== ownerId ||
+        entry.kind !== 'background' ||
+        entry.state !== 'retained' ||
+        entry.filePath !== path.resolve(linkedPath)
+      )
+        return null
+      return Object.freeze({
+        bytes: Buffer.from(entry.bytes),
+        filePath: entry.filePath,
+        mime: entry.mime,
+      })
+    },
     backgroundState,
     beginRequest,
     beginRestore(ownerId, kind, projectPath) {

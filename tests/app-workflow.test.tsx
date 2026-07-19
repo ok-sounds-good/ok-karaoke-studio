@@ -1099,17 +1099,83 @@ describe('mounted first-time workflow', () => {
   })
 
   it('rejects linked-image video export before IPC or progress starts', async () => {
-    const project = createDemoProject(); Object.assign(project.stageStyle.background, { mode: 'image', imagePath: '/fixtures/background.png' })
+    const project = createDemoProject()
+    Object.assign(project.stageStyle.background, {
+      mode: 'image',
+      imagePath: '/fixtures/background.png',
+    })
     harness.openProject.mockResolvedValueOnce({
       requestId: 'image-open',
       path: '/opened/image.oks',
       contents: serializeProject(project),
     })
-    await clickButton('Workflow'); await clickButton('Open .oks'); await prepareVideoExportProject()
+    await clickButton('Workflow')
+    await clickButton('Open .oks')
+    await prepareVideoExportProject()
     await clickButton('Karaoke video')
     expect(harness.exportVideo).not.toHaveBeenCalled()
     expect(document.querySelector('[aria-label="Karaoke video export progress"]')).toBeNull()
-    expect(document.querySelector('.toast')?.textContent).toContain('Linked-image video export is deferred until Live Preview can verify the same image.')
+    expect(document.querySelector('.toast')?.textContent).toContain(
+      'The linked background is not ready in Live Preview.',
+    )
+  })
+
+  it('forwards then invalidates only the exact Preview-ready capability after parity failure', async () => {
+    const path = '/fixtures/background.png'
+    const activeUrl = 'studio-media://asset/00000000-0000-4000-8000-000000000060'
+    const capability = {
+      activeUrl,
+      revision: '00000000-0000-4000-8000-000000000061',
+    }
+    Object.assign(harness.studio, {
+      getBackgroundState: vi.fn(async () => capability),
+      resolveProjectBackground: vi.fn(async () => ({
+        status: 'success',
+        media: { path, name: 'background.png', url: activeUrl },
+        state: capability,
+      })),
+      retainBackground: vi.fn(async () => null),
+    })
+    vi.stubGlobal(
+      'Image',
+      class {
+        onerror: (() => void) | null = null
+        onload: (() => void) | null = null
+        set src(_value: string) {
+          queueMicrotask(() => this.onload?.())
+        }
+      },
+    )
+    const project = createDemoProject()
+    Object.assign(project.stageStyle.background, { mode: 'image', imagePath: path })
+    harness.openProject.mockResolvedValueOnce({
+      requestId: 'ready-image-open',
+      path: '/opened/ready-image.oks',
+      contents: serializeProject(project),
+    })
+    harness.exportVideo.mockResolvedValueOnce({
+      status: 'background-invalid',
+      background: capability,
+      message:
+        'The linked background image is unavailable, invalid, changed, or no longer authorized. Restore it in Live Preview and try again.',
+    })
+
+    await clickButton('Workflow')
+    await clickButton('Open .oks')
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+    await prepareVideoExportProject()
+    await clickButton('Karaoke video')
+
+    expect(harness.exportVideo).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ background: capability }),
+    )
+    expect(document.querySelector('.toast')?.textContent).toContain(
+      'unavailable, invalid, changed, or no longer authorized',
+    )
+    expect(document.querySelector('[aria-label="Karaoke video export progress"]')).toBeNull()
+    await clickButton('Karaoke video')
+    expect(harness.exportVideo).toHaveBeenCalledOnce()
+    expect(document.querySelector('.toast')?.textContent).toContain('not ready in Live Preview')
   })
 
   it('confirms cancellation from both the cancel action and the export-dialog close action', async () => {

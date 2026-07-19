@@ -38,6 +38,8 @@ export interface ProjectBackgroundImageController {
   endSettlement(settlement: number): boolean
   forgetSnapshot(path: string, url: string): boolean
   getCapability(): StudioBackgroundCapabilityState | null
+  getExportCapability(): StudioBackgroundCapabilityState | null
+  invalidateExportCapability(expected: StudioBackgroundCapabilityState): boolean
   reconcileCapability(): Promise<StudioBackgroundCapabilityState | null>
   rememberSnapshot(path: string, url: string, capability?: StudioBackgroundCapabilityState): boolean
   setCapability(capability: StudioBackgroundCapabilityState): boolean
@@ -105,6 +107,13 @@ export function useProjectBackgroundImage({
   const snapshotReleaseRef = useRef<{ lifecycle: number; path: string; url: string } | null>(null)
   const snapshotReleaseFailuresRef = useRef(new Map<string, string>())
   const settlementRef = useRef<{ id: number; lifecycle: number } | null>(null)
+  const previewReadinessRef = useRef<{
+    generation: number
+    lifecycle: number
+    status: BackgroundImageLoadStatus
+    url: string | null
+  }>({ generation: 0, lifecycle, status: 'idle', url: null })
+  const previewGenerationRef = useRef({ generation: 0, key: '' })
   const settlementSequenceRef = useRef(0)
   const currentRef = useRef({ acceptedProjectPath, background, lifecycle })
   currentRef.current = { acceptedProjectPath, background, lifecycle }
@@ -395,9 +404,46 @@ export function useProjectBackgroundImage({
       background.imagePath &&
       resource.linkedPath === background.imagePath,
     )
+  const previewGenerationKey = JSON.stringify([
+    lifecycle,
+    background.imagePath,
+    resolutionStatus,
+    url,
+  ])
+  if (previewGenerationRef.current.key !== previewGenerationKey) {
+    const generation = previewGenerationRef.current.generation + 1
+    previewGenerationRef.current = { generation, key: previewGenerationKey }
+    previewReadinessRef.current = { generation, lifecycle, status: 'idle', url }
+  }
+  const previewGeneration = previewGenerationRef.current.generation
   const acceptedPreview: BackgroundImagePreviewSource = {
     url,
     resolutionStatus,
+    ...(url && resolutionStatus === 'available'
+      ? {
+          onLoadStatusChange: (
+            loadedUrl: string,
+            status: Exclude<BackgroundImageLoadStatus, 'idle'>,
+          ) => {
+            const current = resourceRef.current
+            if (
+              previewGenerationRef.current.generation !== previewGeneration ||
+              currentRef.current.lifecycle !== lifecycle ||
+              current.lifecycle !== lifecycle ||
+              current.capability?.activeUrl !== loadedUrl ||
+              retainedForPath(current.retained, currentRef.current.background.imagePath)?.url !==
+                loadedUrl
+            )
+              return
+            previewReadinessRef.current = {
+              generation: previewGeneration,
+              lifecycle,
+              status,
+              url: loadedUrl,
+            }
+          },
+        }
+      : {}),
     ...(capabilityPaused
       ? { onRetryResolution: retryCapability }
       : canRetry
@@ -413,6 +459,56 @@ export function useProjectBackgroundImage({
   const getCapability = useCallback(
     () => (isOwnedLifecycle() ? resourceRef.current.capability : null),
     [isOwnedLifecycle],
+  )
+
+  const getExportCapability = useCallback(() => {
+    if (!isOwnedLifecycle()) return null
+    const current = resourceRef.current
+    const currentBackground = currentRef.current.background
+    const currentSnapshot = retainedForPath(current.retained, currentBackground.imagePath)
+    const readiness = previewReadinessRef.current
+    if (
+      !current.ready ||
+      currentBackground.mode !== 'image' ||
+      !currentBackground.imagePath ||
+      current.resolutionStatus !== 'available' ||
+      !current.capability ||
+      !currentSnapshot ||
+      current.capability.activeUrl !== currentSnapshot.url ||
+      readiness.lifecycle !== lifecycle ||
+      readiness.generation !== previewGenerationRef.current.generation ||
+      readiness.url !== currentSnapshot.url ||
+      readiness.status !== 'ready'
+    )
+      return null
+    return current.capability
+  }, [isOwnedLifecycle, lifecycle])
+
+  const invalidateExportCapability = useCallback(
+    (expected: StudioBackgroundCapabilityState) => {
+      if (!isOwnedLifecycle()) return false
+      const current = resourceRef.current
+      const currentBackground = currentRef.current.background
+      if (
+        currentBackground.mode !== 'image' ||
+        !currentBackground.imagePath ||
+        !current.capability ||
+        current.capability.activeUrl !== expected.activeUrl ||
+        current.capability.revision !== expected.revision
+      )
+        return false
+      previewReadinessRef.current = {
+        ...previewReadinessRef.current,
+        status: 'error',
+      }
+      publish({
+        ...current,
+        failedIntent: backgroundIntent(currentBackground),
+        resolutionStatus: 'error',
+      })
+      return true
+    },
+    [isOwnedLifecycle, publish],
   )
 
   const setCapability = useCallback(
@@ -608,6 +704,8 @@ export function useProjectBackgroundImage({
     endSettlement,
     forgetSnapshot,
     getCapability,
+    getExportCapability,
+    invalidateExportCapability,
     reconcileCapability,
     rememberSnapshot,
     setCapability,

@@ -1104,9 +1104,13 @@ export default function App() {
   const exportVideo = useCallback(
     async ({ resolution, fps }: Pick<StudioVideoExportOptions, 'resolution' | 'fps'>) => {
       if (blockProjectSideEffect()) return
-      if (project.stageStyle.background.mode === 'image')
+      const background =
+        project.stageStyle.background.mode === 'image'
+          ? backgroundImages.getExportCapability()
+          : null
+      if (project.stageStyle.background.mode === 'image' && !background)
         return void showToast(
-          'Linked-image video export is deferred until Live Preview can verify the same image.',
+          'The linked background is not ready in Live Preview. Restore or retry it before exporting video.',
           'warning',
         )
       if (!window.studio?.exportVideo) {
@@ -1129,8 +1133,14 @@ export default function App() {
           durationMs: Math.max(1_000, Math.round(playback.durationMs)),
           resolution,
           fps,
+          background,
         })
         if (!result) return
+        if ('status' in result) {
+          backgroundImages.invalidateExportCapability(result.background)
+          showToast(result.message, 'warning')
+          return
+        }
         setExportDialogOpen(false)
         const fallback = result.fontFallbacks?.[0]
         showToast(
@@ -1155,6 +1165,7 @@ export default function App() {
     },
     [
       blockProjectSideEffect,
+      backgroundImages,
       playback.durationMs,
       playback.hasAudio,
       playback.pause,

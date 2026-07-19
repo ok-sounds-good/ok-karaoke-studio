@@ -67,7 +67,8 @@ in-app first-project guide.
    selected image appears in Design Preview only after its immutable snapshot
    loads; Apply promotes it with the complete Style edit, while Cancel or a
    failed Apply discards it. Live and Design Preview use a gradient fallback and
-   offer retry after failures. Image-backed MP4 export remains unavailable. Use
+   offer retry after failures. Image-backed MP4 export requires the linked image
+   to be current and successfully displayed in Live Preview. Use
    **Lead Vocal** to set the line **Preview Time** and configure the section-start
    **Sync Aid**. A literal blank lyric row starts a section; the cue requires
    that section's literal first line and its literal first word to have valid
