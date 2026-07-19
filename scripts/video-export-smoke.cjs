@@ -150,8 +150,7 @@ function lyricEvidence({ ffmpegPath, videoPath, width, height, fps, startMs, roo
   const before = decodeLyricCrop(ffmpegPath, videoPath, boundaryFrame, width, height, root)
   const crop = cropFor(width, height)
   const minimumChangedPixels = Math.max(8, Math.round((crop.width * crop.height) / 10_000))
-  const maximumOffset = Math.ceil(fps * 0.15)
-  for (let offset = 1; offset <= maximumOffset; offset += 1) {
+  for (let offset = 1; offset <= Math.ceil(fps * 0.15); offset += 1) {
     const after = decodeLyricCrop(
       ffmpegPath,
       videoPath,
@@ -178,6 +177,7 @@ function projectFixture(project, audioPath) {
     offsetMs: 0,
   })
   Object.assign(project.stageStyle.background, { mode: 'gradient', imagePath: null })
+  project.stageStyle.lyrics.sungColor = '#FF00FF'
   Object.assign(project.tracks[0], {
     id: 'smoke-track',
     lines: [
@@ -187,8 +187,8 @@ function projectFixture(project, audioPath) {
         startMs: 300,
         endMs: 800,
         words: [
-          { id: 'smoke-word-1', text: 'Smoke', startMs: 300, endMs: 500 },
-          { id: 'smoke-word-2', text: 'test', startMs: 500, endMs: 700 },
+          { id: 'smoke-word-1', text: 'Smoke', startMs: 300, endMs: 400 },
+          { id: 'smoke-word-2', text: 'test', startMs: 500, endMs: 600 },
         ],
       },
     ],
