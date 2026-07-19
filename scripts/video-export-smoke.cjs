@@ -102,8 +102,8 @@ function cropFor(width, height) {
 }
 
 function decodeLyricCrop(ffmpegPath, videoPath, frameIndex, width, height, root) {
-  const fullFrame = width === 480 && height === 270
-  const crop = fullFrame ? { width: 480, height: 270 } : cropFor(width, height)
+  const fullFrame = width === 960 && height === 540
+  const crop = fullFrame ? { width: 960, height: 540 } : cropFor(width, height)
   const frameBytes = crop.width * crop.height * 3
   const decoded = checkedSpawn(
     ffmpegPath,
@@ -161,7 +161,7 @@ function lyricEvidence({ ffmpegPath, videoPath, width, height, fps, startMs, roo
 
 function lyricPresenceEvidence({ ffmpegPath, videoPath, fps, root }) {
   const observedFrame = (600 * fps) / 1_000
-  const decoded = decodeLyricCrop(ffmpegPath, videoPath, observedFrame, 480, 270, root)
+  const decoded = decodeLyricCrop(ffmpegPath, videoPath, observedFrame, 960, 540, root)
   const lyricPixels = countSungPixels(decoded)
   if (lyricPixels < 8) throw new Error('decoded sung lyric evidence absent')
   return { observedFrame, lyricPixels }
