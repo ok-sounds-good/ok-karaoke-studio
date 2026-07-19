@@ -421,10 +421,6 @@ function presentRequestedFrame(contents, update, settings, signal, expectedSeque
     const onPaint = (_event, _dirtyRect, image) => {
       if (settled) return
       paintCount += 1
-      if (image.isEmpty()) {
-        emptyPaintCount += 1
-        return
-      }
       try {
         if (expectedSequence !== null) {
           const size = image.getSize()
@@ -432,6 +428,12 @@ function presentRequestedFrame(contents, update, settings, signal, expectedSeque
             Number.isSafeInteger(size.width) && Number.isSafeInteger(size.height)
               ? `${size.width}x${size.height}`
               : 'invalid'
+        }
+        if (image.isEmpty()) {
+          emptyPaintCount += 1
+          return
+        }
+        if (expectedSequence !== null) {
           const observedSequence = paintedFrameSequence(image, settings)
           if (observedSequence === null) unreadablePaintCount += 1
           else lastObservedSequence = observedSequence

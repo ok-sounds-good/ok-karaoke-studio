@@ -90,6 +90,13 @@ function windowsMarkerImage(sequence: number, label: string) {
   }
 }
 
+function emptyPaintImage(width = 0, height = 0) {
+  return {
+    getSize: () => ({ width, height }),
+    isEmpty: () => true,
+  }
+}
+
 describe('offscreen video frame presentation', () => {
   it('encodes only the committed paint while stopped between frames', async () => {
     const order: string[] = []
@@ -543,7 +550,9 @@ describe('offscreen video frame presentation', () => {
         controller.signal,
       )
       await updateStarted.promise
-      const rejection = expect(rendering).rejects.toThrow('Timed out while rendering a video frame')
+      const rejection = expect(rendering).rejects.toMatchObject({
+        message: 'Timed out while rendering a video frame',
+      })
       await vi.advanceTimersByTimeAsync(10_000)
       await rejection
 
@@ -616,25 +625,37 @@ describe('offscreen video frame presentation', () => {
     }
   })
 
-  it('reports mismatched and unreadable Windows paints without renderer data', async () => {
+  it.each([
+    {
+      name: 'empty-only',
+      paints: () => [emptyPaintImage()],
+      diagnostic:
+        'Timed out while rendering a video frame (expected=1; update=complete; paints=1; empty=1; unreadable=0; last=none; size=0x0)',
+    },
+    {
+      name: 'stale, unreadable, then empty',
+      paints: () => [
+        windowsMarkerImage(0, 'stale'),
+        {
+          getSize: () => ({ width: 444, height: 240 }),
+          isEmpty: () => false,
+          toBitmap: () => Buffer.alloc(3),
+        },
+        emptyPaintImage(),
+      ],
+      diagnostic:
+        'Timed out while rendering a video frame (expected=1; update=complete; paints=3; empty=1; unreadable=1; last=0; size=0x0)',
+    },
+  ])('reports bounded Windows $name paint state', async ({ paints, diagnostic }) => {
     vi.useFakeTimers()
     try {
+      expect(diagnostic.length).toBeLessThanOrEqual(400)
       let destroyed = false
       const contents = new EventEmitter() as FakeWebContents
       contents.executeJavaScript = vi.fn(async () => true)
       contents.setFrameRate = vi.fn()
       contents.startPainting = vi.fn(() => {
-        contents.emit('paint', {}, {}, windowsMarkerImage(0, 'stale'))
-        contents.emit(
-          'paint',
-          {},
-          {},
-          {
-            getSize: () => ({ width: 444, height: 240 }),
-            isEmpty: () => false,
-            toBitmap: () => Buffer.alloc(3),
-          },
-        )
+        paints().forEach((image) => contents.emit('paint', {}, {}, image))
       })
       contents.stopPainting = vi.fn()
 
@@ -660,9 +681,7 @@ describe('offscreen video frame presentation', () => {
       )
       await Promise.resolve()
       await Promise.resolve()
-      const rejection = expect(rendering).rejects.toThrow(
-        'Timed out while rendering a video frame (expected=1; update=complete; paints=2; empty=0; unreadable=1; last=0; size=444x240)',
-      )
+      const rejection = expect(rendering).rejects.toThrow(diagnostic)
       await vi.advanceTimersByTimeAsync(10_000)
       await rejection
 
