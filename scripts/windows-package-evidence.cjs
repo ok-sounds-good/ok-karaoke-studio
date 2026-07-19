@@ -73,6 +73,24 @@ async function readPeMachine(file) {
   return bytes.readUInt16LE(peOffset + 4)
 }
 
+function authenticodeStatus(file) {
+  const result = spawnSync(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      '(Get-AuthenticodeSignature -LiteralPath $args[0]).Status.ToString()',
+      file,
+    ],
+    { encoding: 'utf8', windowsHide: true },
+  )
+  if (result.error)
+    throw new Error(`Could not inspect Authenticode status: ${result.error.message}`)
+  if (result.status !== 0) throw new Error(`Authenticode inspection failed (exit ${result.status})`)
+  return result.stdout.trim()
+}
+
 async function directorySize(directory) {
   let total = 0
   for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -108,9 +126,16 @@ function listInstallerPayloads(installer) {
 }
 
 function parseInstallerPayloads(output) {
-  return [...output.matchAll(/[^\s\\/]+-(x64|ia32|arm64)\.nsis\.7z/giu)].map(
-    ([name, architecture]) => ({ name, architecture: architecture.toLowerCase() }),
-  )
+  const payloads = []
+  for (const [name, nsisArchitecture, embeddedArchitecture] of output.matchAll(
+    /(?:[^\s\\/]+-(x64|ia32|arm64)\.nsis|app-(64|32|arm64))\.7z/giu,
+  )) {
+    const rawArchitecture = (nsisArchitecture || embeddedArchitecture).toLowerCase()
+    const architecture =
+      rawArchitecture === '64' ? 'x64' : rawArchitecture === '32' ? 'ia32' : rawArchitecture
+    payloads.push({ name, architecture })
+  }
+  return payloads
 }
 
 function validateArchiveInventory(files) {
@@ -158,6 +183,13 @@ async function validateWindowsPackage(root = process.cwd()) {
   if ((await readPeMachine(executable)) !== PE_X64_MACHINE) {
     throw new Error('Packaged application executable is not Windows x64')
   }
+  const signatures = {
+    application: authenticodeStatus(executable),
+    installer: authenticodeStatus(installer),
+  }
+  if (signatures.application !== 'NotSigned' || signatures.installer !== 'NotSigned') {
+    throw new Error(`Windows artifacts must be unsigned: ${JSON.stringify(signatures)}`)
+  }
 
   const resources = path.join(unpacked, 'resources')
   const archive = path.join(resources, 'app.asar')
@@ -204,7 +236,7 @@ async function validateWindowsPackage(root = process.cwd()) {
       archiveFiles: archiveFiles.length,
     },
     externalMediaBinaries: [],
-    signed: false,
+    signatures,
     published: false,
   }
 
@@ -237,6 +269,7 @@ if (require.main === module) {
 module.exports = {
   PE_X64_MACHINE,
   assertOwnedPath,
+  authenticodeStatus,
   listInstallerPayloads,
   parseInstallerPayloads,
   readPeMachine,

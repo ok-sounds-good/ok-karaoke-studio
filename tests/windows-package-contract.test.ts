@@ -87,6 +87,9 @@ describe('Windows x64 package contract', () => {
     expect(windows).toContain('bun run dist:win')
     expect(windows).toContain('name: Validate Windows x64 package inventory')
     expect(windows).toContain('node scripts/windows-package-evidence.cjs')
+    expect(await repositoryFile('scripts/windows-package-evidence.cjs')).toContain(
+      'Get-AuthenticodeSignature',
+    )
     expect(windows).toContain('path: release/win-unpacked')
     expect(windows).toContain('destination: windows-x64-unpacked')
     expect(windows).toContain('path: release/windows-x64-installer')
@@ -122,22 +125,19 @@ describe('Windows x64 package contract', () => {
   })
 
   it('requires one x64 payload in the actual NSIS inventory', () => {
-    expect(
-      evidence.parseInstallerPayloads(
-        'Path = $PLUGINSDIR\\okay-karaoke-studio-0.1.0-x64.nsis.7z\nSize = 123',
-      ),
-    ).toEqual([
+    expect(evidence.parseInstallerPayloads('Path = $PLUGINSDIR\\app-64.7z\nSize = 123')).toEqual([
       {
-        name: 'okay-karaoke-studio-0.1.0-x64.nsis.7z',
+        name: 'app-64.7z',
         architecture: 'x64',
       },
     ])
     expect(
-      evidence.parseInstallerPayloads('app-x64.nsis.7z\napp-ia32.nsis.7z\napp-arm64.nsis.7z'),
+      evidence.parseInstallerPayloads('app-64.7z\napp-32.7z\napp-arm64.7z\narchive-x64.nsis.7z'),
     ).toEqual([
-      { name: 'app-x64.nsis.7z', architecture: 'x64' },
-      { name: 'app-ia32.nsis.7z', architecture: 'ia32' },
-      { name: 'app-arm64.nsis.7z', architecture: 'arm64' },
+      { name: 'app-64.7z', architecture: 'x64' },
+      { name: 'app-32.7z', architecture: 'ia32' },
+      { name: 'app-arm64.7z', architecture: 'arm64' },
+      { name: 'archive-x64.nsis.7z', architecture: 'x64' },
     ])
   })
 
