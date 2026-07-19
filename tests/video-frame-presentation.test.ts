@@ -90,6 +90,13 @@ function windowsMarkerImage(sequence: number, label: string) {
   }
 }
 
+function emptyPaintImage(width = 0, height = 0) {
+  return {
+    getSize: () => ({ width, height }),
+    isEmpty: () => true,
+  }
+}
+
 describe('offscreen video frame presentation', () => {
   it('encodes only the committed paint while stopped between frames', async () => {
     const order: string[] = []
@@ -380,7 +387,12 @@ describe('offscreen video frame presentation', () => {
 
   it.each([
     { mode: 'abort', expectedError: { name: 'AbortError' } },
-    { mode: 'timeout', expectedError: { message: 'Timed out while rendering a video frame' } },
+    {
+      mode: 'timeout',
+      expectedError: {
+        message: expect.stringContaining('Timed out while rendering a video frame'),
+      },
+    },
   ])(
     'discards a buffered Windows paint on renderer $mode and ignores late completion',
     async ({ mode, expectedError }) => {
@@ -538,7 +550,9 @@ describe('offscreen video frame presentation', () => {
         controller.signal,
       )
       await updateStarted.promise
-      const rejection = expect(rendering).rejects.toThrow('Timed out while rendering a video frame')
+      const rejection = expect(rendering).rejects.toMatchObject({
+        message: 'Timed out while rendering a video frame',
+      })
       await vi.advanceTimersByTimeAsync(10_000)
       await rejection
 
@@ -553,6 +567,127 @@ describe('offscreen video frame presentation', () => {
       controller.abort()
       expect(contents.startPainting).not.toHaveBeenCalled()
       expect(destroyWindow).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reports bounded Windows correlation state when no paint arrives during an update', async () => {
+    vi.useFakeTimers()
+    try {
+      const update = deferred<unknown>()
+      const updateStarted = deferred<void>()
+      let destroyed = false
+      const contents = new EventEmitter() as FakeWebContents
+      contents.executeJavaScript = vi.fn((source: string) => {
+        if (isAssetInvocation(source)) return Promise.resolve({ fontFallbacks: [] })
+        updateStarted.resolve()
+        return update.promise
+      })
+      contents.setFrameRate = vi.fn()
+      contents.startPainting = vi.fn()
+      contents.stopPainting = vi.fn()
+
+      class FakeBrowserWindow implements FakeWindow {
+        webContents = contents
+        loadURL = async () => {}
+        isDestroyed = () => destroyed
+        destroy = vi.fn(() => {
+          destroyed = true
+        })
+      }
+
+      const rendering = videoExport.renderVideoFrames(
+        FakeBrowserWindow,
+        project,
+        { times: [0] },
+        { destroyed: false, write: vi.fn(() => true) },
+        videoExport.normalizeVideoSettings({ resolution: '240p', fps: 30 }),
+        runtime,
+        undefined,
+        undefined,
+        'win32',
+      )
+      await updateStarted.promise
+      const rejection = expect(rendering).rejects.toThrow(
+        'Timed out while rendering a video frame (expected=1; update=pending; paints=0; empty=0; unreadable=0; last=none; size=none)',
+      )
+      await vi.advanceTimersByTimeAsync(10_000)
+      await rejection
+
+      expect(contents.startPainting).toHaveBeenCalledTimes(1)
+      expect(contents.stopPainting).toHaveBeenCalledTimes(2)
+      expect(contents.listenerCount('paint')).toBe(0)
+      expect(destroyed).toBe(true)
+      update.resolve(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each([
+    {
+      name: 'empty-only',
+      paints: () => [emptyPaintImage()],
+      diagnostic:
+        'Timed out while rendering a video frame (expected=1; update=complete; paints=1; empty=1; unreadable=0; last=none; size=0x0)',
+    },
+    {
+      name: 'stale, unreadable, then empty',
+      paints: () => [
+        windowsMarkerImage(0, 'stale'),
+        {
+          getSize: () => ({ width: 444, height: 240 }),
+          isEmpty: () => false,
+          toBitmap: () => Buffer.alloc(3),
+        },
+        emptyPaintImage(),
+      ],
+      diagnostic:
+        'Timed out while rendering a video frame (expected=1; update=complete; paints=3; empty=1; unreadable=1; last=0; size=0x0)',
+    },
+  ])('reports bounded Windows $name paint state', async ({ paints, diagnostic }) => {
+    vi.useFakeTimers()
+    try {
+      expect(diagnostic.length).toBeLessThanOrEqual(400)
+      let destroyed = false
+      const contents = new EventEmitter() as FakeWebContents
+      contents.executeJavaScript = vi.fn(async () => true)
+      contents.setFrameRate = vi.fn()
+      contents.startPainting = vi.fn(() => {
+        paints().forEach((image) => contents.emit('paint', {}, {}, image))
+      })
+      contents.stopPainting = vi.fn()
+
+      class FakeBrowserWindow implements FakeWindow {
+        webContents = contents
+        loadURL = async () => {}
+        isDestroyed = () => destroyed
+        destroy = vi.fn(() => {
+          destroyed = true
+        })
+      }
+
+      const rendering = videoExport.renderVideoFrames(
+        FakeBrowserWindow,
+        project,
+        { times: [0] },
+        { destroyed: false, write: vi.fn(() => true) },
+        videoExport.normalizeVideoSettings({ resolution: '240p', fps: 30 }),
+        runtime,
+        undefined,
+        undefined,
+        'win32',
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+      const rejection = expect(rendering).rejects.toThrow(diagnostic)
+      await vi.advanceTimersByTimeAsync(10_000)
+      await rejection
+
+      expect(contents.stopPainting).toHaveBeenCalledTimes(2)
+      expect(contents.listenerCount('paint')).toBe(0)
+      expect(destroyed).toBe(true)
     } finally {
       vi.useRealTimers()
     }
