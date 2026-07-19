@@ -33,13 +33,17 @@ function normalizeText(text: string): string {
 }
 
 function tokenizeWithinLimit(text: string, maximumWords: number, label: string): string[] {
+  const matcher = /\S+/gu
+  let count = 0
+  while (matcher.exec(text)) {
+    count += 1
+    if (count > maximumWords) {
+      throw new RangeError(`${label} exceeds the remaining ${maximumWords} word limit.`)
+    }
+  }
   const normalized = normalizeText(text)
   if (!normalized) return []
-  const words = normalized.split(' ')
-  if (words.length > maximumWords) {
-    throw new RangeError(`${label} exceeds the remaining ${maximumWords} word limit.`)
-  }
-  return words
+  return normalized.split(' ')
 }
 
 function parseTimestamp(minutes: string, seconds: string, fraction = ''): number {
