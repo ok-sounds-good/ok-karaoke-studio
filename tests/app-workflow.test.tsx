@@ -757,6 +757,51 @@ describe('mounted first-time workflow', () => {
     ])
   })
 
+  it('clamps regressed and over-late Down endings at the legal timing bounds', async () => {
+    await clickButton('Edit text')
+    await replaceTextarea('Alpha beta')
+    await clickButton('Apply lyrics')
+    await pressKey('ArrowRight', { shiftKey: true })
+    await clickButton('Start sync')
+
+    await pressKey('ArrowRight')
+    await pressKey('ArrowLeft', { shiftKey: true })
+    await pressKey('ArrowDown')
+    expect(timelineTimingLabels()).toContain('Alpha timing block, 0:01.000–0:01.001')
+
+    await pressKey('ArrowRight', { shiftKey: true })
+    await pressKey('ArrowRight', { shiftKey: true })
+    await pressKey('ArrowRight')
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[aria-label="Stop"]')!.click()
+    })
+    await clickButton('Start sync')
+
+    await pressKey('ArrowRight')
+    await pressKey('ArrowRight', { shiftKey: true })
+    await pressKey('ArrowRight', { shiftKey: true })
+    await pressKey('ArrowRight', { shiftKey: true })
+    await pressKey('ArrowDown')
+    expect(timelineTimingLabels()).toContain('Alpha timing block, 0:00.000–0:02.000')
+  })
+
+  it('abandons a held Space on modal keyup without invalidating the armed scope', async () => {
+    await clickButton('Edit text')
+    await replaceTextarea('Alpha beta gamma')
+    await clickButton('Apply lyrics')
+    await clickButton('Start sync')
+
+    await pressKey('Space')
+    await clickButton('Edit text')
+    await releaseKey('Space')
+    await clickButton('Cancel')
+    await pressKey('ArrowRight', { shiftKey: true })
+    await pressKey('ArrowRight')
+
+    expect(document.querySelector('.transport')?.classList.contains('is-syncing')).toBe(true)
+    expect(document.querySelector('.sync-cue__line.is-current')?.textContent).toContain('beta')
+  })
+
   it('guards explicit sync arrows and consumes a Space hold ended by Down once', async () => {
     await clickButton('Edit text')
     await replaceTextarea('First second third')

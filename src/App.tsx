@@ -1648,7 +1648,7 @@ export default function App() {
 
     const keyUp = (event: KeyboardEvent) => {
       if (document.querySelector('.modal-backdrop')) {
-        if (event.code === 'Space') cancelHeldSync()
+        if (event.code === 'Space') abandonActiveWord()
         return
       }
       if (event.code !== 'Space' || !syncMode || !syncSpaceHeldRef.current) return
