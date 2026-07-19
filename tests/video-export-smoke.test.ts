@@ -9,9 +9,7 @@ const launcher = require('../scripts/video-export-smoke-launcher.cjs') as {
   runLauncher(options: Record<string, unknown>, supplied: Record<string, unknown>): Promise<unknown>
   validateManifest(value: unknown): unknown
 }
-const { countSungPixels } = require('../scripts/video-export-smoke-evidence.cjs') as {
-  countSungPixels(decoded: Buffer): number
-}
+const { countSungPixels } = require('../scripts/video-export-smoke-evidence.cjs')
 function manifest() {
   return {
     ok: true,
@@ -79,6 +77,9 @@ describe('video export smoke launcher', () => {
     duplicateEvidence.cases[0].decodedLyricEvidence[1] =
       duplicateEvidence.cases[0].decodedLyricEvidence[0]
     expect(() => launcher.validateManifest(duplicateEvidence)).toThrow('invalid case 1')
+    const delayedStarts = manifest()
+    delayedStarts.cases[0].streamStarts = { audioSeconds: 0.25, videoSeconds: 0.25 }
+    expect(() => launcher.validateManifest(delayedStarts)).toThrow('invalid case 1')
   })
   it('cleans its owned root after a child timeout without publishing a manifest', async () => {
     const root = await mkdtemp(join(tmpdir(), 'oks-video-launcher-test-'))
