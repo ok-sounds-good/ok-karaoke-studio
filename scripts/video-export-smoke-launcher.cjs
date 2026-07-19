@@ -1,12 +1,10 @@
 'use strict'
-
 const fs = require('node:fs/promises')
 const os = require('node:os')
 const path = require('node:path')
 const electronExecutable = require('electron')
 const presets = require('../electron/video-export-presets.json')
 const { publicChildOutcomeCode, publicStatusLine, runBoundedChild } = require('./bounded-child.cjs')
-
 const REPOSITORY_ROOT = path.resolve(__dirname, '..')
 const ROOT_ENVIRONMENT_KEY = 'OKS_VIDEO_SMOKE_ROOT'
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1_000
@@ -25,7 +23,6 @@ function validTransition(value) {
     value.totalDifference > 0
   )
 }
-
 function validateManifest(value) {
   if (
     !value ||

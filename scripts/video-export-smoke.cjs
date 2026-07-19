@@ -7,6 +7,7 @@ const path = require('node:path')
 const { app, BrowserWindow } = require('electron')
 const presets = require('../electron/video-export-presets.json')
 const { exportKaraokeVideo, findFfmpeg } = require('../electron/video-export.cjs')
+const { countSungPixels } = require('./video-export-smoke-evidence.cjs')
 
 const ROOT_ENVIRONMENT_KEY = 'OKS_VIDEO_SMOKE_ROOT'
 const FIXTURE_DURATION_MS = 1_000
@@ -161,11 +162,7 @@ function lyricEvidence({ ffmpegPath, videoPath, width, height, fps, startMs, roo
 function lyricPresenceEvidence({ ffmpegPath, videoPath, fps, root }) {
   const observedFrame = (400 * fps) / 1_000
   const decoded = decodeLyricCrop(ffmpegPath, videoPath, observedFrame, 480, 270, root)
-  let lyricPixels = 0
-  for (let pixel = 0; pixel < decoded.length; pixel += 3) {
-    if (decoded[pixel] >= 100 && decoded[pixel + 1] <= 120 && decoded[pixel + 2] >= 100)
-      lyricPixels += 1
-  }
+  const lyricPixels = countSungPixels(decoded)
   if (lyricPixels < 8) throw new Error('decoded sung lyric evidence absent')
   return { observedFrame, lyricPixels }
 }

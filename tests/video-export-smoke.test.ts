@@ -3,14 +3,15 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-
 const require = createRequire(import.meta.url)
 const launcher = require('../scripts/video-export-smoke-launcher.cjs') as {
   EXPECTED_MATRIX: Array<{ value: string; width: number; height: number; fps: number }>
   runLauncher(options: Record<string, unknown>, supplied: Record<string, unknown>): Promise<unknown>
   validateManifest(value: unknown): unknown
 }
-
+const { countSungPixels } = require('../scripts/video-export-smoke-evidence.cjs') as {
+  countSungPixels(decoded: Buffer): number
+}
 function manifest() {
   return {
     ok: true,
@@ -41,6 +42,11 @@ function manifest() {
 }
 
 describe('video export smoke launcher', () => {
+  it('distinguishes decoded sung magenta from blank grayscale samples', () => {
+    expect(countSungPixels(Buffer.alloc(30, 110))).toBe(0)
+    expect(countSungPixels(Buffer.from([130, 80, 140, 99, 0, 140]))).toBe(1)
+  })
+
   it('derives the exact resolution-major, fps-minor 14-case matrix', () => {
     expect(launcher.EXPECTED_MATRIX.map(({ value, fps }) => `${value}/${fps}`)).toEqual([
       '240p/30',
