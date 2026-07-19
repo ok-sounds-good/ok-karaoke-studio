@@ -11,7 +11,7 @@ type VideoSettings = {
 }
 
 type FakeWebContents = EventEmitter & {
-  capturePage?: () => never
+  capturePage?: () => Promise<{ getSize(): { width: number; height: number } }>
   executeJavaScript(source: string): Promise<unknown>
   invalidate?: () => never
   setFrameRate(fps: number): void
@@ -33,7 +33,20 @@ type FakeWindow = {
 
 type VideoExportModule = {
   MAX_VIDEO_FRAMES: number
+  encodeJpegFrame(
+    image: Record<string, unknown>,
+    settings: VideoSettings,
+    captureGeometry?: Record<string, number> | null,
+  ): Buffer
+  fittedWindowsCaptureGeometry(
+    settings: VideoSettings,
+    surfaceSize: { width: number; height: number },
+  ): { stageWidth: number; stageHeight: number; surfaceWidth: number; surfaceHeight: number }
   normalizeVideoSettings(value?: unknown): VideoSettings
+  paintedFrameSequence(
+    image: Record<string, unknown>,
+    geometry: Record<string, number>,
+  ): number | null
   renderVideoFrames(
     BrowserWindow: new (options: BrowserWindowOptions) => FakeWindow,
     project: unknown,
@@ -97,7 +110,158 @@ function emptyPaintImage(width = 0, height = 0) {
   }
 }
 
+function installWindowsSurfaceProbe(contents: FakeWebContents, width = 444, height = 240) {
+  contents.capturePage = vi.fn(async () => ({ getSize: () => ({ width, height }) }))
+}
+
 describe('offscreen video frame presentation', () => {
+  it('fits a proportional Windows stage and marker inside the measured surface', () => {
+    const settings = videoExport.normalizeVideoSettings({ resolution: '720p', fps: 30 })
+
+    expect(
+      videoExport.fittedWindowsCaptureGeometry(settings, { width: 1298, height: 720 }),
+    ).toEqual({
+      stageWidth: 1280,
+      stageHeight: 720,
+      surfaceWidth: 1298,
+      surfaceHeight: 720,
+    })
+    expect(
+      videoExport.fittedWindowsCaptureGeometry(settings, { width: 1024, height: 720 }),
+    ).toEqual({
+      stageWidth: 1006,
+      stageHeight: 565,
+      surfaceWidth: 1024,
+      surfaceHeight: 720,
+    })
+    expect(() =>
+      videoExport.fittedWindowsCaptureGeometry(settings, { width: 18, height: 720 }),
+    ).toThrow('Windows video export surface is unavailable')
+  })
+
+  it('decodes and crops a fitted marker surface before resizing to requested output', () => {
+    const settings = videoExport.normalizeVideoSettings({ resolution: '720p', fps: 30 })
+    const geometry = videoExport.fittedWindowsCaptureGeometry(settings, {
+      width: 1024,
+      height: 720,
+    })
+    const bitmap = Buffer.alloc(1024 * 720 * 4)
+    for (let y = 0; y < 720; y += 1) {
+      bitmap.fill(255, (y * 1024 + 1006) * 4, (y * 1024 + 1007) * 4)
+    }
+    const finalImage = {
+      getSize: () => ({ width: 1280, height: 720 }),
+      toJPEG: () => Buffer.from('fitted-frame'),
+    }
+    const croppedImage = {
+      getSize: () => ({ width: 1006, height: 565 }),
+      resize: vi.fn(() => finalImage),
+    }
+    const image = {
+      crop: vi.fn(() => croppedImage),
+      getSize: () => ({ width: 1024, height: 720 }),
+      toBitmap: () => bitmap,
+    }
+
+    expect(videoExport.paintedFrameSequence(image, geometry)).toBe(1)
+    expect(videoExport.encodeJpegFrame(image, settings, geometry).toString()).toBe('fitted-frame')
+    expect(image.crop).toHaveBeenCalledWith({ x: 0, y: 0, width: 1006, height: 565 })
+    expect(croppedImage.resize).toHaveBeenCalledWith({
+      width: 1280,
+      height: 720,
+      quality: 'best',
+    })
+  })
+
+  it('reloads a fitted Windows document and never encodes the surface probe', async () => {
+    const settings = videoExport.normalizeVideoSettings({ resolution: '720p', fps: 30 })
+    const geometry = videoExport.fittedWindowsCaptureGeometry(settings, {
+      width: 1024,
+      height: 720,
+    })
+    const bitmap = Buffer.alloc(1024 * 720 * 4)
+    for (let y = 0; y < 720; y += 1) {
+      bitmap.fill(
+        255,
+        (y * 1024 + geometry.stageWidth) * 4,
+        (y * 1024 + geometry.stageWidth + 1) * 4,
+      )
+    }
+    const frames: Buffer[] = []
+    const loadUrls: string[] = []
+    let destroyed = false
+    const contents = new EventEmitter() as FakeWebContents
+    contents.capturePage = vi.fn(async () => ({
+      getSize: () => ({ width: 1024, height: 720 }),
+      toJPEG: () => {
+        throw new Error('surface probe pixels encoded')
+      },
+    }))
+    contents.executeJavaScript = vi.fn(async () => true)
+    contents.setFrameRate = vi.fn()
+    contents.startPainting = vi.fn(() => {
+      contents.emit(
+        'paint',
+        {},
+        {},
+        {
+          crop: (rect: unknown) => {
+            expect(rect).toEqual({ x: 0, y: 0, width: 1006, height: 565 })
+            return {
+              getSize: () => ({ width: 1006, height: 565 }),
+              resize: () => ({
+                getSize: () => ({ width: 1280, height: 720 }),
+                toJPEG: () => Buffer.from('paint-frame'),
+              }),
+            }
+          },
+          getSize: () => ({ width: 1024, height: 720 }),
+          isEmpty: () => false,
+          toBitmap: () => bitmap,
+        },
+      )
+    })
+    contents.stopPainting = vi.fn()
+
+    class FakeBrowserWindow implements FakeWindow {
+      webContents = contents
+      constructor(options: BrowserWindowOptions & { width?: number; height?: number }) {
+        expect(options).toMatchObject({ width: 1298, height: 720 })
+      }
+      loadURL = async (url: string) => {
+        loadUrls.push(url)
+      }
+      isDestroyed = () => destroyed
+      destroy = vi.fn(() => {
+        destroyed = true
+      })
+    }
+
+    await videoExport.renderVideoFrames(
+      FakeBrowserWindow,
+      project,
+      { times: [0] },
+      {
+        destroyed: false,
+        write: (frame) => {
+          frames.push(frame)
+          return true
+        },
+      },
+      settings,
+      runtime,
+      undefined,
+      undefined,
+      'win32',
+    )
+
+    expect(contents.capturePage).toHaveBeenCalledTimes(1)
+    expect(loadUrls).toHaveLength(2)
+    expect(decodeURIComponent(loadUrls[1].split(',')[1])).toContain('left: 1006px')
+    expect(frames.map((frame) => frame.toString())).toEqual(['paint-frame'])
+    expect(destroyed).toBe(true)
+  })
+
   it('encodes only the committed paint while stopped between frames', async () => {
     const order: string[] = []
     const frames: Buffer[] = []
@@ -265,6 +429,7 @@ describe('offscreen video frame presentation', () => {
     const order: string[] = []
     let destroyed = false
     const contents = new EventEmitter() as FakeWebContents
+    installWindowsSurfaceProbe(contents)
     const image = (sequence: number, label: string) => {
       const width = 426 + 18
       const height = 240
@@ -346,6 +511,7 @@ describe('offscreen video frame presentation', () => {
     const currentImage = windowsMarkerImage(1, 'must-not-publish')
     let destroyed = false
     const contents = new EventEmitter() as FakeWebContents
+    installWindowsSurfaceProbe(contents)
     contents.executeJavaScript = vi.fn(async (source: string) => {
       if (isAssetInvocation(source)) return { fontFallbacks: [] }
       contents.emit('paint', {}, {}, currentImage)
@@ -404,6 +570,7 @@ describe('offscreen video frame presentation', () => {
         let destroyed = false
         const currentImage = windowsMarkerImage(1, 'must-not-publish')
         const contents = new EventEmitter() as FakeWebContents
+        installWindowsSurfaceProbe(contents)
         contents.executeJavaScript = vi.fn((source: string) => {
           if (isAssetInvocation(source)) return Promise.resolve({ fontFallbacks: [] })
           contents.emit('paint', {}, {}, currentImage)
@@ -579,6 +746,7 @@ describe('offscreen video frame presentation', () => {
       const updateStarted = deferred<void>()
       let destroyed = false
       const contents = new EventEmitter() as FakeWebContents
+      installWindowsSurfaceProbe(contents)
       contents.executeJavaScript = vi.fn((source: string) => {
         if (isAssetInvocation(source)) return Promise.resolve({ fontFallbacks: [] })
         updateStarted.resolve()
@@ -652,6 +820,7 @@ describe('offscreen video frame presentation', () => {
       expect(diagnostic.length).toBeLessThanOrEqual(400)
       let destroyed = false
       const contents = new EventEmitter() as FakeWebContents
+      installWindowsSurfaceProbe(contents)
       contents.executeJavaScript = vi.fn(async () => true)
       contents.setFrameRate = vi.fn()
       contents.startPainting = vi.fn(() => {

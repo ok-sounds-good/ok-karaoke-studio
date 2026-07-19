@@ -278,8 +278,9 @@ function frameStateAt(projectValue, playbackMs) {
   return styleFrameStateAt(project, playbackMs)
 }
 
-function renderDocument(settings = {}) {
-  const { width, height } = normalizeVideoSettings(settings)
+function renderDocument(settings = {}, renderSize = null) {
+  const normalized = normalizeVideoSettings(settings)
+  const { width, height } = renderSize || normalized
   return renderStyleDocument({ width, height })
 }
 
@@ -330,16 +331,39 @@ async function promoteVideoOutput(
   onPromotionComplete?.()
 }
 
-function paintedFrameSequence(image, settings) {
+function fittedWindowsCaptureGeometry(settings, surfaceSize) {
+  if (
+    !Number.isSafeInteger(surfaceSize?.width) ||
+    !Number.isSafeInteger(surfaceSize?.height) ||
+    surfaceSize.width <= FRAME_MARKER_BITS ||
+    surfaceSize.height <= 0
+  ) {
+    throw new Error('The Windows video export surface is unavailable')
+  }
+  const scale = Math.min(
+    1,
+    (surfaceSize.width - FRAME_MARKER_BITS) / settings.width,
+    surfaceSize.height / settings.height,
+  )
+  return {
+    stageWidth: Math.max(1, Math.floor(settings.width * scale)),
+    stageHeight: Math.max(1, Math.floor(settings.height * scale)),
+    surfaceWidth: surfaceSize.width,
+    surfaceHeight: surfaceSize.height,
+  }
+}
+
+function paintedFrameSequence(image, geometry) {
   const size = image.getSize()
-  const scaleX = size.width / (settings.width + FRAME_MARKER_BITS)
-  const y = Math.floor(size.height / 2)
+  const scaleX = size.width / geometry.surfaceWidth
+  const scaleY = size.height / geometry.surfaceHeight
+  const y = Math.floor((geometry.stageHeight / 2) * scaleY)
   const bitmap = image.toBitmap()
   const rowBytes = bitmap.length / size.height
   if (!Number.isSafeInteger(rowBytes) || rowBytes < size.width * 4) return null
   let sequence = 0
   for (let bit = 0; bit < FRAME_MARKER_BITS; bit += 1) {
-    const x = Math.floor((settings.width + bit + 0.5) * scaleX)
+    const x = Math.floor((geometry.stageWidth + bit + 0.5) * scaleX)
     const offset = y * rowBytes + x * 4
     let brightChannels = 0
     for (let channel = 0; channel < 4; channel += 1) {
@@ -350,16 +374,18 @@ function paintedFrameSequence(image, settings) {
   return sequence
 }
 
-function encodeJpegFrame(image, settings, cropMarker = false) {
+function encodeJpegFrame(image, settings, captureGeometry = null) {
   const imageSize = image.getSize()
-  const source = cropMarker
+  const source = captureGeometry
     ? image.crop({
         x: 0,
         y: 0,
         width: Math.round(
-          (settings.width * imageSize.width) / (settings.width + FRAME_MARKER_BITS),
+          (captureGeometry.stageWidth * imageSize.width) / captureGeometry.surfaceWidth,
         ),
-        height: imageSize.height,
+        height: Math.round(
+          (captureGeometry.stageHeight * imageSize.height) / captureGeometry.surfaceHeight,
+        ),
       })
     : image
   const size = source.getSize()
@@ -370,7 +396,14 @@ function encodeJpegFrame(image, settings, cropMarker = false) {
   return frame.toJPEG(95)
 }
 
-function presentRequestedFrame(contents, update, settings, signal, expectedSequence = null) {
+function presentRequestedFrame(
+  contents,
+  update,
+  settings,
+  signal,
+  expectedSequence = null,
+  captureGeometry = null,
+) {
   return new Promise((resolve, reject) => {
     let paintingStarted = false
     let settled = false
@@ -434,12 +467,12 @@ function presentRequestedFrame(contents, update, settings, signal, expectedSeque
           return
         }
         if (expectedSequence !== null) {
-          const observedSequence = paintedFrameSequence(image, settings)
+          const observedSequence = paintedFrameSequence(image, captureGeometry)
           if (observedSequence === null) unreadablePaintCount += 1
           else lastObservedSequence = observedSequence
           if (observedSequence !== expectedSequence) return
         }
-        const frame = encodeJpegFrame(image, settings, expectedSequence !== null)
+        const frame = encodeJpegFrame(image, settings, captureGeometry)
         if (!updateCompleted) pendingFrame = frame
         else finish(frame)
       } catch (error) {
@@ -670,9 +703,27 @@ async function renderVideoFrames(
   signal?.addEventListener('abort', onAbort, { once: true })
 
   try {
-    const documentUrl = `data:text/html;charset=utf-8,${encodeURIComponent(renderDocument(settings))}`
+    let captureGeometry = null
+    let documentUrl = `data:text/html;charset=utf-8,${encodeURIComponent(renderDocument(settings))}`
     await window.loadURL(documentUrl)
     throwIfAborted(signal)
+    if (platform === 'win32') {
+      const surfaceImage = await window.webContents.capturePage()
+      throwIfAborted(signal)
+      captureGeometry = fittedWindowsCaptureGeometry(settings, surfaceImage.getSize())
+      if (
+        captureGeometry.stageWidth !== settings.width ||
+        captureGeometry.stageHeight !== settings.height
+      ) {
+        const renderSize = {
+          width: captureGeometry.stageWidth,
+          height: captureGeometry.stageHeight,
+        }
+        documentUrl = `data:text/html;charset=utf-8,${encodeURIComponent(renderDocument(settings, renderSize))}`
+        await window.loadURL(documentUrl)
+        throwIfAborted(signal)
+      }
+    }
     window.webContents.stopPainting()
     const assetResult = await window.webContents.executeJavaScript(assetInvocation(runtime))
     throwIfAborted(signal)
@@ -689,6 +740,7 @@ async function renderVideoFrames(
         settings,
         signal,
         platform === 'win32' ? frameIndex + 1 : null,
+        captureGeometry,
       )
       await writeJpegFrame(stream, frame, signal)
       if (
@@ -862,11 +914,14 @@ module.exports = {
   buildFrameTimeline,
   createVideoExportCommitState,
   effectiveVideoDuration,
+  encodeJpegFrame,
   exportKaraokeVideo,
   findFfmpeg,
+  fittedWindowsCaptureGeometry,
   frameStateAt,
   normalizeProjectForVideo,
   normalizeVideoSettings,
+  paintedFrameSequence,
   parseProjectForVideo,
   prepareStyleRuntime,
   promoteVideoOutput,
