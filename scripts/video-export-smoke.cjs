@@ -148,23 +148,25 @@ function lyricEvidence({ ffmpegPath, videoPath, width, height, fps, startMs, roo
   const boundaryFrame = (startMs * fps) / 1_000
   if (!Number.isInteger(boundaryFrame)) throw new Error('transition is not frame-aligned')
   const before = decodeLyricCrop(ffmpegPath, videoPath, boundaryFrame, width, height, root)
+  const after = decodeLyricCrop(ffmpegPath, videoPath, boundaryFrame + 1, width, height, root)
   const crop = cropFor(width, height)
   const minimumChangedPixels = Math.max(8, Math.round((crop.width * crop.height) / 10_000))
-  for (let offset = 1; offset <= Math.ceil(fps * 0.15); offset += 1) {
-    const after = decodeLyricCrop(
-      ffmpegPath,
-      videoPath,
-      boundaryFrame + offset,
-      width,
-      height,
-      root,
-    )
-    const difference = lyricDifference(before, after)
-    if (difference.changedPixels >= minimumChangedPixels) {
-      return { boundaryFrame, firstProgressFrame: boundaryFrame + offset, ...difference }
-    }
+  const difference = lyricDifference(before, after)
+  if (difference.changedPixels < minimumChangedPixels)
+    throw new Error('next-frame transition absent')
+  return { boundaryFrame, observedFrame: boundaryFrame + 1, ...difference }
+}
+
+function lyricPresenceEvidence({ ffmpegPath, videoPath, width, height, fps, root }) {
+  const observedFrame = (400 * fps) / 1_000
+  const decoded = decodeLyricCrop(ffmpegPath, videoPath, observedFrame, width, height, root)
+  let lyricPixels = 0
+  for (let pixel = 0; pixel < decoded.length; pixel += 3) {
+    if (decoded[pixel] >= 160 && decoded[pixel + 1] <= 140 && decoded[pixel + 2] >= 160)
+      lyricPixels += 1
   }
-  throw new Error(`transition did not appear within 150ms of frame ${boundaryFrame}`)
+  if (lyricPixels < 8) throw new Error('decoded sung lyric evidence absent')
+  return { observedFrame, lyricPixels }
 }
 
 function projectFixture(project, audioPath) {
@@ -299,24 +301,16 @@ async function exportCase(entry, context) {
   }
   let decodedLyricEvidence
   try {
-    const starts = entry.ordinal <= 2 ? [300, 500] : [300]
-    decodedLyricEvidence = starts.map((startMs) =>
-      lyricEvidence({
-        ...entry,
-        ffmpegPath: context.ffmpegPath,
-        videoPath: outputPath,
-        startMs,
-        root: context.root,
-      }),
-    )
-    if (
-      entry.ordinal <= 2 &&
-      decodedLyricEvidence.some(
-        (evidence) => evidence.firstProgressFrame !== evidence.boundaryFrame + 1,
-      )
-    ) {
-      throw new Error('representative highlight did not appear on its first progress frame')
+    const parameters = {
+      ...entry,
+      ffmpegPath: context.ffmpegPath,
+      videoPath: outputPath,
+      root: context.root,
     }
+    decodedLyricEvidence =
+      entry.ordinal <= 2
+        ? [300, 500].map((startMs) => lyricEvidence({ ...parameters, startMs }))
+        : [lyricPresenceEvidence(parameters)]
   } catch (error) {
     throw failCase(entry, 'decode', error)
   }

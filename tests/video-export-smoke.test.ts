@@ -25,12 +25,15 @@ function manifest() {
       codecs: { audio: 'aac', video: 'h264' },
       streamStarts: { audioSeconds: 0, videoSeconds: 0 },
       durationSeconds: 1,
-      decodedLyricEvidence: Array.from({ length: index < 2 ? 2 : 1 }, () => ({
-        boundaryFrame: entry.fps === 30 ? 9 : 18,
-        firstProgressFrame: entry.fps === 30 ? 10 : 19,
-        changedPixels: 12,
-        totalDifference: 400,
-      })),
+      decodedLyricEvidence:
+        index < 2
+          ? Array.from({ length: 2 }, () => ({
+              boundaryFrame: entry.fps === 30 ? 9 : 18,
+              observedFrame: entry.fps === 30 ? 10 : 19,
+              changedPixels: 12,
+              totalDifference: 400,
+            }))
+          : [{ observedFrame: entry.fps === 30 ? 12 : 24, lyricPixels: 12 }],
       bytes: 1_024,
       sha256: 'a'.repeat(64),
     })),

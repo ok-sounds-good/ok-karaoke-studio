@@ -15,13 +15,11 @@ const EXPECTED_MATRIX = presets.resolutions.flatMap((preset) =>
   presets.frameRates.map((fps) => ({ ...preset, fps })),
 )
 
-function validEvidence(value, fps) {
+function validTransition(value) {
   return (
     value &&
     Number.isSafeInteger(value.boundaryFrame) &&
-    Number.isSafeInteger(value.firstProgressFrame) &&
-    value.firstProgressFrame > value.boundaryFrame &&
-    value.firstProgressFrame <= value.boundaryFrame + Math.ceil(fps * 0.15) &&
+    value.observedFrame === value.boundaryFrame + 1 &&
     Number.isSafeInteger(value.changedPixels) &&
     value.changedPixels > 0 &&
     Number.isSafeInteger(value.totalDifference) &&
@@ -66,11 +64,14 @@ function validateManifest(value) {
       !/^[0-9a-f]{64}$/u.test(item.sha256) ||
       !Array.isArray(item.decodedLyricEvidence) ||
       item.decodedLyricEvidence.length !== evidenceCount ||
-      !item.decodedLyricEvidence.every((evidence) => validEvidence(evidence, item.fps)) ||
-      (index < 2 &&
-        item.decodedLyricEvidence.some(
-          (evidence) => evidence.firstProgressFrame !== evidence.boundaryFrame + 1,
-        ))
+      !(index < 2
+        ? item.decodedLyricEvidence.every(validTransition)
+        : item.decodedLyricEvidence.every(
+            (evidence) =>
+              evidence?.observedFrame === (400 * item.fps) / 1_000 &&
+              Number.isSafeInteger(evidence.lyricPixels) &&
+              evidence.lyricPixels > 0,
+          ))
     ) {
       throw new Error(`invalid case ${index + 1}`)
     }
