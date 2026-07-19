@@ -14,7 +14,6 @@ const MAX_CAPTURE_BYTES = 64 * 1_024
 const EXPECTED_MATRIX = presets.resolutions.flatMap((preset) =>
   presets.frameRates.map((fps) => ({ ...preset, fps })),
 )
-
 function validTransition(value) {
   return (
     value &&

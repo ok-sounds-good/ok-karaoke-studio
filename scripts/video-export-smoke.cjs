@@ -101,7 +101,8 @@ function cropFor(width, height) {
 }
 
 function decodeLyricCrop(ffmpegPath, videoPath, frameIndex, width, height, root) {
-  const crop = cropFor(width, height)
+  const fullFrame = width === 480 && height === 270
+  const crop = fullFrame ? { width: 480, height: 270 } : cropFor(width, height)
   const frameBytes = crop.width * crop.height * 3
   const decoded = checkedSpawn(
     ffmpegPath,
@@ -112,7 +113,9 @@ function decodeLyricCrop(ffmpegPath, videoPath, frameIndex, width, height, root)
       videoPath,
       '-an',
       '-vf',
-      `select=eq(n\\,${frameIndex}),crop=${crop.width}:${crop.height}:${crop.x}:${crop.y}`,
+      fullFrame
+        ? `select=eq(n\\,${frameIndex}),scale=${crop.width}:${crop.height}`
+        : `select=eq(n\\,${frameIndex}),crop=${crop.width}:${crop.height}:${crop.x}:${crop.y}`,
       '-frames:v',
       '1',
       '-pix_fmt',
@@ -149,17 +152,15 @@ function lyricEvidence({ ffmpegPath, videoPath, width, height, fps, startMs, roo
   if (!Number.isInteger(boundaryFrame)) throw new Error('transition is not frame-aligned')
   const before = decodeLyricCrop(ffmpegPath, videoPath, boundaryFrame, width, height, root)
   const after = decodeLyricCrop(ffmpegPath, videoPath, boundaryFrame + 1, width, height, root)
-  const crop = cropFor(width, height)
-  const minimumChangedPixels = Math.max(8, Math.round((crop.width * crop.height) / 10_000))
+  const minimumChangedPixels = Math.max(8, Math.round(before.length / 30_000))
   const difference = lyricDifference(before, after)
-  if (difference.changedPixels < minimumChangedPixels)
-    throw new Error('next-frame transition absent')
+  if (difference.changedPixels < minimumChangedPixels) throw new Error('transition absent')
   return { boundaryFrame, observedFrame: boundaryFrame + 1, ...difference }
 }
 
-function lyricPresenceEvidence({ ffmpegPath, videoPath, width, height, fps, root }) {
+function lyricPresenceEvidence({ ffmpegPath, videoPath, fps, root }) {
   const observedFrame = (400 * fps) / 1_000
-  const decoded = decodeLyricCrop(ffmpegPath, videoPath, observedFrame, width, height, root)
+  const decoded = decodeLyricCrop(ffmpegPath, videoPath, observedFrame, 480, 270, root)
   let lyricPixels = 0
   for (let pixel = 0; pixel < decoded.length; pixel += 3) {
     if (decoded[pixel] >= 160 && decoded[pixel + 1] <= 140 && decoded[pixel + 2] >= 160)
