@@ -15,11 +15,13 @@ import { KaraokePreview } from '../src/components/KaraokePreview'
 import { LyricsPanel } from '../src/components/LyricsPanel'
 import {
   buildTimelineTrackLayout,
-  createTimelineGestureSession,
   timelineTime,
   timelineWordIdsInRect,
+} from '../src/components/timeline-geometry'
+import {
+  createTimelineGestureSession,
   timingDraftForGesture,
-} from '../src/components/Timeline'
+} from '../src/components/timeline-gestures'
 import { WorkflowGuideDialog } from '../src/components/Dialogs'
 import { TopBar } from '../src/components/TopBar'
 import {
