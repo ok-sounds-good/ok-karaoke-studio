@@ -1,4 +1,4 @@
-function countSungPixels(decoded, dominance = 30) {
+function countSungPixels(decoded, dominance = 10) {
   let lyricPixels = 0
   for (let pixel = 0; pixel < decoded.length; pixel += 3) {
     const [r, g, b] = decoded.subarray(pixel, pixel + 3)

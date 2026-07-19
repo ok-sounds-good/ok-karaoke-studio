@@ -42,7 +42,7 @@ describe('video export smoke launcher', () => {
   it('distinguishes decoded sung magenta from blank grayscale samples', () => {
     expect(countSungPixels(Buffer.alloc(30, 110))).toBe(0)
     expect(countSungPixels(Buffer.from([130, 80, 140, 99, 0, 140]))).toBe(1)
-    expect(countSungPixels(Buffer.from([110, 110, 110]), 0)).toBe(1)
+    expect(countSungPixels(Buffer.from([193, 187, 199]))).toBe(0)
   })
   it('derives the exact resolution-major, fps-minor 14-case matrix', () => {
     expect(launcher.EXPECTED_MATRIX.map(({ value, fps }) => `${value}/${fps}`)).toEqual([
