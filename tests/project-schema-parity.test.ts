@@ -3,12 +3,18 @@ import { createRequire } from 'node:module'
 import { describe, expect, it } from 'vitest'
 
 import {
+  decodeProject,
   MAX_PROJECT_TRACKS,
   parseProject,
   serializeProject,
   UNSUPPORTED_PROJECT_FORMAT_ERROR,
   type KaraokeProject,
 } from '../src/lib/karaoke'
+import {
+  decodeProject as decodeCurrentV0Project,
+  parseProject as parseCurrentV0Project,
+  serializeProject as serializeCurrentV0Project,
+} from '../src/lib/project-codec'
 
 const require = createRequire(import.meta.url)
 const projectSchema = require('../electron/project-schema.cjs') as {
@@ -89,6 +95,13 @@ function parity(json: string, accepted: boolean) {
 }
 
 describe('current project schema parity', () => {
+  it('exposes one codec implementation through the karaoke compatibility facade', () => {
+    expect(decodeProject).toBe(decodeCurrentV0Project)
+    expect(parseProject).toBe(parseCurrentV0Project)
+    expect(serializeProject).toBe(serializeCurrentV0Project)
+    expect(decodeCurrentV0Project(golden())).toStrictEqual(golden())
+  })
+
   it('deeply round-trips the independent current-v0 golden project in all three decoders', () => {
     const outcomes = parity(GOLDEN_JSON, true)
     const expected = golden()
