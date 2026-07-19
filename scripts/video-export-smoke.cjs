@@ -190,8 +190,8 @@ function projectFixture(project, audioPath) {
         startMs: 500,
         endMs: 1_000,
         words: [
-          { id: 'smoke-word-1', text: 'Smoke', startMs: 500, endMs: 700 },
-          { id: 'smoke-word-2', text: 'test', startMs: 700, endMs: 900 },
+          { id: 'smoke-word-1', text: 'Smoke', startMs: 500, endMs: 533 },
+          { id: 'smoke-word-2', text: 'test', startMs: 700, endMs: 733 },
         ],
       },
     ],
