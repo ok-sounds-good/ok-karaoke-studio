@@ -160,6 +160,36 @@ jobs:
             bun run test:video
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - run:
+          name: Build unsigned Windows x64 package
+          command: |
+            $signingVariables = @("CSC_LINK", "CSC_KEY_PASSWORD", "WIN_CSC_LINK", "WIN_CSC_KEY_PASSWORD")
+            foreach ($name in $signingVariables) {
+              if (Test-Path "Env:$name") { Remove-Item "Env:$name" }
+            }
+            bun run dist:win
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - run:
+          name: Validate Windows x64 package inventory
+          command: |
+            choco install 7zip --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            node scripts/windows-package-evidence.cjs
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - store_artifacts:
+          path: release/win-unpacked
+          destination: windows-x64-unpacked
+
+      - store_artifacts:
+          path: release/windows-x64-installer
+          destination: windows-x64-installer
+
+      - store_artifacts:
+          path: release/windows-package-evidence.json
+          destination: windows-package-evidence.json
+
 workflows:
   ci:
     when: >-

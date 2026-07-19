@@ -322,7 +322,8 @@ Karaoke Studio identity.
   Windows acceptance run produces both an unsigned NSIS installer and the
   unpacked application, launch-smokes the packaged application, and runs the
   applicable font, visual, project, and H.264/AAC media gates. Routine
-  pull-request CI does not repeat this final-candidate package proof. Windows
+  pull-request CI builds and inventories the unsigned artifacts but does not
+  launch or repeat this broader final-candidate package proof. Windows
   signing and automatic updates remain deferred.
 - The portable Linux gate and thin macOS and Windows compatibility gates must
   pass for the final candidate. Linux packaging and Linux-specific media

@@ -28,7 +28,8 @@
     "test:watch": "vitest",
     "test:video": "node scripts/video-export-smoke-launcher.cjs",
     "dist": "bun run build && electron-builder",
-    "dist:dir": "bun run build && electron-builder --dir"
+    "dist:dir": "bun run build && electron-builder --dir",
+    "dist:win": "bun run build && electron-builder --win nsis --x64 --publish never"
   },
   "dependencies": {
     "lucide-react": "1.24.0",
@@ -36,6 +37,7 @@
     "react-dom": "19.2.7"
   },
   "devDependencies": {
+    "@electron/asar": "3.4.1",
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.3",
@@ -53,6 +55,7 @@
   "build": {
     "appId": "studio.okay.karaoke",
     "productName": "Okay Karaoke Studio",
+    "asar": true,
     "files": [
       "dist/**/*",
       "electron/**/*",
@@ -80,6 +83,22 @@
         "dmg",
         "zip"
       ]
+    },
+    "win": {
+      "icon": "build/icon.png",
+      "artifactName": "Okay-Karaoke-Studio-${version}-${arch}-setup.${ext}",
+      "forceCodeSigning": false,
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": true
     },
     "dmg": {
       "title": "Okay Karaoke Studio"

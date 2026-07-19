@@ -27,6 +27,18 @@ bun run dev
 
 `bun run dev` opens the desktop app.
 
+## Build the unsigned Windows package
+
+On Windows x64, `bun run dist:win` creates an unsigned NSIS installer named
+`Okay-Karaoke-Studio-<version>-x64-setup.exe` and a `release/win-unpacked`
+application. The command never publishes an artifact. CircleCI validates the
+actual PE architecture, installer payload, packaged-file inventory, and bounded
+artifact sizes before retaining both outputs.
+
+FFmpeg and FFprobe are not included in either artifact. MP4 export continues to
+use the separately installed executable described above; packaging does not
+change the external-FFmpeg or licensing policy.
+
 ## Start a project
 
 When the Studio opens, start a new project or choose **Open project** to reopen
