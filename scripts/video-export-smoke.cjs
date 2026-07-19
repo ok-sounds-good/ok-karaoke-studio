@@ -180,7 +180,7 @@ function projectFixture(project, audioPath) {
   })
   Object.assign(project.stageStyle.background, { mode: 'gradient', imagePath: null })
   project.stageStyle.stageFrame.enabled = false
-  project.stageStyle.lyrics.sungColor = '#FF00FF'
+  Object.assign(project.stageStyle.lyrics, { sizePx: 180, sungColor: '#FF00FF' })
   Object.assign(project.tracks[0], {
     id: 'smoke-track',
     lines: [
