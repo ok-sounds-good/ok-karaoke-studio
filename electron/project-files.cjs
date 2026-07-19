@@ -43,19 +43,19 @@ async function readUtf8FileWithinLimit(filePath, maxBytes, label) {
   }
 }
 
-async function existingFileMode(filePath) {
+async function existingFileMode(filePath, statFile = fs.stat) {
   try {
-    return (await fs.stat(filePath)).mode & 0o777
+    return (await statFile(filePath)).mode & 0o777
   } catch (error) {
     if (isErrnoException(error, 'ENOENT')) return 0o666
     throw error
   }
 }
 
-async function syncDirectoryBestEffort(directoryPath) {
+async function syncDirectoryBestEffort(directoryPath, openFile = fs.open) {
   let handle
   try {
-    handle = await fs.open(directoryPath, 'r')
+    handle = await openFile(directoryPath, 'r')
     await handle.sync()
   } catch {
     // Some platforms/filesystems do not support fsync on directory handles.
@@ -64,29 +64,36 @@ async function syncDirectoryBestEffort(directoryPath) {
   }
 }
 
-async function writeUtf8FileAtomically(filePath, contents) {
+async function writeUtf8FileAtomically(filePath, contents, dependencies = {}) {
+  const {
+    createId = randomUUID,
+    openFile = fs.open,
+    renameFile = fs.rename,
+    statFile = fs.stat,
+    unlinkFile = fs.unlink,
+  } = dependencies
   const directoryPath = path.dirname(filePath)
   const temporaryPath = path.join(
     directoryPath,
-    `.okay-karaoke-save-${process.pid}-${randomUUID()}.tmp`,
+    `.okay-karaoke-save-${process.pid}-${createId()}.tmp`,
   )
-  const mode = await existingFileMode(filePath)
+  const mode = await existingFileMode(filePath, statFile)
   let handle
   let temporaryFileCreated = false
 
   try {
-    handle = await fs.open(temporaryPath, 'wx', mode)
+    handle = await openFile(temporaryPath, 'wx', mode)
     temporaryFileCreated = true
     await handle.writeFile(contents, 'utf8')
     await handle.sync()
     await handle.close()
     handle = undefined
-    await fs.rename(temporaryPath, filePath)
+    await renameFile(temporaryPath, filePath)
     temporaryFileCreated = false
-    await syncDirectoryBestEffort(directoryPath)
+    await syncDirectoryBestEffort(directoryPath, openFile)
   } catch (error) {
     await handle?.close().catch(() => {})
-    if (temporaryFileCreated) await fs.unlink(temporaryPath).catch(() => {})
+    if (temporaryFileCreated) await unlinkFile(temporaryPath).catch(() => {})
     throw error
   }
 }

@@ -26,6 +26,10 @@ const CHANNELS = Object.freeze({
   windowCloseRequest: 'studio:window-close-request',
   getPendingWindowClose: 'studio:get-pending-window-close',
   resolveWindowClose: 'studio:resolve-window-close',
+  listStyleTemplates: 'studio:list-style-templates',
+  createStyleTemplate: 'studio:create-style-template',
+  renameStyleTemplate: 'studio:rename-style-template',
+  deleteStyleTemplate: 'studio:delete-style-template',
 })
 
 const MENU_ACTIONS = new Set([
@@ -62,7 +66,105 @@ function normalizeWindowCloseRequest(value) {
   return Object.freeze({ requestId: value.requestId, action: value.action })
 }
 
+function exactRecord(value, keys) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const actual = Object.keys(value)
+  return actual.length === keys.length && keys.every((key) => Object.hasOwn(value, key))
+}
+
+function normalizeStyleTemplate(value) {
+  if (!exactRecord(value, ['id', 'name', 'preferences'])) return null
+  if (typeof value.id !== 'string' || !/^[\x21-\x7e]{1,128}$/u.test(value.id)) return null
+  if (
+    typeof value.name !== 'string' ||
+    value.name.length < 1 ||
+    value.name.length > 80 ||
+    value.name !== value.name.trim().replace(/\s+/gu, ' ')
+  ) {
+    return null
+  }
+  if (
+    !exactRecord(value.preferences, [
+      'stageStyle',
+      'lyricDisplay',
+      'vocalStyle',
+      'videoExportDefaults',
+    ])
+  ) {
+    return null
+  }
+  return value
+}
+
+function requireStyleTemplate(value, operation) {
+  const template = normalizeStyleTemplate(value)
+  if (!template) throw new TypeError(`${operation} returned an invalid style template.`)
+  return template
+}
+
+function requireStyleTemplateList(value) {
+  if (!Array.isArray(value) || value.length > 100) {
+    throw new TypeError('listStyleTemplates returned an invalid style template list.')
+  }
+  return value.map((template) => requireStyleTemplate(template, 'listStyleTemplates'))
+}
+
+function requireStyleTemplateCreateRequest(value) {
+  if (
+    !exactRecord(value, ['name', 'preferences']) ||
+    typeof value.name !== 'string' ||
+    !exactRecord(value.preferences, [
+      'stageStyle',
+      'lyricDisplay',
+      'vocalStyle',
+      'videoExportDefaults',
+    ])
+  ) {
+    throw new TypeError('createStyleTemplate requires valid name and preferences values.')
+  }
+  return { name: value.name, preferences: value.preferences }
+}
+
+function requireStyleTemplateId(value, operation) {
+  if (typeof value !== 'string' || !/^[\x21-\x7e]{1,128}$/u.test(value)) {
+    throw new TypeError(`${operation} requires a valid style template id.`)
+  }
+  return value
+}
+
+function requireStyleTemplateName(value, operation) {
+  if (typeof value !== 'string') {
+    throw new TypeError(`${operation} requires a style template name.`)
+  }
+  return value
+}
+
 const studio = Object.freeze({
+  listStyleTemplates: async () =>
+    requireStyleTemplateList(await ipcRenderer.invoke(CHANNELS.listStyleTemplates)),
+  createStyleTemplate: async (options) =>
+    requireStyleTemplate(
+      await ipcRenderer.invoke(
+        CHANNELS.createStyleTemplate,
+        requireStyleTemplateCreateRequest(options),
+      ),
+      'createStyleTemplate',
+    ),
+  renameStyleTemplate: async (id, name) =>
+    requireStyleTemplate(
+      await ipcRenderer.invoke(CHANNELS.renameStyleTemplate, {
+        id: requireStyleTemplateId(id, 'renameStyleTemplate'),
+        name: requireStyleTemplateName(name, 'renameStyleTemplate'),
+      }),
+      'renameStyleTemplate',
+    ),
+  deleteStyleTemplate: async (id) => {
+    const deleted = await ipcRenderer.invoke(CHANNELS.deleteStyleTemplate, {
+      id: requireStyleTemplateId(id, 'deleteStyleTemplate'),
+    })
+    if (deleted !== true) throw new TypeError('deleteStyleTemplate returned an invalid result.')
+    return true
+  },
   openProject: () => ipcRenderer.invoke(CHANNELS.openProject),
   settleProjectOpen: async (requestId, accepted) =>
     (await ipcRenderer.invoke(CHANNELS.settleProjectOpen, { requestId, accepted })) === true,
