@@ -234,6 +234,7 @@ describe('offscreen video frame presentation', () => {
   it('waits for the requested Windows paint token and crops it from the JPEG', async () => {
     expect(videoExport.MAX_VIDEO_FRAMES).toBeLessThan(2 ** FRAME_MARKER_BITS)
     const frames: Buffer[] = []
+    const order: string[] = []
     let destroyed = false
     const contents = new EventEmitter() as FakeWebContents
     const image = (sequence: number, label: string) => {
@@ -259,13 +260,23 @@ describe('offscreen video frame presentation', () => {
         toBitmap: () => bitmap,
       }
     }
-    contents.executeJavaScript = vi.fn(async () => true)
+    contents.executeJavaScript = vi.fn(async (source: string) => {
+      if (isAssetInvocation(source)) return { fontFallbacks: [] }
+      expect(contents.listenerCount('paint')).toBe(1)
+      order.push('update')
+      contents.emit('paint', {}, {}, image(1, 'current'))
+      expect(frames).toEqual([])
+      expect(contents.stopPainting).toHaveBeenCalledTimes(1)
+      await Promise.resolve()
+      order.push('update-complete')
+      return true
+    })
     contents.setFrameRate = vi.fn()
     contents.startPainting = vi.fn(() => {
+      order.push('start')
       contents.emit('paint', {}, {}, image(0, 'cached'))
-      queueMicrotask(() => contents.emit('paint', {}, {}, image(1, 'current')))
     })
-    contents.stopPainting = vi.fn()
+    contents.stopPainting = vi.fn(() => order.push('stop'))
 
     class FakeBrowserWindow implements FakeWindow {
       webContents = contents
@@ -298,6 +309,64 @@ describe('offscreen video frame presentation', () => {
     )
 
     expect(frames.map((frame) => frame.toString())).toEqual(['current'])
+    expect(order).toEqual(['stop', 'start', 'update', 'update-complete', 'stop'])
+    expect(contents.listenerCount('paint')).toBe(0)
+    expect(destroyed).toBe(true)
+  })
+
+  it('does not publish a matching Windows paint before the renderer update succeeds', async () => {
+    const width = 426 + FRAME_MARKER_BITS
+    const height = 240
+    const bitmap = Buffer.alloc(width * height * 4)
+    for (let y = 0; y < height; y += 1) {
+      bitmap.fill(255, (y * width + 426) * 4, (y * width + 427) * 4)
+    }
+    const currentImage = {
+      crop: () => ({
+        getSize: () => ({ width: 426, height }),
+        toJPEG: () => Buffer.from('must-not-publish'),
+      }),
+      getSize: () => ({ width, height }),
+      isEmpty: () => false,
+      toBitmap: () => bitmap,
+    }
+    let destroyed = false
+    const contents = new EventEmitter() as FakeWebContents
+    contents.executeJavaScript = vi.fn(async (source: string) => {
+      if (isAssetInvocation(source)) return { fontFallbacks: [] }
+      contents.emit('paint', {}, {}, currentImage)
+      throw new Error('renderer update failed')
+    })
+    contents.setFrameRate = vi.fn()
+    contents.startPainting = vi.fn()
+    contents.stopPainting = vi.fn()
+    const write = vi.fn(() => true)
+
+    class FakeBrowserWindow implements FakeWindow {
+      webContents = contents
+      loadURL = async () => {}
+      isDestroyed = () => destroyed
+      destroy = vi.fn(() => {
+        destroyed = true
+      })
+    }
+
+    await expect(
+      videoExport.renderVideoFrames(
+        FakeBrowserWindow,
+        project,
+        { times: [0] },
+        { destroyed: false, write },
+        videoExport.normalizeVideoSettings({ resolution: '240p', fps: 30 }),
+        runtime,
+        undefined,
+        undefined,
+        'win32',
+      ),
+    ).rejects.toThrow('renderer update failed')
+
+    expect(write).not.toHaveBeenCalled()
+    expect(contents.stopPainting).toHaveBeenCalledTimes(2)
     expect(contents.listenerCount('paint')).toBe(0)
     expect(destroyed).toBe(true)
   })
