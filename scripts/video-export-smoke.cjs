@@ -163,7 +163,7 @@ function lyricPresenceEvidence({ ffmpegPath, videoPath, fps, root }) {
   const observedFrame = (600 * fps) / 1_000
   const decoded = decodeLyricCrop(ffmpegPath, videoPath, observedFrame, 960, 540, root)
   const lyricPixels = countSungPixels(decoded)
-  if (lyricPixels < 8) throw new Error('decoded sung lyric evidence absent')
+  if (lyricPixels < 8) throw new Error(`decoded sung lyric evidence absent (${lyricPixels})`)
   return { observedFrame, lyricPixels }
 }
 
