@@ -69,6 +69,27 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
+function windowsMarkerImage(sequence: number, label: string) {
+  const width = 426 + FRAME_MARKER_BITS
+  const height = 240
+  const bitmap = Buffer.alloc(width * height * 4)
+  for (let bit = 0; bit < FRAME_MARKER_BITS; bit += 1) {
+    if (!(sequence & (2 ** bit))) continue
+    for (let y = 0; y < height; y += 1) {
+      bitmap.fill(255, (y * width + 426 + bit) * 4, (y * width + 427 + bit) * 4)
+    }
+  }
+  return {
+    crop: () => ({
+      getSize: () => ({ width: 426, height }),
+      toJPEG: () => Buffer.from(label),
+    }),
+    getSize: () => ({ width, height }),
+    isEmpty: () => false,
+    toBitmap: () => bitmap,
+  }
+}
+
 describe('offscreen video frame presentation', () => {
   it('encodes only the committed paint while stopped between frames', async () => {
     const order: string[] = []
@@ -315,21 +336,7 @@ describe('offscreen video frame presentation', () => {
   })
 
   it('does not publish a matching Windows paint before the renderer update succeeds', async () => {
-    const width = 426 + FRAME_MARKER_BITS
-    const height = 240
-    const bitmap = Buffer.alloc(width * height * 4)
-    for (let y = 0; y < height; y += 1) {
-      bitmap.fill(255, (y * width + 426) * 4, (y * width + 427) * 4)
-    }
-    const currentImage = {
-      crop: () => ({
-        getSize: () => ({ width: 426, height }),
-        toJPEG: () => Buffer.from('must-not-publish'),
-      }),
-      getSize: () => ({ width, height }),
-      isEmpty: () => false,
-      toBitmap: () => bitmap,
-    }
+    const currentImage = windowsMarkerImage(1, 'must-not-publish')
     let destroyed = false
     const contents = new EventEmitter() as FakeWebContents
     contents.executeJavaScript = vi.fn(async (source: string) => {
@@ -370,6 +377,78 @@ describe('offscreen video frame presentation', () => {
     expect(contents.listenerCount('paint')).toBe(0)
     expect(destroyed).toBe(true)
   })
+
+  it.each([
+    { mode: 'abort', expectedError: { name: 'AbortError' } },
+    { mode: 'timeout', expectedError: { message: 'Timed out while rendering a video frame' } },
+  ])(
+    'discards a buffered Windows paint on renderer $mode and ignores late completion',
+    async ({ mode, expectedError }) => {
+      if (mode === 'timeout') vi.useFakeTimers()
+      try {
+        const update = deferred<unknown>()
+        const updateStarted = deferred<void>()
+        const controller = new AbortController()
+        let destroyed = false
+        const currentImage = windowsMarkerImage(1, 'must-not-publish')
+        const contents = new EventEmitter() as FakeWebContents
+        contents.executeJavaScript = vi.fn((source: string) => {
+          if (isAssetInvocation(source)) return Promise.resolve({ fontFallbacks: [] })
+          contents.emit('paint', {}, {}, currentImage)
+          updateStarted.resolve()
+          return update.promise
+        })
+        contents.setFrameRate = vi.fn()
+        contents.startPainting = vi.fn()
+        contents.stopPainting = vi.fn()
+        const write = vi.fn(() => true)
+        const destroyWindow = vi.fn(() => {
+          destroyed = true
+        })
+
+        class FakeBrowserWindow implements FakeWindow {
+          webContents = contents
+          loadURL = async () => {}
+          isDestroyed = () => destroyed
+          destroy = destroyWindow
+        }
+
+        const rendering = videoExport.renderVideoFrames(
+          FakeBrowserWindow,
+          project,
+          { times: [0] },
+          { destroyed: false, write },
+          videoExport.normalizeVideoSettings({ resolution: '240p', fps: 30 }),
+          runtime,
+          undefined,
+          controller.signal,
+          'win32',
+        )
+        await updateStarted.promise
+        const rejection = expect(rendering).rejects.toMatchObject(expectedError)
+        if (mode === 'abort') controller.abort()
+        else await vi.advanceTimersByTimeAsync(10_000)
+        await rejection
+
+        expect(write).not.toHaveBeenCalled()
+        expect(contents.startPainting).toHaveBeenCalledTimes(1)
+        expect(contents.stopPainting).toHaveBeenCalledTimes(2)
+        expect(contents.listenerCount('paint')).toBe(0)
+        expect(destroyWindow).toHaveBeenCalledTimes(1)
+
+        contents.emit('paint', {}, {}, currentImage)
+        update.resolve(true)
+        await Promise.resolve()
+        await Promise.resolve()
+        controller.abort()
+        expect(write).not.toHaveBeenCalled()
+        expect(contents.stopPainting).toHaveBeenCalledTimes(2)
+        expect(destroyWindow).toHaveBeenCalledTimes(1)
+      } finally {
+        vi.useRealTimers()
+      }
+    },
+  )
 
   it('aborts a pending renderer update and ignores its late completion', async () => {
     const update = deferred<unknown>()
