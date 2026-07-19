@@ -376,6 +376,11 @@ function presentRequestedFrame(contents, update, settings, signal, expectedSeque
     let settled = false
     let updateCompleted = false
     let pendingFrame = null
+    let paintCount = 0
+    let emptyPaintCount = 0
+    let unreadablePaintCount = 0
+    let lastObservedSequence = null
+    let lastImageSize = null
     const cleanup = () => {
       clearTimeout(timeout)
       contents.off('paint', onPaint)
@@ -407,13 +412,31 @@ function presentRequestedFrame(contents, update, settings, signal, expectedSeque
       else resolve(frame)
     }
     const timeout = setTimeout(() => {
-      fail(new Error('Timed out while rendering a video frame'))
+      const correlation =
+        expectedSequence === null
+          ? ''
+          : ` (expected=${expectedSequence}; update=${updateCompleted ? 'complete' : 'pending'}; paints=${paintCount}; empty=${emptyPaintCount}; unreadable=${unreadablePaintCount}; last=${lastObservedSequence ?? 'none'}; size=${lastImageSize ?? 'none'})`
+      fail(new Error(`Timed out while rendering a video frame${correlation}`))
     }, 10_000)
     const onPaint = (_event, _dirtyRect, image) => {
-      if (settled || image.isEmpty()) return
+      if (settled) return
+      paintCount += 1
+      if (image.isEmpty()) {
+        emptyPaintCount += 1
+        return
+      }
       try {
-        if (expectedSequence !== null && paintedFrameSequence(image, settings) !== expectedSequence)
-          return
+        if (expectedSequence !== null) {
+          const size = image.getSize()
+          lastImageSize =
+            Number.isSafeInteger(size.width) && Number.isSafeInteger(size.height)
+              ? `${size.width}x${size.height}`
+              : 'invalid'
+          const observedSequence = paintedFrameSequence(image, settings)
+          if (observedSequence === null) unreadablePaintCount += 1
+          else lastObservedSequence = observedSequence
+          if (observedSequence !== expectedSequence) return
+        }
         const frame = encodeJpegFrame(image, settings, expectedSequence !== null)
         if (!updateCompleted) pendingFrame = frame
         else finish(frame)
