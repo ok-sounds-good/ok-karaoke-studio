@@ -44,7 +44,7 @@ function validateManifest(value) {
       item.observedDimensions?.height !== expected.height ||
       item.codecs?.video !== 'h264' ||
       item.codecs?.audio !== 'aac' ||
-      item.rationalRate?.average !== String(expected.fps) + '/1' ||
+      item.rationalRate?.frames !== expected.fps ||
       item.rationalRate?.rendered !== String(expected.fps) + '/1' ||
       !Number.isFinite(item.streamStarts?.videoSeconds) ||
       !Number.isFinite(item.streamStarts?.audioSeconds) ||

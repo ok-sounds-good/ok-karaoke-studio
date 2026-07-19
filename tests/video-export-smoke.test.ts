@@ -20,7 +20,7 @@ function manifest() {
       preset: entry.value,
       fps: entry.fps,
       observedDimensions: { width: entry.width, height: entry.height },
-      rationalRate: { average: `${entry.fps}/1`, rendered: `${entry.fps}/1` },
+      rationalRate: { frames: entry.fps, rendered: `${entry.fps}/1` },
       codecs: { audio: 'aac', video: 'h264' },
       streamStarts: { audioSeconds: 0, videoSeconds: 0 },
       durationSeconds: 1,

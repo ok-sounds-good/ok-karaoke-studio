@@ -78,16 +78,8 @@ function checkedSpawn(executable, args, options, label, root) {
 
 function rationalValue(value) {
   const [numerator, denominator = '1'] = String(value).split('/')
-  const numeratorValue = Number(numerator)
-  const denominatorValue = Number(denominator)
-  if (
-    !Number.isFinite(numeratorValue) ||
-    !Number.isFinite(denominatorValue) ||
-    denominatorValue === 0
-  ) {
-    return Number.NaN
-  }
-  return numeratorValue / denominatorValue
+  const result = Number(numerator) / Number(denominator)
+  return Number.isFinite(result) ? result : Number.NaN
 }
 
 function cropFor(width, height) {
@@ -155,8 +147,15 @@ function lyricEvidence({ ffmpegPath, videoPath, fps, startMs, root }) {
   const after = decodeLyricCrop(ffmpegPath, videoPath, boundaryFrame + 1, 960, 540, root)
   const minimumChangedPixels = Math.max(8, Math.round(before.length / 30_000))
   const difference = lyricDifference(before, after)
-  if (difference.changedPixels < minimumChangedPixels)
-    throw new Error(`transition absent (${difference.changedPixels}/${minimumChangedPixels})`)
+  if (difference.changedPixels < minimumChangedPixels) {
+    const next = lyricDifference(
+      before,
+      decodeLyricCrop(ffmpegPath, videoPath, boundaryFrame + 2, 960, 540, root),
+    )
+    throw new Error(
+      `transition absent (${difference.changedPixels}/${minimumChangedPixels}; next=${next.changedPixels})`,
+    )
+  }
   return { boundaryFrame, observedFrame: boundaryFrame + 1, ...difference }
 }
 
@@ -218,7 +217,8 @@ async function probeCase(entry, ffmpegPath, outputPath, root) {
       '-v',
       'error',
       '-show_entries',
-      'format=duration,start_time:stream=codec_type,codec_name,width,height,r_frame_rate,avg_frame_rate,start_time',
+      'format=duration,start_time:stream=codec_type,codec_name,width,height,r_frame_rate,avg_frame_rate,start_time,nb_read_frames',
+      '-count_frames',
       '-of',
       'json',
       outputPath,
@@ -237,7 +237,7 @@ async function probeCase(entry, ffmpegPath, outputPath, root) {
   const videoStartSeconds = Number(video?.start_time)
   const audioStartSeconds = Number(audio?.start_time)
   const renderedRate = rationalValue(video?.r_frame_rate)
-  const averageRate = rationalValue(video?.avg_frame_rate)
+  const observedFrameCount = Number(video?.nb_read_frames)
   if (
     streams.length !== 2 ||
     videos.length !== 1 ||
@@ -247,9 +247,8 @@ async function probeCase(entry, ffmpegPath, outputPath, root) {
     video.width !== entry.width ||
     video.height !== entry.height ||
     !Number.isFinite(renderedRate) ||
-    !Number.isFinite(averageRate) ||
     Math.abs(renderedRate - entry.fps) > 0.001 ||
-    Math.abs(averageRate - entry.fps) > 0.001 ||
+    observedFrameCount !== (FIXTURE_DURATION_MS * entry.fps) / 1_000 ||
     !Number.isFinite(videoStartSeconds) ||
     !Number.isFinite(audioStartSeconds) ||
     Math.abs(videoStartSeconds) > 0.001 ||
@@ -262,7 +261,11 @@ async function probeCase(entry, ffmpegPath, outputPath, root) {
   }
   return {
     observedDimensions: { width: video.width, height: video.height },
-    rationalRate: { average: video.avg_frame_rate, rendered: video.r_frame_rate },
+    rationalRate: {
+      average: video.avg_frame_rate,
+      frames: observedFrameCount,
+      rendered: video.r_frame_rate,
+    },
     codecs: { audio: audio.codec_name, video: video.codec_name },
     streamStarts: { audioSeconds: audioStartSeconds, videoSeconds: videoStartSeconds },
     durationSeconds,
@@ -317,8 +320,7 @@ async function exportCase(entry, context) {
     throw failCase(entry, 'decode', error)
   }
   const file = await fs.readFile(outputPath)
-  const expectedFrameCount = (FIXTURE_DURATION_MS * entry.fps) / 1_000
-  if (exported.frameCount !== expectedFrameCount || file.length < 1) {
+  if (exported.frameCount !== (FIXTURE_DURATION_MS * entry.fps) / 1_000 || file.length < 1) {
     throw failCase(entry, 'validate', new Error('export result or output size is invalid'))
   }
   return {
