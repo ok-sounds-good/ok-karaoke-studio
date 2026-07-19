@@ -155,7 +155,8 @@ function lyricEvidence({ ffmpegPath, videoPath, fps, startMs, root }) {
   const after = decodeLyricCrop(ffmpegPath, videoPath, boundaryFrame + 1, 960, 540, root)
   const minimumChangedPixels = Math.max(8, Math.round(before.length / 30_000))
   const difference = lyricDifference(before, after)
-  if (difference.changedPixels < minimumChangedPixels) throw new Error('transition absent')
+  if (difference.changedPixels < minimumChangedPixels)
+    throw new Error(`transition absent (${difference.changedPixels}/${minimumChangedPixels})`)
   return { boundaryFrame, observedFrame: boundaryFrame + 1, ...difference }
 }
 
@@ -257,7 +258,7 @@ async function probeCase(entry, ffmpegPath, outputPath, root) {
     !Number.isFinite(durationSeconds) ||
     Math.abs(durationSeconds - FIXTURE_DURATION_MS / 1_000) > 0.05
   ) {
-    throw new Error('observed stream contract does not match requested output')
+    throw new Error(`stream mismatch ${JSON.stringify(report)}`)
   }
   return {
     observedDimensions: { width: video.width, height: video.height },
