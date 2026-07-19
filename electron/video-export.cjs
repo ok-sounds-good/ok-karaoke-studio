@@ -447,10 +447,10 @@ function terminateChild(child) {
   return timeout
 }
 
-function runProcess(executable, args, { signal, inputWriter } = {}) {
+function runProcess(executable, args, { signal, inputWriter, spawnImpl = spawn } = {}) {
   throwIfAborted(signal)
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, args, {
+    const child = spawnImpl(executable, args, {
       shell: false,
       windowsHide: true,
       stdio: [inputWriter ? 'pipe' : 'ignore', 'ignore', 'pipe'],
@@ -496,8 +496,8 @@ function runProcess(executable, args, { signal, inputWriter } = {}) {
       signal?.removeEventListener?.('abort', onAbort)
       if (spawnError) reject(spawnError)
       else if (writerError?.name === 'AbortError' || signal?.aborted) reject(createAbortError())
-      else if (code === 0 && !writerError) resolve()
-      else if (code === 0) reject(writerError)
+      else if (writerError) reject(writerError)
+      else if (code === 0) resolve()
       else
         reject(
           new Error(
@@ -824,4 +824,5 @@ module.exports = {
   promoteVideoOutput,
   renderVideoFrames,
   renderDocument,
+  runProcess,
 }
