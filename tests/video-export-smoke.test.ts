@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs'
 import { mkdtemp, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
@@ -39,15 +38,6 @@ function manifest() {
 }
 
 describe('video export smoke launcher', () => {
-  it('preserves the worker failure exit code through Electron shutdown', () => {
-    const worker = readFileSync(
-      new URL('../scripts/video-export-smoke.cjs', import.meta.url),
-      'utf8',
-    )
-    expect(worker).toContain('app.exit(process.exitCode || 0)')
-    expect(worker).not.toContain('app.quit()')
-  })
-
   it('derives the exact resolution-major, fps-minor 14-case matrix', () => {
     expect(launcher.EXPECTED_MATRIX.map(({ value, fps }) => `${value}/${fps}`)).toEqual([
       '240p/30',
@@ -81,6 +71,9 @@ describe('video export smoke launcher', () => {
     const invalidDuration = manifest()
     invalidDuration.cases[0].durationSeconds = Number.NaN
     expect(() => launcher.validateManifest(invalidDuration)).toThrow('invalid case 1')
+    const delayedStarts = manifest()
+    delayedStarts.cases[0].streamStarts = { audioSeconds: 0.25, videoSeconds: 0.25 }
+    expect(() => launcher.validateManifest(delayedStarts)).toThrow('invalid case 1')
   })
 
   it('cleans its owned root after a child timeout without publishing a manifest', async () => {

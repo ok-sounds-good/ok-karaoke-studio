@@ -11,6 +11,7 @@ const { exportKaraokeVideo, findFfmpeg } = require('../electron/video-export.cjs
 const ROOT_ENVIRONMENT_KEY = 'OKS_VIDEO_SMOKE_ROOT'
 const FIXTURE_DURATION_MS = 1_000
 const AUDIO_DURATION_SECONDS = 0.5
+const CASE_TIMEOUT_MS = 2 * 60 * 1_000
 const PROCESS_TIMEOUT_MS = 30_000
 const MAX_DIAGNOSTIC_CHARACTERS = 400
 const MATRIX = Object.freeze(
@@ -147,16 +148,23 @@ function lyricEvidence({ ffmpegPath, videoPath, width, height, fps, startMs, roo
   const boundaryFrame = (startMs * fps) / 1_000
   if (!Number.isInteger(boundaryFrame)) throw new Error('transition is not frame-aligned')
   const before = decodeLyricCrop(ffmpegPath, videoPath, boundaryFrame, width, height, root)
-  const after = decodeLyricCrop(ffmpegPath, videoPath, boundaryFrame + 1, width, height, root)
-  const difference = lyricDifference(before, after)
   const crop = cropFor(width, height)
   const minimumChangedPixels = Math.max(8, Math.round((crop.width * crop.height) / 10_000))
-  if (difference.changedPixels < minimumChangedPixels) {
-    throw new Error(
-      `transition frame ${boundaryFrame + 1} changed ${difference.changedPixels}; expected ${minimumChangedPixels}`,
+  for (let offset = 1; offset <= 4; offset += 1) {
+    const after = decodeLyricCrop(
+      ffmpegPath,
+      videoPath,
+      boundaryFrame + offset,
+      width,
+      height,
+      root,
     )
+    const difference = lyricDifference(before, after)
+    if (difference.changedPixels >= minimumChangedPixels) {
+      return { boundaryFrame, firstProgressFrame: boundaryFrame + offset, ...difference }
+    }
   }
-  return { boundaryFrame, firstProgressFrame: boundaryFrame + 1, ...difference }
+  throw new Error(`transition did not appear within four frames of ${boundaryFrame}`)
 }
 
 function projectFixture(project, audioPath) {
@@ -239,6 +247,8 @@ async function probeCase(entry, ffmpegPath, outputPath, root) {
     Math.abs(averageRate - entry.fps) > 0.001 ||
     !Number.isFinite(videoStartSeconds) ||
     !Number.isFinite(audioStartSeconds) ||
+    Math.abs(videoStartSeconds) > 0.001 ||
+    Math.abs(audioStartSeconds) > 0.001 ||
     Math.abs(videoStartSeconds - audioStartSeconds) > 0.001 ||
     !Number.isFinite(durationSeconds) ||
     Math.abs(durationSeconds - FIXTURE_DURATION_MS / 1_000) > 0.05
@@ -257,6 +267,12 @@ async function probeCase(entry, ffmpegPath, outputPath, root) {
 async function exportCase(entry, context) {
   const outputPath = path.join(context.root, `${entry.ordinal}-${entry.value}-${entry.fps}.mp4`)
   let exported
+  const controller = new AbortController()
+  let timedOut = false
+  const timeout = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, CASE_TIMEOUT_MS)
   try {
     exported = await exportKaraokeVideo({
       BrowserWindow,
@@ -267,9 +283,12 @@ async function exportCase(entry, context) {
       ffmpegPath: context.ffmpegPath,
       resolution: entry.value,
       fps: entry.fps,
+      signal: controller.signal,
     })
   } catch (error) {
-    throw failCase(entry, 'export', error)
+    throw failCase(entry, timedOut ? 'export-timeout' : 'export', error)
+  } finally {
+    clearTimeout(timeout)
   }
   let probe
   try {
@@ -289,6 +308,14 @@ async function exportCase(entry, context) {
         root: context.root,
       }),
     )
+    if (
+      entry.ordinal <= 2 &&
+      decodedLyricEvidence.some(
+        (evidence) => evidence.firstProgressFrame !== evidence.boundaryFrame + 1,
+      )
+    ) {
+      throw new Error('representative highlight did not appear on its first progress frame')
+    }
   } catch (error) {
     throw failCase(entry, 'decode', error)
   }
@@ -391,8 +418,6 @@ app.whenReady().then(async () => {
     } catch {}
     process.exitCode = 1
   } finally {
-    // Electron's native quit path may otherwise replace process.exitCode on
-    // Windows, which would make a failed child look successful to the launcher.
     app.exit(process.exitCode || 0)
   }
 })

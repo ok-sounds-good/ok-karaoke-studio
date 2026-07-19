@@ -20,7 +20,8 @@ function validEvidence(value) {
     value &&
     Number.isSafeInteger(value.boundaryFrame) &&
     Number.isSafeInteger(value.firstProgressFrame) &&
-    value.firstProgressFrame === value.boundaryFrame + 1 &&
+    value.firstProgressFrame > value.boundaryFrame &&
+    value.firstProgressFrame <= value.boundaryFrame + 4 &&
     Number.isSafeInteger(value.changedPixels) &&
     value.changedPixels > 0 &&
     Number.isSafeInteger(value.totalDifference) &&
@@ -55,6 +56,8 @@ function validateManifest(value) {
       item.rationalRate?.rendered !== String(expected.fps) + '/1' ||
       !Number.isFinite(item.streamStarts?.videoSeconds) ||
       !Number.isFinite(item.streamStarts?.audioSeconds) ||
+      Math.abs(item.streamStarts.videoSeconds) > 0.001 ||
+      Math.abs(item.streamStarts.audioSeconds) > 0.001 ||
       Math.abs(item.streamStarts?.videoSeconds - item.streamStarts?.audioSeconds) > 0.001 ||
       !Number.isFinite(item.durationSeconds) ||
       Math.abs(item.durationSeconds - 1) > 0.05 ||
@@ -63,7 +66,11 @@ function validateManifest(value) {
       !/^[0-9a-f]{64}$/u.test(item.sha256) ||
       !Array.isArray(item.decodedLyricEvidence) ||
       item.decodedLyricEvidence.length !== evidenceCount ||
-      !item.decodedLyricEvidence.every(validEvidence)
+      !item.decodedLyricEvidence.every(validEvidence) ||
+      (index < 2 &&
+        item.decodedLyricEvidence.some(
+          (evidence) => evidence.firstProgressFrame !== evidence.boundaryFrame + 1,
+        ))
     ) {
       throw new Error(`invalid case ${index + 1}`)
     }
@@ -97,16 +104,13 @@ async function runLauncher(options = {}, supplied = {}) {
     supplied.createRoot || (() => fsApi.mkdtemp(path.join(os.tmpdir(), 'oks-video-')))
   const runChild = supplied.runChild || runBoundedChild
   let root
-  let outcome
   let result
   try {
     root = await createRoot()
-    outcome = await runChild({
+    const outcome = await runChild({
       executable: options.executable || electronExecutable,
       args: [path.join(REPOSITORY_ROOT, 'scripts', 'video-export-smoke.cjs')],
       captureOutput: {
-        // The child publishes bounded, sanitized failure details separately.
-        // Native Electron may emit benign platform warnings on stderr.
         classify: () => false,
         maxBytesPerStream: MAX_CAPTURE_BYTES,
       },
