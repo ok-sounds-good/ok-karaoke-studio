@@ -72,10 +72,11 @@ export function SyncCueStrip({ track, syncCursor, onEditLyrics }: SyncCueStripPr
 
       <footer className="sync-cue__help">
         <KeyboardKey>Space</KeyboardKey>
-        <span>
-          Press at each word onset. The next press closes the previous word; hold the final word of
-          a line to extend it.
-        </span>
+        <span>Tap or hold to time naturally.</span>
+        <KeyboardKey>→</KeyboardKey>
+        <span>Start the target word.</span>
+        <KeyboardKey>↓</KeyboardKey>
+        <span>End the active word.</span>
       </footer>
     </section>
   )

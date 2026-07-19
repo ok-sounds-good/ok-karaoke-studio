@@ -7,6 +7,7 @@ import type {
   VocalTrack,
 } from './lib/model'
 import {
+  clampTiming,
   createProject,
   exportAss,
   exportLrc,
@@ -356,7 +357,11 @@ export default function App() {
     startMs: number
     isLineFinal: boolean
     nextTimedStartMs: number | null
+    advanceOnRelease: boolean
   } | null>(null)
+  const syncSpaceHeldRef = useRef(false)
+  const syncExplicitlyEndedRef = useRef(new Set<string>())
+  const syncScopeRef = useRef<string | null>(null)
   const syncSessionHasCommitRef = useRef(false)
   const projectRestoreSequenceRef = useRef(0)
   const projectLifecycleSequenceRef = useRef(0)
@@ -380,6 +385,9 @@ export default function App() {
     (updater: KaraokeProject | ((project: KaraokeProject) => KaraokeProject)) => {
       if (projectMutationIsBlocked()) return
       syncHeldRef.current = null
+      syncSpaceHeldRef.current = false
+      syncExplicitlyEndedRef.current.clear()
+      syncScopeRef.current = null
       syncSessionHasCommitRef.current = false
       setSyncMode(false)
       commitHistory(updater)
@@ -543,6 +551,7 @@ export default function App() {
   const styleApplyBlockedReason =
     styleSession.applyBlockedReason ?? backgroundStyleSession.controls.applyBlockedReason
   const canApplyStyle = styleSession.canApply && !styleApplyBlockedReason
+
   useEffect(() => {
     if (!toast) return
     const timer = window.setTimeout(() => setToast(null), 3200)
@@ -787,6 +796,9 @@ export default function App() {
         setSelectedWordIds(new Set())
         setSyncMode(false)
         syncHeldRef.current = null
+        syncSpaceHeldRef.current = false
+        syncExplicitlyEndedRef.current.clear()
+        syncScopeRef.current = null
         syncSessionHasCommitRef.current = false
         playback.pause()
         playback.seek(0)
@@ -872,6 +884,9 @@ export default function App() {
       setSelectedWordIds(new Set())
       setSyncMode(false)
       syncHeldRef.current = null
+      syncSpaceHeldRef.current = false
+      syncExplicitlyEndedRef.current.clear()
+      syncScopeRef.current = null
       syncSessionHasCommitRef.current = false
       playback.pause()
       playback.seek(0)
@@ -1011,6 +1026,9 @@ export default function App() {
         })
         setSelectedWordIds(new Set())
         syncHeldRef.current = null
+        syncSpaceHeldRef.current = false
+        syncExplicitlyEndedRef.current.clear()
+        syncScopeRef.current = null
         syncSessionHasCommitRef.current = false
         setSyncMode(false)
         showToast(`Imported LRC into ${activeTrack.name}`, 'success')
@@ -1252,21 +1270,22 @@ export default function App() {
 
   const cancelHeldSync = useCallback(() => {
     syncHeldRef.current = null
+    syncSpaceHeldRef.current = false
+    syncExplicitlyEndedRef.current.clear()
+    syncScopeRef.current = null
   }, [])
 
   const applySyncMutation = useCallback(
     (updater: (current: KaraokeProject) => KaraokeProject) => {
       if (projectMutationIsBlocked()) return false
+      const next = updater(projectRef.current)
+      if (next === projectRef.current) return false
       if (syncSessionHasCommitRef.current) {
-        replaceCurrent(updater)
+        replaceCurrent(() => next)
         return true
       }
-      commitHistory((current) => {
-        const next = updater(current)
-        if (next === current) return current
-        syncSessionHasCommitRef.current = true
-        return next
-      })
+      syncSessionHasCommitRef.current = true
+      commitHistory(next)
       return true
     },
     [commitHistory, projectMutationIsBlocked, replaceCurrent],
@@ -1426,6 +1445,9 @@ export default function App() {
       return
     }
     syncSessionHasCommitRef.current = false
+    syncScopeRef.current = `${project.id}\0${activeTrack?.id ?? ''}\0${syncWords
+      .map((word) => word.id)
+      .join('\0')}`
     setSyncCursor(fromPlayhead)
     setSyncMode(true)
     playback.play()
@@ -1434,6 +1456,8 @@ export default function App() {
     cancelHeldSync,
     playback.getCurrentMs,
     playback.play,
+    activeTrack?.id,
+    project.id,
     project.offsetMs,
     showToast,
     syncMode,
@@ -1441,9 +1465,122 @@ export default function App() {
   ])
 
   useEffect(() => {
+    if (!syncMode) return
+    const timer = window.setTimeout(() => {
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [syncMode])
+
+  useEffect(() => {
+    if (!syncMode) return
+    const scope = `${project.id}\0${activeTrack?.id ?? ''}\0${syncWords
+      .map((word) => word.id)
+      .join('\0')}`
+    if (scope === syncScopeRef.current) return
+    cancelHeldSync()
+    syncSessionHasCommitRef.current = false
+    setSyncMode(false)
+  }, [activeTrack?.id, cancelHeldSync, project.id, syncMode, syncWords])
+
+  useEffect(() => {
+    const abandonActiveWord = () => {
+      syncHeldRef.current = null
+      syncSpaceHeldRef.current = false
+    }
+
+    const advanceSyncCursor = () => {
+      const next = syncCursor + 1
+      setSyncCursor(next)
+      if (next >= syncItems.length) {
+        setSyncMode(false)
+        cancelHeldSync()
+        syncSessionHasCommitRef.current = false
+        showToast('Track timing complete', 'success')
+      }
+    }
+
+    const startDisplayedWord = (advanceOnRelease: boolean) => {
+      const item = syncItems[syncCursor]
+      if (!item) {
+        setSyncMode(false)
+        cancelHeldSync()
+        syncSessionHasCommitRef.current = false
+        showToast('All words are timed', 'success')
+        return false
+      }
+
+      const sampledLyricMs = lyricTimeAtPlayback(playback.getCurrentMs(), project.offsetMs)
+      if (sampledLyricMs < 0) {
+        showToast('The lyric clock has not reached 0:00 yet', 'neutral')
+        return false
+      }
+      const previous = syncItems[syncCursor - 1]
+      const previousTimed = adjacentTimedWord(syncWords, syncCursor, -1)
+      const nextTimed = adjacentTimedWord(syncWords, syncCursor, 1)
+      const previousEndMs = previousTimed ? syncWordEnd(previousTimed) : null
+      const nextTimedStartMs = nextTimed?.startMs ?? null
+      const startMs = Math.max(Math.round(sampledLyricMs), previousEndMs ?? 0)
+
+      if (nextTimedStartMs !== null && startMs >= nextTimedStartMs) {
+        showToast('No timing space remains before the next timed word', 'warning')
+        return false
+      }
+
+      syncExplicitlyEndedRef.current.delete(item.word.id)
+      const patches = new Map<string, Partial<Pick<LyricWord, 'startMs' | 'endMs'>>>()
+      if (
+        previous?.line.id === item.line.id &&
+        previous.word.startMs !== null &&
+        !syncExplicitlyEndedRef.current.has(previous.word.id)
+      ) {
+        patches.set(previous.word.id, { endMs: startMs })
+      }
+      patches.set(
+        item.word.id,
+        clampTiming(startMs, startMs + DEFAULT_SYNC_WORD_DURATION_MS, {
+          minMs: startMs,
+          maxMs: nextTimedStartMs ?? Number.POSITIVE_INFINITY,
+          minimumDurationMs: DEFAULT_SYNC_WORD_DURATION_MS,
+        }),
+      )
+      if (!applySyncMutation((current) => patchWords(current, patches))) return false
+      syncHeldRef.current = {
+        wordId: item.word.id,
+        startMs,
+        isLineFinal: item.wordIndex === item.line.words.length - 1,
+        nextTimedStartMs,
+        advanceOnRelease,
+      }
+      playback.play()
+      if (!advanceOnRelease) advanceSyncCursor()
+      return true
+    }
+
+    const endActiveWord = () => {
+      const active = syncHeldRef.current
+      if (!active) return
+      const sampledLyricMs = lyricTimeAtPlayback(playback.getCurrentMs(), project.offsetMs)
+      if (sampledLyricMs < 0 || projectMutationIsBlocked()) return
+      const timing = clampTiming(active.startMs, sampledLyricMs, {
+        minMs: active.startMs,
+        maxMs: active.nextTimedStartMs ?? Number.POSITIVE_INFINITY,
+        minimumDurationMs: 1,
+      })
+      applySyncMutation((current) => patchWord(current, active.wordId, timing))
+      syncExplicitlyEndedRef.current.add(active.wordId)
+      const shouldAdvance = active.advanceOnRelease
+      abandonActiveWord()
+      if (shouldAdvance) advanceSyncCursor()
+    }
+
     const keyDown = (event: KeyboardEvent) => {
       if (document.querySelector('.modal-backdrop')) return
       if (inputHasTypingFocus()) return
+      const exactBare = !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey
+      const exactShift = event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey
+      const targetsControl = eventTargetsSpaceActivatableControl(event)
+
       if (event.code === 'Escape' && syncMode) {
         event.preventDefault()
         setSyncMode(false)
@@ -1480,110 +1617,62 @@ export default function App() {
         return
       }
       if (event.code === 'ArrowRight') {
+        if (exactBare && syncMode) {
+          if (targetsControl) return
+          event.preventDefault()
+          if (event.repeat || syncSpaceHeldRef.current) return
+          startDisplayedWord(false)
+          return
+        }
         event.preventDefault()
         playback.seek(playback.getCurrentMs() + (event.shiftKey ? 1000 : 250))
         return
       }
+      if (event.code === 'ArrowDown') {
+        if (!exactBare || !syncMode || targetsControl) return
+        event.preventDefault()
+        if (!event.repeat) endActiveWord()
+        return
+      }
       if (event.code !== 'Space') return
-      const exactShiftSpace = event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey
-      const exactBareSpace = !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey
-      if (!exactShiftSpace && !exactBareSpace) return
-      if (exactBareSpace && !syncMode && eventTargetsSpaceActivatableControl(event)) return
+      if (!exactShift && !exactBare) return
+      if (exactBare && !syncMode && targetsControl) return
       event.preventDefault()
-      if (exactShiftSpace) {
+      if (exactShift) {
         if (!event.repeat) playback.toggle()
         return
       }
-      if (!syncMode) return
-      if (event.repeat || syncHeldRef.current) return
-      const item = syncItems[syncCursor]
-      if (!item) {
-        setSyncMode(false)
-        syncSessionHasCommitRef.current = false
-        showToast('All words are timed', 'success')
-        return
-      }
-
-      const sampledLyricMs = lyricTimeAtPlayback(playback.getCurrentMs(), project.offsetMs)
-      if (sampledLyricMs < 0) {
-        showToast('The lyric clock has not reached 0:00 yet', 'neutral')
-        return
-      }
-      const previous = syncItems[syncCursor - 1]
-      const sameLine = previous?.line.id === item.line.id
-      const previousTimed = adjacentTimedWord(syncWords, syncCursor, -1)
-      const nextTimed = adjacentTimedWord(syncWords, syncCursor, 1)
-      const previousEndMs = previousTimed ? syncWordEnd(previousTimed) : null
-      const nextTimedStartMs = nextTimed?.startMs ?? null
-      const startMs = Math.max(Math.round(sampledLyricMs), previousEndMs ?? 0)
-
-      if (nextTimedStartMs !== null && startMs >= nextTimedStartMs) {
-        showToast('No timing space remains before the next timed word', 'warning')
-        return
-      }
-
-      const patches = new Map<string, Partial<Pick<LyricWord, 'startMs' | 'endMs'>>>()
-      if (previous && sameLine && previous.word.startMs !== null) {
-        patches.set(previous.word.id, { endMs: startMs })
-      }
-      patches.set(item.word.id, {
-        startMs,
-        endMs: Math.min(
-          startMs + DEFAULT_SYNC_WORD_DURATION_MS,
-          nextTimedStartMs ?? Number.POSITIVE_INFINITY,
-        ),
-      })
-      if (!applySyncMutation((current) => patchWords(current, patches))) return
-      syncHeldRef.current = {
-        wordId: item.word.id,
-        startMs,
-        isLineFinal: item.wordIndex === item.line.words.length - 1,
-        nextTimedStartMs,
-      }
-      playback.play()
+      if (!syncMode || event.repeat || syncSpaceHeldRef.current) return
+      if (startDisplayedWord(true)) syncSpaceHeldRef.current = true
     }
 
     const keyUp = (event: KeyboardEvent) => {
       if (document.querySelector('.modal-backdrop')) {
-        if (event.code === 'Space') {
-          cancelHeldSync()
-        }
+        if (event.code === 'Space') cancelHeldSync()
         return
       }
-      if (event.code !== 'Space' || !syncMode) return
+      if (event.code !== 'Space' || !syncMode || !syncSpaceHeldRef.current) return
       const held = syncHeldRef.current
       if (!held) return
       event.preventDefault()
       if (projectMutationIsBlocked()) {
-        cancelHeldSync()
+        abandonActiveWord()
         return
       }
       if (held.isLineFinal) {
         const sampledLyricMs = lyricTimeAtPlayback(playback.getCurrentMs(), project.offsetMs)
-        const endMs = Math.min(
-          Math.max(held.startMs + DEFAULT_SYNC_WORD_DURATION_MS, Math.round(sampledLyricMs)),
-          held.nextTimedStartMs ?? Number.POSITIVE_INFINITY,
-        )
-        applySyncMutation((current) =>
-          patchWord(current, held.wordId, {
-            startMs: held.startMs,
-            endMs,
-          }),
-        )
+        const timing = clampTiming(held.startMs, sampledLyricMs, {
+          minMs: held.startMs,
+          maxMs: held.nextTimedStartMs ?? Number.POSITIVE_INFINITY,
+          minimumDurationMs: DEFAULT_SYNC_WORD_DURATION_MS,
+        })
+        applySyncMutation((current) => patchWord(current, held.wordId, timing))
       }
-      cancelHeldSync()
-      setSyncCursor((index) => {
-        const next = index + 1
-        if (next >= syncItems.length) {
-          setSyncMode(false)
-          syncSessionHasCommitRef.current = false
-          showToast('Track timing complete', 'success')
-        }
-        return next
-      })
+      abandonActiveWord()
+      advanceSyncCursor()
     }
 
-    const windowBlur = () => cancelHeldSync()
+    const windowBlur = () => abandonActiveWord()
 
     window.addEventListener('keydown', keyDown)
     window.addEventListener('keyup', keyUp)
