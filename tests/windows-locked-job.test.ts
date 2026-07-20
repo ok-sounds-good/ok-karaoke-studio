@@ -296,6 +296,7 @@ describe('locked Windows process-tree adapter', () => {
             ...diagnostic.spawnOptions,
             env: { ...process.env, OKS_LOCKED_JOB_TEST_POST_CREATE_FAILURE: '1' },
           },
+          timeoutMs: 20_000,
         }
         const faultOutcome = await bounded.runBoundedChild({ ...faulted, killGraceMs: 1_000 })
         expect(faultOutcome).toMatchObject({
@@ -314,6 +315,7 @@ describe('locked Windows process-tree adapter', () => {
             ...adapted.spawnOptions,
             env: { ...process.env, OKS_LOCKED_JOB_TEST_DRAIN_FAILURE: '1' },
           },
+          timeoutMs: 20_000,
         }
         const drainFaultOutcome = await bounded.runBoundedChild({
           ...drainFaulted,
