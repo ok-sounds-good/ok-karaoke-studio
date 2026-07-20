@@ -1,5 +1,13 @@
 version: 2.1
 
+parameters:
+  windows_mvp_acceptance:
+    type: boolean
+    default: false
+  windows_mvp_candidate_sha:
+    type: string
+    default: ''
+
 jobs:
   unit-tests:
     docker:
@@ -97,12 +105,20 @@ jobs:
           command: bun run test:video
 
   Windows:
+    parameters:
+      acceptance:
+        type: boolean
+        default: false
+      candidate_sha:
+        type: string
+        default: ''
     machine:
       image: windows-server-2022-gui:current
       shell: powershell.exe -ExecutionPolicy Bypass
     resource_class: windows.medium
     environment:
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      WINDOWS_MVP_CANDIDATE_SHA: << parameters.candidate_sha >>
     steps:
       - checkout
 
@@ -122,6 +138,34 @@ jobs:
           name: Install locked dependencies
           command: |
             bun install --frozen-lockfile
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - when:
+          condition: << parameters.acceptance >>
+          steps:
+            - run:
+                name: Bind Windows candidate to exact commit
+                command: |
+                  if ($Env:WINDOWS_MVP_CANDIDATE_SHA -notmatch '^[0-9a-fA-F]{40}$') {
+                    throw "Windows acceptance requires an exact 40-character candidate SHA"
+                  }
+                  $candidateSha = $Env:WINDOWS_MVP_CANDIDATE_SHA.ToLowerInvariant()
+                  $checkoutSha = (git rev-parse HEAD).Trim().ToLowerInvariant()
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  if ($Env:CIRCLE_SHA1.ToLowerInvariant() -ne $candidateSha -or $checkoutSha -ne $candidateSha) {
+                    throw "Windows acceptance candidate does not match checkout and CIRCLE_SHA1"
+                  }
+
+            - run:
+                name: Run Windows product unit suite
+                command: |
+                  bun run test -- --exclude tests/format-diff.test.ts
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - run:
+          name: Verify locked Windows process-tree supervision
+          command: |
+            bun run test -- tests/windows-locked-job.test.ts
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - run:
@@ -178,6 +222,21 @@ jobs:
             node scripts/windows-package-evidence.cjs
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - when:
+          condition: << parameters.acceptance >>
+          steps:
+            - run:
+                name: Launch-smoke packaged Windows candidate
+                command: |
+                  bun run test:package:win
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  node scripts/windows-package-smoke.cjs --validate
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+            - store_artifacts:
+                path: release/windows-package-smoke
+                destination: windows-package-smoke
+
       - store_artifacts:
           path: release/win-unpacked
           destination: windows-x64-unpacked
@@ -212,3 +271,11 @@ workflows:
           requires:
             - unit tests
             - authorize-native-candidate
+
+  windows-mvp-acceptance:
+    when: << pipeline.parameters.windows_mvp_acceptance >>
+    jobs:
+      - Windows:
+          name: Windows acceptance
+          acceptance: true
+          candidate_sha: << pipeline.parameters.windows_mvp_candidate_sha >>

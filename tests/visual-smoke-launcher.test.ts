@@ -121,6 +121,17 @@ describe('visual smoke launcher', () => {
     expect(events).toEqual(['retention', 'publish'])
   })
 
+  it('omits the source application argument for a packaged child', () => {
+    const args = launcher.childArguments(
+      '/raw',
+      smoke.BASELINE_SCENARIO,
+      profile('user'),
+      profile('session'),
+      true,
+    )
+    expect(args[0]).toBe(smoke.TRIGGER)
+  })
+
   it('publishes only validated bytes after retaining the verified real private workspace', async () => {
     const output = await outputPath()
     const created = [profile('user'), profile('session')]

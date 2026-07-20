@@ -106,7 +106,7 @@ describe('live Electron renderer fatal observation', () => {
       destroyed: true,
       disposed: true,
       fatal: true,
-      fatalBeforeCapture: true,
+      capturedBeforeFatal: true,
       ok: false,
     })
     expect(await readdir(output)).toEqual(['failure.json'])

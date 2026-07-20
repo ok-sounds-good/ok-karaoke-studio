@@ -283,6 +283,11 @@ async function claimOutputDirectory(rawOutput, options = {}) {
     if (error?.code === 'EEXIST') throw artifactError('VISUAL_OUTPUT_EXISTS')
     throw error
   }
+  return inspectOutputDirectory(output, fsApi)
+}
+
+async function inspectOutputDirectory(rawOutput, fsApi = fs) {
+  const output = validateFreshOutputPath(rawOutput)
   try {
     const stats = await fsApi.lstat(output, { bigint: true })
     if (!stats.isDirectory() || stats.isSymbolicLink()) {
@@ -453,10 +458,15 @@ module.exports = {
   ARTIFACT_LIMITS,
   LAUNCHER_FAILURE_CODES,
   artifactError,
+  assertClaimedDirectory,
+  claimOutputDirectory,
+  inspectOutputDirectory,
   normalizeArtifactBuffers,
   normalizeLauncherFailure,
   outputState,
   publishArtifactBuffers,
   validateFreshOutputPath,
+  writeCompletionMarker,
+  writeExclusiveArtifact,
   writeFreshLauncherFailure,
 }

@@ -32,6 +32,7 @@ const PUBLIC_FAILURE = Object.freeze({ code: 'VISUAL_SMOKE_FAILED', ok: false })
 const FATAL_DIAGNOSTIC = '[oks-visual-smoke:fatal]\n'
 const CAPTURE_STABILITY_CANDIDATE_LIMIT = 5
 const CAPTURE_STABILITY_SETTLE_MS = 50
+const FATAL_GRACE_MS = 250
 const STYLE_SESSION_READINESS_TIMEOUT_MS = 10_000
 const STYLE_KEY_SEQUENCE = Object.freeze([
   'Tab',
@@ -90,6 +91,11 @@ const STYLE_KEY_FOCUS = Object.freeze([
   'apply',
 ])
 const STYLE_KEY_CHANGES = Object.freeze(['footer', 'clock', 'footer', 'brand', 'footer', 'brand'])
+const STUDIO_BRIDGE_KEYS = Object.freeze(
+  'cancelVideoExport,chooseBackgroundImage,createStyleTemplate,deleteStyleTemplate,exportText,exportVideo,getBackgroundState,getPendingWindowClose,importAudio,importLrc,listStyleTemplates,onMenuAction,onVideoExportProgress,onWindowCloseRequest,openProject,releaseAudio,releaseBackground,releaseBackgroundSnapshot,renameStyleTemplate,resetProjectScope,resolveProjectAudio,resolveProjectBackground,resolveWindowClose,retainBackground,saveProject,settleBackgroundImage,settleProjectOpen'.split(
+    ',',
+  ),
+)
 
 const STABLE_RENDERER_SCRIPT = `(() => {
   const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()))
@@ -118,10 +124,22 @@ const STABLE_RENDERER_SCRIPT = `(() => {
     await frame()
     await frame()
     const second = sample()
+    const bridge = window.studio
+    const bridgeKeys = bridge && typeof bridge === 'object' ? Object.keys(bridge).sort() : []
+    const bridgeFunctions = bridgeKeys.every((key) => typeof bridge[key] === 'function')
+    let ipcReady = false
+    try {
+      ipcReady = (await bridge?.getPendingWindowClose?.()) === null
+    } catch {}
     return {
+      bridgeFrozen: Object.isFrozen(bridge),
+      bridgeFunctions,
+      bridgeKeys,
       devicePixelRatio: window.devicePixelRatio,
       height: document.documentElement.clientHeight,
       href: window.location.href,
+      ipcReady,
+      nodeAccess: typeof window.process !== 'undefined' || typeof window.require !== 'undefined',
       readyState: document.readyState,
       rootChildren: second.rootChildren,
       stable: JSON.stringify(first) === JSON.stringify(second),
@@ -753,14 +771,27 @@ function installVisualSmokeFatalObserver(processLike = process) {
     let active = true
     const observeConsoleMessage = (...args) => {
       try {
-        const [details, legacyLevel] = args
+        const [eventOrDetails, detailsOrLevel] = args
+        const details =
+          detailsOrLevel && typeof detailsOrLevel === 'object' ? detailsOrLevel : eventOrDetails
         const level = details && typeof details === 'object' ? details.level : undefined
+        const legacyLevel = typeof detailsOrLevel === 'number' ? detailsOrLevel : undefined
         if (level === 'error' || level === 3 || (typeof level !== 'string' && legacyLevel === 3))
           observeFatal()
       } catch {
         observeFatal()
       }
     }
+    const observeGone = (_event, details) => {
+      if (details?.reason !== 'clean-exit') observeFatal()
+    }
+    const observedEvents = [
+      ['console-message', observeConsoleMessage],
+      ['did-fail-load', observeFatal],
+      ['preload-error', observeFatal],
+      ['render-process-gone', observeGone],
+      ['unresponsive', observeFatal],
+    ]
     const rendererObserver = Object.freeze({
       dispose() {
         if (!active) return
@@ -768,7 +799,7 @@ function installVisualSmokeFatalObserver(processLike = process) {
         rendererObservers.delete(rendererObserver)
         try {
           if (typeof contents.isDestroyed === 'function' && contents.isDestroyed()) return
-          contents.removeListener('console-message', observeConsoleMessage)
+          for (const [event, listener] of observedEvents) contents.removeListener(event, listener)
           contents.removeListener('destroyed', observeDestroyed)
         } catch {
           observeFatal()
@@ -784,13 +815,13 @@ function installVisualSmokeFatalObserver(processLike = process) {
       if (typeof contents.isDestroyed === 'function' && contents.isDestroyed()) {
         throw smokeError('VISUAL_SMOKE_FATAL_OBSERVER_FAILED')
       }
-      contents.on('console-message', observeConsoleMessage)
+      for (const [event, listener] of observedEvents) contents.on(event, listener)
       contents.once('destroyed', observeDestroyed)
       rendererObservers.add(rendererObserver)
       return rendererObserver
     } catch {
       try {
-        contents.removeListener('console-message', observeConsoleMessage)
+        for (const [event, listener] of observedEvents) contents.removeListener(event, listener)
         contents.removeListener('destroyed', observeDestroyed)
       } catch {
         // The fixed observer-installation failure remains the only public diagnostic.
@@ -831,8 +862,8 @@ function fatalObserved(observer) {
   }
 }
 
-function settleTeardown() {
-  return new Promise((resolve) => setImmediate(resolve))
+function settleSmoke() {
+  return new Promise((resolve) => setTimeout(resolve, FATAL_GRACE_MS))
 }
 
 function settleCapture() {
@@ -927,15 +958,31 @@ function validRendererState(value) {
   return Boolean(
     value &&
     typeof value === 'object' &&
+    value.bridgeFrozen === true &&
+    value.bridgeFunctions === true &&
+    JSON.stringify(value.bridgeKeys) === JSON.stringify(STUDIO_BRIDGE_KEYS) &&
     value.devicePixelRatio === 1 &&
     value.height === VIEWPORT.height &&
     value.width === VIEWPORT.width &&
     value.href === PACKAGED_APP_URL &&
+    value.ipcReady === true &&
+    value.nodeAccess === false &&
     value.readyState === 'complete' &&
     Number.isSafeInteger(value.rootChildren) &&
     value.rootChildren > 0 &&
     value.stable === true,
   )
+}
+
+function singleLiveSmokeWindow(window, getWindows) {
+  try {
+    const windows = getWindows()
+    if (!Array.isArray(windows)) return false
+    const live = windows.filter((candidate) => liveWindow(candidate))
+    return live.length === 1 && live[0] === window
+  } catch {
+    return false
+  }
 }
 
 function liveWindow(window) {
@@ -1463,19 +1510,23 @@ async function writeFailure(output, options) {
   return Object.freeze({ ok: false })
 }
 
-async function runVisualSmoke({ app, config, fatalObserver, window }, dependencies = {}) {
+async function runVisualSmoke(
+  { app, config, fatalObserver, getWindows, window },
+  dependencies = {},
+) {
   const options = {
     captureSettle: dependencies.captureSettle || settleCapture,
     createArtifacts: dependencies.createArtifacts || createResultArtifacts,
     createScenarioArtifacts: dependencies.createScenarioArtifacts || createScenarioResultArtifacts,
     focus: dependencies.focus || focusSmokeWindow,
+    getWindows: dependencies.getWindows || getWindows || (() => [window]),
     publish: dependencies.publish || publishArtifactBuffers,
     readinessTimeoutMs: dependencies.readinessTimeoutMs ?? STYLE_SESSION_READINESS_TIMEOUT_MS,
-    settle: dependencies.settle || settleTeardown,
+    settle: dependencies.settle || settleSmoke,
     writeFailure: dependencies.writeFailure || writeFreshLauncherFailure,
   }
   let artifacts
-  let failed = fatalObserved(fatalObserver)
+  let failed = fatalObserved(fatalObserver) || !singleLiveSmokeWindow(window, options.getWindows)
   if (!failed) {
     try {
       const scenario = config.scenario ?? BASELINE_SCENARIO
@@ -1491,6 +1542,18 @@ async function runVisualSmoke({ app, config, fatalObserver, window }, dependenci
     }
   }
   try {
+    await options.settle()
+  } catch {
+    failed = true
+  }
+  if (fatalObserved(fatalObserver) || !singleLiveSmokeWindow(window, options.getWindows))
+    failed = true
+  try {
+    fatalObserver?.disposeRenderers()
+  } catch {
+    failed = true
+  }
+  try {
     destroyWindow(window)
   } catch {
     failed = true
@@ -1501,7 +1564,7 @@ async function runVisualSmoke({ app, config, fatalObserver, window }, dependenci
     failed = true
   }
   try {
-    fatalObserver?.disposeRenderers()
+    if (options.getWindows().some((candidate) => liveWindow(candidate))) failed = true
   } catch {
     failed = true
   }
@@ -1523,6 +1586,7 @@ module.exports = {
   PACKAGED_APP_URL,
   PUBLIC_FAILURE,
   STABLE_RENDERER_SCRIPT,
+  STUDIO_BRIDGE_KEYS,
   STYLE_SESSION_READINESS_TIMEOUT_MS,
   STYLE_SESSION_SCENARIO,
   STYLE_TARGET_SCRIPT,

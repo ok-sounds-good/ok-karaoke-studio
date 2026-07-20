@@ -115,12 +115,12 @@ function privateRawOutput(rawRoot, requested) {
   }
 }
 
-function childArguments(output, scenario, userProfile, sessionProfile) {
+function childArguments(output, scenario, userProfile, sessionProfile, packaged = false) {
   if (scenario !== BASELINE_SCENARIO && scenario !== STYLE_SESSION_SCENARIO) {
     throw launcherError('VISUAL_SMOKE_SCENARIO_INVALID')
   }
   return Object.freeze([
-    REPOSITORY_ROOT,
+    ...(packaged ? [] : [REPOSITORY_ROOT]),
     TRIGGER,
     `${OPTIONS.output}${output}`,
     `${OPTIONS.scenario}${scenario}`,
@@ -190,14 +190,19 @@ async function runLauncher(options = {}, supplied = {}) {
     const sessionProfile = await dependencies.createProfile('oks-visual-session-data-')
     profiles.push(sessionProfile)
 
+    const executable = options.executable || electronExecutable
+    const packaged = options.packaged === true
     const outcome = await dependencies.runChild({
-      executable: options.executable || electronExecutable,
-      args: childArguments(rawOutput, scenario, userProfile, sessionProfile),
+      executable,
+      args: childArguments(rawOutput, scenario, userProfile, sessionProfile, packaged),
       captureOutput: {
         classify: capturedFatalDiagnostic,
         maxBytesPerStream: MAX_DIAGNOSTIC_BYTES,
       },
-      spawnOptions: { cwd: REPOSITORY_ROOT, stdio: ['ignore', 'pipe', 'pipe'] },
+      spawnOptions: {
+        cwd: packaged ? path.dirname(executable) : REPOSITORY_ROOT,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
       timeoutMs: options.timeoutMs || DEFAULT_TIMEOUT_MS,
     })
     failureCode = publicChildOutcomeCode('VISUAL_SMOKE', outcome)

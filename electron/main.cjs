@@ -215,10 +215,6 @@ let mainWindow = null
 
 app.setName(APP_NAME)
 
-const styleTemplateStore = createStyleTemplateStore({
-  filePath: path.join(app.getPath('userData'), 'style-templates.json'),
-})
-
 let visualSmokeConfig = null
 let visualSmokeFatalObserver = null
 let visualSmokeStartupFailed = false
@@ -228,6 +224,10 @@ try {
 } catch {
   visualSmokeStartupFailed = true
 }
+
+const styleTemplateStore = createStyleTemplateStore({
+  filePath: path.join(app.getPath('userData'), 'style-templates.json'),
+})
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -1488,6 +1488,7 @@ if (visualSmokeStartupFailed) {
           app,
           config: visualSmokeConfig,
           fatalObserver: visualSmokeFatalObserver,
+          getWindows: () => BrowserWindow.getAllWindows(),
           window,
         })
         visualSmokeFatalObserver.dispose()

@@ -24,6 +24,7 @@
     "preview": "vite preview --host 127.0.0.1",
     "test": "vitest run",
     "test:image": "electron scripts/image-decoder-smoke.cjs",
+    "test:package:win": "node scripts/windows-package-smoke.cjs",
     "test:visual": "node scripts/video-style-visual-smoke.cjs",
     "test:watch": "vitest",
     "test:video": "node scripts/video-export-smoke-launcher.cjs",
