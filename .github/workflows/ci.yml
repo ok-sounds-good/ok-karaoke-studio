@@ -1,0 +1,263 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      windows_mvp_acceptance:
+        description: "Run Windows acceptance path"
+        type: boolean
+        required: false
+        default: false
+      windows_mvp_candidate_sha:
+        description: "Exact 40-character SHA for Windows acceptance"
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    name: unit tests
+    if: ${{ github.event_name != 'workflow_dispatch' }}
+    runs-on: ubuntu-slim
+    env:
+      FORMAT_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Configure Node.js 24.0.2
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.0.2
+
+      - name: Configure Bun 1.3.14
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Validate toolchain
+        run: |
+          test "$(node --version)" = "v24.0.2"
+          test "$(bun --version)" = "1.3.14"
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Check formatting in changed lines
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            export FORMAT_BASE_SHA="$(git merge-base "${{ github.event.pull_request.base.sha }}" "${{ github.sha }}")"
+            export FORMAT_BRANCH="${{ github.head_ref }}"
+          else
+            export FORMAT_BASE_SHA="$(git rev-parse HEAD^)"
+            export FORMAT_BRANCH="$GITHUB_REF_NAME"
+          fi
+          bun scripts/format-diff.mjs --check \
+            --path src \
+            --path electron \
+            --path tests \
+            --path scripts
+
+      - name: Run portable test suite
+        run: |
+          bun run test -- --exclude tests/visual-smoke-renderer-fatal-live.test.ts
+
+      - name: Build renderer
+        run: bun run build
+
+  authorize-native-candidate:
+    name: authorize-native-candidate
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    needs:
+      - unit-tests
+    environment:
+      name: authorize-native-candidate
+
+    steps:
+      - name: Await manual authorizing action
+        run: echo "Approve to run native macOS and Windows jobs for this PR head."
+
+  macOS:
+    name: macOS
+    runs-on: macos-latest
+    if: ${{ github.event_name != 'workflow_dispatch' }}
+    needs:
+      - unit-tests
+      - authorize-native-candidate
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Configure Node.js 24.0.2
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.0.2
+
+      - name: Configure Bun 1.3.14
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Validate toolchain
+        run: |
+          test "$(node --version)" = "v24.0.2"
+          test "$(bun --version)" = "1.3.14"
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install and verify external H.264/AAC tools
+        run: |
+          brew install ffmpeg
+          ffprobe -version
+          ffmpeg -hide_banner -encoders > /tmp/oks-ffmpeg-encoders.txt 2>&1
+          grep -E '^[[:space:]]*V[^[:space:]]*[[:space:]]+libx264[[:space:]]' /tmp/oks-ffmpeg-encoders.txt
+          grep -E '^[[:space:]]*A[^[:space:]]*[[:space:]]+aac[[:space:]]' /tmp/oks-ffmpeg-encoders.txt
+
+      - name: Smoke Electron native image decoding
+        run: bun run test:image
+
+      - name: Smoke native Electron lifecycle
+        run: bun run test -- tests/visual-smoke-renderer-fatal-live.test.ts
+
+      - name: Verify style template atomic replacement
+        run: bun run test -- tests/style-template-store.test.ts
+
+      - name: Smoke production-path H.264/AAC export matrix
+        run: bun run test:video
+
+  Windows:
+    name: Windows
+    runs-on: windows-latest
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.windows_mvp_acceptance }}
+    needs:
+      - unit-tests
+      - authorize-native-candidate
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      WINDOWS_MVP_CANDIDATE_SHA: ${{ inputs.windows_mvp_candidate_sha }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Configure Node.js 24.0.2
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.0.2
+
+      - name: Configure Bun 1.3.14
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Validate toolchain
+        shell: pwsh
+        run: |
+          if ((node --version) -ne "v24.0.2") { throw "Unexpected Node.js version" }
+          if ((bun --version) -ne "1.3.14") { throw "Unexpected Bun version" }
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Bind Windows candidate to exact commit
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_mvp_acceptance }}
+        shell: pwsh
+        run: |
+          if ($Env:WINDOWS_MVP_CANDIDATE_SHA -notmatch '^[0-9a-fA-F]{40}$') {
+            throw "Windows acceptance requires an exact 40-character candidate SHA"
+          }
+          $candidateSha = $Env:WINDOWS_MVP_CANDIDATE_SHA.ToLowerInvariant()
+          $checkoutSha = (git rev-parse HEAD).Trim().ToLowerInvariant()
+          if ($candidateSha -ne $checkoutSha -or $candidateSha -ne "${{ github.sha }}".ToLowerInvariant()) {
+            throw "Windows acceptance candidate does not match checkout and event SHA"
+          }
+
+      - name: Verify locked Windows process-tree supervision
+        run: bun run test -- tests/windows-locked-job.test.ts
+
+      - name: Smoke Electron native image decoding
+        run: bun run test:image
+
+      - name: Smoke native Electron lifecycle
+        run: bun run test -- tests/visual-smoke-renderer-fatal-live.test.ts
+
+      - name: Verify style template atomic replacement
+        run: bun run test -- tests/style-template-store.test.ts
+
+      - name: Install and verify external H.264/AAC tools
+        shell: pwsh
+        run: |
+          choco install ffmpeg --yes --no-progress
+          ffprobe -version
+          $encoders = (ffmpeg -hide_banner -encoders 2>&1 | Out-String)
+          if ($encoders -notmatch '(?m)^\s*V\S*\s+libx264\s') { throw "libx264 unavailable" }
+          if ($encoders -notmatch '(?m)^\s*A\S*\s+aac\s') { throw "AAC unavailable" }
+
+      - name: Smoke production-path H.264/AAC export matrix
+        run: bun run test:video
+
+      - name: Build unsigned Windows x64 package
+        shell: pwsh
+        run: |
+          $signingVariables = @("CSC_LINK", "CSC_KEY_PASSWORD", "WIN_CSC_LINK", "WIN_CSC_KEY_PASSWORD")
+          foreach ($name in $signingVariables) {
+            if (Test-Path "Env:$name") { Remove-Item "Env:$name" }
+          }
+          bun run dist:win
+
+      - name: Validate Windows x64 package inventory
+        shell: pwsh
+        run: |
+          choco install 7zip --yes --no-progress
+          node scripts/windows-package-evidence.cjs
+
+      - name: Run Windows package launch-smoke
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_mvp_acceptance }}
+        run: |
+          bun run test:package:win
+          node scripts/windows-package-smoke.cjs --validate
+
+      - name: Upload Windows package inventory artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-package-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            release/windows-package-evidence.json
+            release/win-unpacked
+            release/windows-x64-installer
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Windows package smoke artifacts
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_mvp_acceptance }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-package-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release/windows-package-smoke
+          if-no-files-found: error
+          retention-days: 14
