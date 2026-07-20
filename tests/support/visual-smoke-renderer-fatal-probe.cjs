@@ -1,6 +1,6 @@
 'use strict'
 
-const { app, BrowserWindow, protocol } = require('electron')
+const { app, BrowserWindow, ipcMain, protocol } = require('electron')
 const fs = require('node:fs/promises')
 const {
   PACKAGED_APP_URL,
@@ -9,6 +9,7 @@ const {
 } = require('../../electron/video-style-visual-smoke.cjs')
 
 const APP_SCHEME = 'studio-app'
+const CLOSE_CHANNEL = 'studio:get-pending-window-close'
 const PROBE_HTML = `<!doctype html>
 <html>
   <head>
@@ -20,7 +21,7 @@ const PROBE_HTML = `<!doctype html>
   <body>
     <div id="root"><main>Renderer fatal smoke probe</main></div>
     <script>
-      window.addEventListener('load', () => {
+      window.addEventListener('oks-captured', () => {
         setTimeout(() => {
           throw new TypeError('renderer-fatal-probe')
         }, 50)
@@ -62,6 +63,7 @@ async function writeStatus(value) {
 
 async function runProbe() {
   await app.whenReady()
+  ipcMain.handle(CLOSE_CHANNEL, async () => null)
   protocol.handle(
     APP_SCHEME,
     () =>
@@ -79,6 +81,7 @@ async function runProbe() {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      preload: require.resolve('../../electron/preload.cjs'),
       sandbox: true,
       webSecurity: true,
     },
@@ -86,10 +89,15 @@ async function runProbe() {
   const fatalObserver = installVisualSmokeFatalObserver(process)
   fatalObserver.observeRenderer(window.webContents)
   const capturePage = window.webContents.capturePage.bind(window.webContents)
-  let fatalBeforeCapture = false
-  window.webContents.capturePage = (...args) => {
-    fatalBeforeCapture = fatalObserver.hasFatal()
-    return capturePage(...args)
+  let capturedBeforeFatal = false
+  window.webContents.capturePage = async (...args) => {
+    const image = await capturePage(...args)
+    capturedBeforeFatal ||= !fatalObserver.hasFatal()
+    await window.webContents.executeJavaScript(
+      "window.dispatchEvent(new Event('oks-captured'))",
+      false,
+    )
+    return image
   }
   await window.loadURL(PACKAGED_APP_URL)
 
@@ -100,11 +108,12 @@ async function runProbe() {
   const observed = fatalObserver.hasFatal()
   const destroyed = window.isDestroyed()
   fatalObserver.dispose()
+  ipcMain.removeHandler(CLOSE_CHANNEL)
   await writeStatus({
     destroyed,
     disposed: true,
     fatal: observed,
-    fatalBeforeCapture,
+    capturedBeforeFatal: capturedBeforeFatal && observed,
     ok: outcome.ok,
   })
   app.exit(outcome.ok ? 0 : 1)

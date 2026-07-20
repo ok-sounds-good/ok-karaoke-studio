@@ -137,9 +137,8 @@ describe('hosted CI contract', () => {
     expect(workflow).toContain('  unit-tests:\n    docker:')
     expect(workflow).toContain("  macOS:\n    macos:\n      xcode: '16.4.0'")
     expect(workflow).toContain('resource_class: m4pro.medium')
-    expect(workflow).toContain(
-      '  Windows:\n    machine:\n      image: windows-server-2022-gui:current',
-    )
+    expect(workflow).toContain('  Windows:\n    parameters:\n      acceptance:')
+    expect(workflow).toContain('    machine:\n      image: windows-server-2022-gui:current')
     expect(workflow).toContain('resource_class: windows.medium')
     expect(workflow).toContain('      - unit-tests:\n          name: unit tests')
 
@@ -282,6 +281,9 @@ describe('hosted CI contract', () => {
       /Broader full-environment macOS and Windows suites belong to a future\s+official-v1 deployment or release step/u,
     )
     expect(sdlc).toContain('replace the targeted final Windows MVP acceptance run')
+    expect(sdlc).toContain('parameterized `windows-mvp-acceptance` workflow')
+    expect(sdlc).toMatch(/equal the checkout and\s+`CIRCLE_SHA1`/u)
+    expect(sdlc).toContain('`release/windows-package-smoke`')
 
     const pullRequestTemplate = await repositoryFile(PULL_REQUEST_TEMPLATE)
     expect(pullRequestTemplate).toContain(`- \`${APPROVAL_JOB}\` exact-head approval:`)
@@ -347,6 +349,7 @@ describe('hosted CI contract', () => {
 
     const packageJson = JSON.parse(await repositoryFile('package.json'))
     expect(packageJson.scripts['test:visual']).toBe('node scripts/video-style-visual-smoke.cjs')
+    expect(packageJson.scripts['test:package:win']).toBe('node scripts/windows-package-smoke.cjs')
     expect(packageJson.scripts['test:video']).toBe('node scripts/video-export-smoke-launcher.cjs')
     expect(packageJson.scripts['dist:dir']).toBe('bun run build && electron-builder --dir')
     expect(workflow).not.toContain('OKS_VISUAL_EVIDENCE_DIR')
@@ -355,6 +358,20 @@ describe('hosted CI contract', () => {
     expect(workflow).not.toContain('bun run test:visual')
     expect(jobBlock(workflow, 'macOS')).toContain('brew install ffmpeg')
     expect(jobBlock(workflow, 'Windows')).toContain('choco install ffmpeg --yes --no-progress')
+    expect(jobBlock(workflow, 'Windows')).toContain(
+      'bun run test -- tests/windows-locked-job.test.ts',
+    )
     expect(jobBlock(workflow, 'macOS')).not.toContain('electron-builder')
+
+    const windows = jobBlock(workflow, 'Windows')
+    for (const contract of 'windows_mvp_acceptance:|windows_mvp_candidate_sha:|default: false|windows-mvp-acceptance:|when: << pipeline.parameters.windows_mvp_acceptance >>|name: Windows acceptance|acceptance: true|candidate_sha: << pipeline.parameters.windows_mvp_candidate_sha >>'.split(
+      '|',
+    ))
+      expect(workflow).toContain(contract)
+    for (const contract of "condition: << parameters.acceptance >>|WINDOWS_MVP_CANDIDATE_SHA: << parameters.candidate_sha >>|name: Bind Windows candidate to exact commit|-notmatch '^[0-9a-fA-F]{40}$'|$checkoutSha = (git rev-parse HEAD).Trim().ToLowerInvariant()|$Env:CIRCLE_SHA1.ToLowerInvariant() -ne $candidateSha|$checkoutSha -ne $candidateSha|name: Run Windows product unit suite|bun run test -- --exclude tests/format-diff.test.ts|name: Launch-smoke packaged Windows candidate|bun run test:package:win|node scripts/windows-package-smoke.cjs --validate|path: release/windows-package-smoke|destination: windows-package-smoke".split(
+      '|',
+    ))
+      expect(windows).toContain(contract)
+    expect(windows).not.toContain('tests/format-diff-core.test.ts')
   })
 })

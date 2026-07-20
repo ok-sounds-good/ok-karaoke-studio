@@ -220,7 +220,7 @@ A pull-request workflow has three named phases:
    workflow and always requires a fresh approval; approval evidence from an
    older head never carries forward.
 3. **Native-candidate phase (`macOS` and `Windows`).** After both prerequisites
-   are satisfied, run the native-image decode, live Electron lifecycle, and
+   are satisfied, verify Windows process-tree supervision, then run the native-image decode, live Electron lifecycle, and
    focused style-template atomic-replacement checks, then verify external
    FFmpeg/FFprobe `libx264` and AAC capability and run the sequential
    production-path 14-case H.264/AAC export matrix on both executors.
@@ -250,7 +250,7 @@ exception.
 
 Routine hosted CI is a compatibility backstop, not the primary proof for a
 change. The Linux job runs changed-range `bun run format:check`, the portable
-unit suite, and the renderer build once. The macOS and Windows jobs run only the
+unit suite, and the renderer build once. The native jobs run only Windows process-tree supervision where applicable, the
 native-image decode smoke, live Electron lifecycle smoke, focused style-template
 atomic-replacement check, and production-path video export matrix with externally
 installed FFmpeg on their respective platforms.
@@ -282,6 +282,15 @@ candidate receives a separately initiated Windows acceptance run that produces
 the installer and unpacked application and exercises the package, font, visual,
 project, and media gates; that final-candidate proof is not charged to every
 pull request.
+
+Start that proof through the parameterized `windows-mvp-acceptance` workflow
+with `windows_mvp_acceptance=true` and the exact 40-character candidate commit
+as `windows_mvp_candidate_sha`. The job requires it to equal the checkout and
+`CIRCLE_SHA1`, excludes only `tests/format-diff.test.ts`, and records hashes,
+bounded launch outcomes, and visual manifests under
+`release/windows-package-smoke`. Smoke profiles stay identity-verified and
+private until the ephemeral Windows machine is disposed; never recursively
+delete them from a reusable host under a weaker path-identity guarantee.
 
 Changing CI providers does not close Windows x64 MVP validation, the final
 user-held product-acceptance gate, or the FFmpeg redistribution decision in

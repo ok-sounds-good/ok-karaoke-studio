@@ -51,6 +51,7 @@ function fakeWindow(
     toPNG: () => validPng(1280, 720),
   })),
   displayScale = 1,
+  rendererOverrides = {},
 ) {
   let destroyed = false
   let contentSize = [1280, 720]
@@ -66,15 +67,24 @@ function fakeWindow(
     setMinimumSize: vi.fn(),
     webContents: {
       capturePage,
-      executeJavaScript: vi.fn().mockResolvedValueOnce(displayScale).mockResolvedValueOnce({
-        devicePixelRatio: 1,
-        height: 720,
-        href: smoke.PACKAGED_APP_URL,
-        readyState: 'complete',
-        rootChildren: 1,
-        stable: true,
-        width: 1280,
-      }),
+      executeJavaScript: vi
+        .fn()
+        .mockResolvedValueOnce(displayScale)
+        .mockResolvedValueOnce({
+          bridgeFrozen: true,
+          bridgeFunctions: true,
+          bridgeKeys: smoke.STUDIO_BRIDGE_KEYS,
+          devicePixelRatio: 1,
+          height: 720,
+          href: smoke.PACKAGED_APP_URL,
+          ipcReady: true,
+          nodeAccess: false,
+          readyState: 'complete',
+          rootChildren: 1,
+          stable: true,
+          width: 1280,
+          ...rendererOverrides,
+        }),
       getURL: () => smoke.PACKAGED_APP_URL,
       isDestroyed: () => destroyed,
       sendInputEvent: vi.fn(),
@@ -431,6 +441,43 @@ describe('production-window visual smoke', () => {
     expect(captureSettle).toHaveBeenCalledTimes(2)
     expect(publish).toHaveBeenCalledOnce()
     expect(window.destroy).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    ['extra window', undefined, (window: any) => [window, fakeWindow()], 0],
+    [
+      'window destroyed during grace',
+      undefined,
+      (() => {
+        let calls = 0
+        return (window: any) => (++calls === 2 && window.destroy(), [window])
+      })(),
+      2,
+    ],
+    ['unfrozen bridge', { bridgeFrozen: false }, undefined, 0],
+    ['non-function bridge entry', { bridgeFunctions: false }, undefined, 0],
+    ['wrong bridge keys', { bridgeKeys: [] }, undefined, 0],
+    ['failed IPC round trip', { ipcReady: false }, undefined, 0],
+    ['renderer Node access', { nodeAccess: true }, undefined, 0],
+  ])('publishes no success for %s', async (_name, rendererOverrides, getWindows, captures) => {
+    const window = fakeWindow(undefined, 1, rendererOverrides || {})
+    const publish = vi.fn()
+    const writeFailure = vi.fn(async () => undefined)
+    await expect(
+      smoke.runVisualSmoke(
+        {
+          app: {},
+          config: { output: '/safe/evidence' },
+          getWindows: getWindows ? () => getWindows(window) : undefined,
+          window,
+        },
+        { focus: vi.fn(async () => true), publish, writeFailure },
+      ),
+    ).resolves.toEqual({ ok: false })
+    expect(window.webContents.capturePage).toHaveBeenCalledTimes(captures)
+    expect(window.destroy).toHaveBeenCalledOnce()
+    expect(publish).not.toHaveBeenCalled()
+    expect(writeFailure).toHaveBeenCalledOnce()
   })
 
   it('fails closed when no consecutive frame stabilizes within the candidate cap', async () => {
@@ -971,6 +1018,26 @@ describe('production-window visual smoke', () => {
     expect(processLike.listenerCount('unhandledRejection')).toBe(0)
   })
 
+  it.each([
+    ['console-message', { level: 'error' }],
+    ['render-process-gone', { reason: 'crashed' }],
+    ['unresponsive', undefined],
+    ['preload-error', undefined],
+    ['did-fail-load', undefined],
+  ])('fails closed on renderer %s', (event, details) => {
+    const stderr = { write: vi.fn(() => true) }
+    const processLike = Object.assign(new EventEmitter(), { stderr })
+    const fatalObserver = smoke.installVisualSmokeFatalObserver(processLike)
+    const contents = fakeRendererContents()
+    fatalObserver.observeRenderer(contents)
+
+    contents.emit(event, {}, details)
+
+    expect(fatalObserver.hasFatal()).toBe(true)
+    fatalObserver.dispose()
+    expect(contents.listenerCount(event)).toBe(0)
+  })
+
   it('ignores clean renderer console traffic and disposes safely after WebContents destruction', () => {
     const stderr = { write: vi.fn(() => true) }
     const processLike = Object.assign(new EventEmitter(), { stderr })
@@ -983,6 +1050,7 @@ describe('production-window visual smoke', () => {
       message: 'Uncaught TypeError appears only as quoted informational text',
     })
     contents.emit('console-message', {}, 2, 'Uncaught (in promise) appears only in a warning')
+    contents.emit('render-process-gone', {}, { reason: 'clean-exit' })
 
     expect(fatalObserver.hasFatal()).toBe(false)
     expect(stderr.write).not.toHaveBeenCalled()
@@ -996,8 +1064,12 @@ describe('production-window visual smoke', () => {
     expect(source.indexOf('configureVisualSmokeBeforeReady')).toBeLessThan(
       source.indexOf('requestSingleInstanceLock'),
     )
+    expect(source.indexOf('visualSmokeConfig = configureVisualSmokeBeforeReady')).toBeLessThan(
+      source.indexOf('const styleTemplateStore = createStyleTemplateStore'),
+    )
     expect(source).toContain('app.isPackaged || visualSmokeConfig !== null')
     expect(source).toContain('await window.loadURL(PACKAGED_APP_URL)')
+    expect(source).toContain('getWindows: () => BrowserWindow.getAllWindows()')
     expect(source).toContain(
       'if (visualSmokeConfig) visualSmokeFatalObserver = installVisualSmokeFatalObserver(process)',
     )
