@@ -206,10 +206,6 @@ select:focus-visible {
 .dialog-section-title small,
 .audio-source small,
 .vocal-track-card__status,
-.sync-button small,
-.time-readout span,
-.time-readout em,
-.transport-status,
 .modal-note,
 .workflow-guide p,
 .raw-lyrics > p,
@@ -527,38 +523,6 @@ select:focus-visible {
   color: #3c200e;
 }
 
-.transport {
-  border-top-color: #ddd2e8;
-  background: rgba(255, 255, 255, 0.97);
-  box-shadow: 0 -10px 25px rgba(76, 55, 101, 0.08);
-}
-
-.transport.is-syncing {
-  border-top-color: rgba(255, 138, 43, 0.44);
-  background: linear-gradient(90deg, rgba(255, 138, 43, 0.08), rgba(255, 255, 255, 0.98) 35%);
-}
-
-.sync-button {
-  border-color: #d8cde2;
-  background: #faf8fc;
-}
-
-.sync-button:hover {
-  border-color: #bca5d5;
-  background: #f5effa;
-}
-
-.sync-button.is-active {
-  border-color: var(--orange);
-  background: var(--orange-soft);
-  box-shadow: 0 0 0 3px rgba(255, 138, 43, 0.1);
-}
-
-.sync-button > span {
-  background: var(--orange);
-  color: #3c200e;
-}
-
 .keyboard-key {
   border-color: #cfc3d9;
   background: #fff;
@@ -566,52 +530,11 @@ select:focus-visible {
   box-shadow: 0 1px 0 rgba(76, 55, 101, 0.07);
 }
 
-.sync-button.is-active .keyboard-key {
-  border-color: #dc9c69;
-  background: #fff8f2;
-  color: #a94c0b;
-}
-
-.transport-button {
-  color: var(--muted-strong);
-}
-
-.transport-button:hover {
-  background: var(--purple-soft);
-  color: var(--accent-soft);
-}
-
-.play-button {
-  background: var(--orange);
-  color: #3c200e;
-  box-shadow: 0 6px 17px rgba(230, 111, 18, 0.23);
-}
-
-.play-button:hover {
-  background: var(--orange-strong);
-  color: #fff;
-}
-
-.transport-status i {
-  background: #aaa0b3;
-}
-
-.transport-status i.is-linked {
-  background: var(--accent);
-  box-shadow: 0 0 0 3px rgba(155, 120, 207, 0.11);
-}
-
-.speed-control,
-.volume-control {
-  color: var(--muted);
-}
-
 .preview-setting {
   color: var(--muted);
 }
 
 .preview-setting select,
-.speed-control select,
 .video-export-settings select {
   border-color: var(--control-line);
   background: #fff;
@@ -621,20 +544,17 @@ select:focus-visible {
 }
 
 .preview-setting select:hover,
-.speed-control select:hover,
 .video-export-settings select:hover {
   border-color: #80649a;
 }
 
 .preview-setting select:focus,
-.speed-control select:focus,
 .video-export-settings select:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(155, 120, 207, 0.11);
 }
 
 .preview-setting select option,
-.speed-control select option,
 .video-export-settings select option {
   background: #fff;
   color: var(--text);

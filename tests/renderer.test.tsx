@@ -249,7 +249,7 @@ describe('Timeline and Sync Focus styling regressions', () => {
     expect(cssContrast('#fff', '#70469e')).toBeGreaterThanOrEqual(4.5)
   })
 
-  it('keeps shared light-theme ownership for non-timeline selectors in identity.css', () => {
+  it('keeps shared light-theme ownership for non-timeline and non-transport selectors in identity.css', () => {
     const timeline = readFileSync(new URL('../src/timeline.css', import.meta.url), 'utf8')
     const identity = readFileSync(new URL('../src/identity.css', import.meta.url), 'utf8')
 
@@ -257,10 +257,6 @@ describe('Timeline and Sync Focus styling regressions', () => {
       '.field--inline em',
       '.dialog-section-title small',
       '.audio-source small',
-      '.sync-button small',
-      '.time-readout span',
-      '.time-readout em',
-      '.transport-status',
       '.modal-note',
       '.workflow-guide p',
       '.raw-lyrics > p',
@@ -282,6 +278,78 @@ describe('Timeline and Sync Focus styling regressions', () => {
       expect(timeline.includes(selector)).toBe(false)
       expect(identity.includes(selector)).toBe(true)
     }
+  })
+
+  it('moves transport ownership to transport.css with explicit selector migration and import order', () => {
+    const main = readFileSync(new URL('../src/main.tsx', import.meta.url), 'utf8')
+    const styles = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
+    const identity = readFileSync(new URL('../src/identity.css', import.meta.url), 'utf8')
+    const transport = readFileSync(new URL('../src/transport.css', import.meta.url), 'utf8')
+
+    const importedStyles = main.indexOf("import './styles.css'")
+    const importedIdentity = main.indexOf("import './identity.css'")
+    const importedTimeline = main.indexOf("import './timeline.css'")
+    const importedTransport = main.indexOf("import './transport.css'")
+    const importedStageRendering = main.indexOf("import './stage-rendering.css'")
+
+    expect(importedStyles).toBeGreaterThan(-1)
+    expect(importedIdentity).toBeGreaterThan(importedStyles)
+    expect(importedTimeline).toBeGreaterThan(importedIdentity)
+    expect(importedTransport).toBeGreaterThan(importedTimeline)
+    expect(importedStageRendering).toBeGreaterThan(importedTransport)
+
+    const transportSelectors = [
+      '.sync-button:disabled',
+      '.transport',
+      '.transport.is-syncing',
+      '.transport__sync',
+      '.transport__settings',
+      '.sync-button',
+      '.sync-button:hover',
+      '.sync-button.is-active',
+      '.sync-button > span',
+      '.sync-button strong',
+      '.sync-button small',
+      '.sync-button.is-active .keyboard-key',
+      '.transport__controls',
+      '.transport-button',
+      '.transport-button:hover',
+      '.transport-button small',
+      '.play-button',
+      '.play-button:hover',
+      '.time-readout',
+      '.time-readout strong',
+      '.time-readout span',
+      '.time-readout em',
+      '.transport-status',
+      '.transport-status i',
+      '.transport-status i.is-linked',
+      '.speed-control',
+      '.volume-control',
+      '.speed-control select',
+      '.speed-control select:hover',
+      '.speed-control select:focus',
+      '.speed-control select option',
+      '.volume-control input',
+    ]
+
+    for (const selector of transportSelectors) {
+      expect(styles.includes(selector)).toBe(false)
+      expect(identity.includes(selector)).toBe(false)
+      expect(transport).toContain(selector)
+    }
+
+    expect(styles).toContain('.keyboard-key')
+    expect(identity).toContain('.keyboard-key')
+    expect(transport).not.toMatch(/^\.keyboard-key\s*\{/mu)
+    expect(transport).toContain('.sync-button.is-active .keyboard-key')
+
+    expect(transport).toMatch(
+      /@media \(max-width: 1240px\)\s*\{[\s\S]*?\.transport\s*\{[^}]*gap:\s*9px;?/u,
+    )
+    expect(transport).toMatch(
+      /@media \(max-height: 760px\)\s*\{[\s\S]*?\.sync-button\s*\{[^}]*height:\s*49px;?[\s\S]*\.play-button\s*\{[^}]*height:\s*45px;/u,
+    )
   })
 })
 
