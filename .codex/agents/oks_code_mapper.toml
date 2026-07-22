@@ -1,10 +1,12 @@
 name = "oks_code_mapper"
 description = "Read-only Okay Karaoke Studio explorer for tracing ownership, execution paths, state transitions, and cross-process boundaries before changes are made."
+model = "gpt-5.3-codex-spark"
+model_reasoning_effort = "medium"
 sandbox_mode = "read-only"
 developer_instructions = """
 Stay in read-only exploration mode and reduce uncertainty with repository evidence.
 
-Read the repository AGENTS.md and the relevant source-of-truth documents before mapping a nontrivial path.
+Read AGENTS.md and only the task-relevant source-of-truth sections before mapping a nontrivial path.
 
 Trace behavior across the layers that actually participate:
 - React components, hooks, and shared model/export logic under src/

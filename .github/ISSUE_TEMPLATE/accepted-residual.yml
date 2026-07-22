@@ -1,116 +1,51 @@
-name: Accepted review residual
-description: Track a confirmed review finding that a maintainer explicitly accepts for later correction.
-title: '[Accepted residual]: '
+name: Accepted review follow-up
+description: Track a confirmed review finding that the maintainer accepts for later work.
+title: '[Review follow-up]: '
 body:
   - type: markdown
     attributes:
       value: |
-        Agent-authored submissions must follow the role and relay contract in
-        docs/SDLC.md. Because this generated form cannot place that role marker
-        first, agents use these fields as a checklist and construct a compliant
-        role-marked Issue body instead of submitting the form output unchanged.
-
-        Create this issue only for a confirmed finding that will remain after
-        merge. Residual acceptance also requires explicit maintainer approval
-        and links in both directions between this issue and the originating pull
-        request or review thread.
-
-        A concern classified as "Not reachable under an enforced boundary" is
-        not an accepted residual and does not belong in this form.
+        Use this form only for a confirmed finding that will remain after merge.
+        Link the originating pull request in both directions so the decision stays auditable.
   - type: input
     id: origin
     attributes:
-      label: Originating pull request and review thread
-      description: Link the pull request and the exact review conversation.
-      placeholder: https://github.com/owner/repository/pull/123#discussion_r...
-    validations:
-      required: true
-  - type: dropdown
-    id: finding-class
-    attributes:
-      label: Finding class
-      description: Use the canonical classification from docs/REVIEWING.md.
-      options:
-        - Runtime/path finding
-        - Scope-integrity finding
-    validations:
-      required: true
-  - type: dropdown
-    id: reachability
-    attributes:
-      label: Runtime reachability
-      description: Required for a runtime/path finding; leave blank for a scope-integrity finding.
-      options:
-        - Current product path
-        - Accepted dependent behavior
-        - Platform/failure path
-        - Internal invariant only
-  - type: textarea
-    id: affected-contract
-    attributes:
-      label: Affected contract or boundary
-      description: Identify the runtime boundary or the declared scope and obligation affected by the finding.
+      label: Originating pull request or review
+      placeholder: https://github.com/owner/repository/pull/123
     validations:
       required: true
   - type: textarea
-    id: class-evidence
+    id: finding
     attributes:
-      label: Class-specific evidence
-      description: For runtime/path findings, give the concrete trigger and event order, boundary evidence, and preventing invariant. For scope-integrity findings, give the exact diff evidence, integrity failure, and consistency evidence without inventing a runtime trigger.
-    validations:
-      required: true
-  - type: textarea
-    id: impact
-    attributes:
-      label: Severity and impact
-      description: State the review severity and the resulting user or system harm.
+      label: Finding and impact
+      description: Describe the credible problem and its user or system impact.
     validations:
       required: true
   - type: textarea
     id: rationale
     attributes:
-      label: Acceptance rationale
-      description: Explain why leaving this finding in the merge is acceptable now.
+      label: Why accepting it is reasonable now
+      description: Record the maintainer's decision, constraints, and any current mitigation.
     validations:
       required: true
   - type: textarea
-    id: mitigations
+    id: completion
     attributes:
-      label: Existing invariant, mitigation, or consistency mechanism
-      description: Identify protections already in place, or write "None".
-    validations:
-      required: true
-  - type: textarea
-    id: evidence
-    attributes:
-      label: Supporting evidence and validation gaps
-      description: Link safe runtime or diff evidence and name checks that have not been run.
-    validations:
-      required: true
-  - type: textarea
-    id: acceptance
-    attributes:
-      label: Closure acceptance criteria
-      description: List the correction and focused tests or evidence required to close this residual.
+      label: Completion criteria
+      description: State the correction and validation needed to close this follow-up.
     validations:
       required: true
   - type: input
     id: target
     attributes:
-      label: Target milestone, dependency, or roadmap disposition
-      placeholder: Hardening PR after #123, milestone 0.1, or docs/ROADMAP.md section
-    validations:
-      required: true
+      label: Target or dependency
+      placeholder: Milestone, later pull request, or roadmap section
   - type: checkboxes
     id: checks
     attributes:
       label: Tracking checks
       options:
-        - label: I searched for an existing issue and did not find a matching ticket.
+        - label: The maintainer explicitly accepted this finding for later work.
           required: true
-        - label: The maintainer explicitly accepted this residual.
-          required: true
-        - label: This issue links to the originating pull request or review thread, which links back here.
-          required: true
-        - label: I supplied runtime reachability for a runtime/path finding, or selected scope integrity and omitted runtime-only fields.
+        - label: This Issue and the originating pull request link to each other.
           required: true

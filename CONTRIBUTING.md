@@ -1,10 +1,10 @@
 # Contributing
 
 Okay Karaoke Studio keeps `main` green and releasable while version 0.1 product
-acceptance remains open and user-held. Read the active
-[`docs/MVP.md`](docs/MVP.md) contract, the prioritized
-[`docs/ROADMAP.md`](docs/ROADMAP.md), and the
-[`docs/SDLC.md`](docs/SDLC.md) change policy before starting nontrivial work.
+acceptance remains open and user-held. Read only the guidance relevant to the
+change: [`docs/MVP.md`](docs/MVP.md) for product behavior,
+[`docs/ROADMAP.md`](docs/ROADMAP.md) for scope and priorities, and
+[`docs/SDLC.md`](docs/SDLC.md) for pull-request and release work.
 
 ## Local setup
 
@@ -14,18 +14,14 @@ bun run test
 bun run build
 ```
 
-At the exact pull-request head, the Developer runs focused checks for the
-change plus the full applicable regression matrix. The independent Reviewer
-reruns that validation and inspects any manual or visual evidence. Routine
-hosted CI runs portable tests and the renderer build once on Linux, then only
-native-image and live-Electron compatibility smokes on macOS and Windows. It
-does not replace local visual, package, or media validation.
+Run focused checks while working and the applicable regression gates before
+handoff. Hosted GitHub Actions checks are merge gates, not substitutes for
+required local manual, visual, package, or media validation.
 
 Use a short-lived branch from current `main` and open a pull request. The pull
-request should explain the problem, intended scope, verification, risks, data or
-export-format impact, and what was deliberately left out. For MVP work, identify
-the real-song workflow blocker being addressed and call out any supporting
-criterion that the evidence adds, removes, or revises.
+request is the durable audit trail: explain the problem, scope, progress,
+verification, review decisions, risks, and deliberate exclusions. Link an Issue
+when one is useful; one is not required for every change.
 
 Run `bun run format` before validation. It applies the pinned formatter only to
 the changed Git hunks, expanding to the enclosing syntax structure when
@@ -44,12 +40,9 @@ it requires Electron, FFmpeg, and FFprobe.
 
 ## Maintainability guidance
 
-Readability and single responsibility matter more than a mechanical line count.
-For TypeScript, TSX, and CommonJS modules, aim for roughly 100–300 lines and
-prefer 80–120-character lines. Crossing 500 lines is a prompt to review the
-file's responsibilities and look for cohesive components, hooks, domain helpers,
-or test utilities to extract; it is not an automatic failure when the file still
-represents one clear concept.
+Readability and cohesive responsibility matter more than mechanical line or
+word counts. Split code when the resulting components, hooks, domain helpers, or
+test utilities have clear ownership and can be understood and tested separately.
 
 Keep rendering, state orchestration, data transformation, and process-boundary
 code separate when those responsibilities can be named and tested independently.
