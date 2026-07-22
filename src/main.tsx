@@ -4,6 +4,7 @@ import App from './App'
 import './styles.css'
 import './identity.css'
 import './timeline.css'
+import './transport.css'
 import './stage-rendering.css'
 
 createRoot(document.getElementById('root')!).render(
