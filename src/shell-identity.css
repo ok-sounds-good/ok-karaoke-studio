@@ -1,0 +1,32 @@
+.logo-mark {
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid #d8c9e9;
+  background: #aa8dde;
+  box-shadow: 0 7px 17px rgba(89, 62, 124, 0.18);
+}
+
+.logo-mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.topbar {
+  border-bottom-color: var(--line-soft);
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 7px 22px rgba(76, 55, 101, 0.08);
+  backdrop-filter: blur(14px);
+}
+
+.topbar__document small {
+  border-color: #ddd2e9;
+  background: #faf8fc;
+  color: var(--muted);
+}
+
+.topbar__document i {
+  background: var(--orange);
+  box-shadow: 0 0 0 3px rgba(255, 138, 43, 0.13);
+}

@@ -220,8 +220,8 @@ describe('Timeline and Sync Focus styling regressions', () => {
     )
   })
 
-  it('keeps Sync Focus text opaque and readable in the light identity theme', () => {
-    const identity = readFileSync(new URL('../src/identity.css', import.meta.url), 'utf8')
+  it('keeps Sync Focus text opaque and readable in the workspace identity theme', () => {
+    const identity = readFileSync(new URL('../src/workspace-identity.css', import.meta.url), 'utf8')
     const colorFor = (selector: string) => {
       const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       const match = identity.match(
@@ -249,24 +249,99 @@ describe('Timeline and Sync Focus styling regressions', () => {
     expect(cssContrast('#fff', '#70469e')).toBeGreaterThanOrEqual(4.5)
   })
 
-  it('keeps shared non-dialog primitives in identity.css', () => {
+  it('keeps shared primitives in identity.css and inspector-specific overrides together', () => {
     const timeline = readFileSync(new URL('../src/timeline.css', import.meta.url), 'utf8')
     const identity = readFileSync(new URL('../src/identity.css', import.meta.url), 'utf8')
+    const inspector = readFileSync(new URL('../src/inspector.css', import.meta.url), 'utf8')
+    const inspectorIdentity = readFileSync(
+      new URL('../src/inspector-identity.css', import.meta.url),
+      'utf8',
+    )
     const dialogExport = readFileSync(new URL('../src/dialog-export.css', import.meta.url), 'utf8')
 
-    const sharedSelectors = [
-      '.field--inline em',
-      '.audio-source small',
-      '.vocal-track-card__status',
-      '.vocal-track-card__number',
-      '.track-tab > span',
-      '.field input',
-    ]
+    const sharedSelectors = ['.button--primary', '.panel-header', '.keyboard-key']
 
     for (const selector of sharedSelectors) {
       expect(timeline.includes(selector)).toBe(false)
       expect(identity.includes(selector)).toBe(true)
       expect(dialogExport.includes(selector)).toBe(false)
+    }
+
+    for (const selector of [
+      '.field--inline em',
+      '.audio-source small',
+      '.vocal-track-card__status',
+    ]) {
+      expect(identity.includes(selector)).toBe(false)
+      expect(inspector.includes(selector)).toBe(true)
+      expect(inspectorIdentity.includes(selector)).toBe(true)
+    }
+  })
+
+  it('isolates shell, inspector, and workspace ownership without changing base-to-identity cascade order', () => {
+    const main = readFileSync(new URL('../src/main.tsx', import.meta.url), 'utf8')
+    const styles = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
+    const identity = readFileSync(new URL('../src/identity.css', import.meta.url), 'utf8')
+    const shell = readFileSync(new URL('../src/shell.css', import.meta.url), 'utf8')
+    const inspector = readFileSync(new URL('../src/inspector.css', import.meta.url), 'utf8')
+    const workspace = readFileSync(new URL('../src/workspace.css', import.meta.url), 'utf8')
+    const shellIdentity = readFileSync(
+      new URL('../src/shell-identity.css', import.meta.url),
+      'utf8',
+    )
+    const inspectorIdentity = readFileSync(
+      new URL('../src/inspector-identity.css', import.meta.url),
+      'utf8',
+    )
+    const workspaceIdentity = readFileSync(
+      new URL('../src/workspace-identity.css', import.meta.url),
+      'utf8',
+    )
+
+    const imports = [
+      './styles.css',
+      './shell.css',
+      './inspector.css',
+      './workspace.css',
+      './identity.css',
+      './shell-identity.css',
+      './inspector-identity.css',
+      './workspace-identity.css',
+      './dialog-export.css',
+      './timeline.css',
+      './transport.css',
+      './stage-rendering.css',
+    ].map((path) => main.indexOf(`import '${path}'`))
+    expect(imports.every((offset, index) => offset > (imports[index - 1] ?? -1))).toBe(true)
+
+    for (const [selector, owner, theme] of [
+      ['.topbar', shell, shellIdentity],
+      ['.inspector', inspector, inspectorIdentity],
+      ['.unified-workspace', workspace, workspaceIdentity],
+      ['.karaoke-stage', workspace, workspaceIdentity],
+      ['.track-tabs', workspace, workspaceIdentity],
+    ]) {
+      expect(owner.includes(selector), `Missing base owner for ${selector}`).toBe(true)
+      expect(theme.includes(selector), `Missing identity owner for ${selector}`).toBe(true)
+      expect(styles.includes(selector)).toBe(false)
+      expect(identity.includes(selector)).toBe(false)
+    }
+
+    expect(workspace).toMatch(/\.unified-workspace\s*\{[\s\S]*?min-height:\s*0;/)
+    expect(inspector).toMatch(/\.inspector__scroll\s*\{[\s\S]*?overflow-y:\s*auto;/)
+    expect(workspace).toMatch(
+      /@media \(max-height: 760px\)[\s\S]*?\.karaoke-stage\s*\{[\s\S]*?margin:\s*6px;/,
+    )
+    for (const selector of ['.status-pill', '.status-pill--live i', '.track-tab > span']) {
+      expect(workspace.includes(selector), `Missing workspace base owner for ${selector}`).toBe(
+        true,
+      )
+      expect(
+        workspaceIdentity.includes(selector),
+        `Missing workspace identity owner for ${selector}`,
+      ).toBe(true)
+      expect(shellIdentity.includes(selector)).toBe(false)
+      expect(inspectorIdentity.includes(selector)).toBe(false)
     }
   })
 
@@ -644,6 +719,7 @@ describe('first-time workflow', () => {
 
   it('enforces a scroll-safe workflow layout at the 1280 by 720 contract', () => {
     const styles = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
+    const inspector = readFileSync(new URL('../src/inspector.css', import.meta.url), 'utf8')
     const identity = readFileSync(new URL('../src/identity.css', import.meta.url), 'utf8')
     const dialogExport = readFileSync(new URL('../src/dialog-export.css', import.meta.url), 'utf8')
     const windowSecurity = readFileSync(
@@ -661,7 +737,7 @@ describe('first-time workflow', () => {
     expect(dialogExport).toMatch(
       /@media \(max-height: 720px\)\s*\{[\s\S]*?\.workflow-guide > li\s*\{[\s\S]*?min-height:\s*52px;/,
     )
-    expect(styles).toMatch(
+    expect(inspector).toMatch(
       /\.inspector__scroll\s*\{[\s\S]*?min-height:\s*0;[\s\S]*?overflow-y:\s*auto;/,
     )
     expect(styles).not.toContain('.inspector > .panel-header')

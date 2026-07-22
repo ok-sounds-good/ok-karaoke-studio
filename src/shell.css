@@ -1,0 +1,176 @@
+.app-shell {
+  display: grid;
+  grid-template-rows: 64px minmax(0, 1fr) 78px;
+  width: 100%;
+  height: 100%;
+}
+
+.logo-mark {
+  position: relative;
+  display: inline-block;
+  width: 35px;
+  height: 35px;
+  flex: 0 0 auto;
+  border-radius: 11px;
+  overflow: hidden;
+  background: var(--accent);
+  box-shadow:
+    0 0 0 1px rgba(215, 250, 74, 0.35),
+    0 8px 25px rgba(192, 233, 45, 0.14);
+}
+
+.logo-mark__ring {
+  position: absolute;
+  left: 8px;
+  top: 12px;
+  width: 13px;
+  height: 13px;
+  border: 4px solid #1a2310;
+  border-radius: 50%;
+}
+
+.logo-mark__stem {
+  position: absolute;
+  left: 21px;
+  top: 6px;
+  width: 4px;
+  height: 20px;
+  border-radius: 3px;
+  background: #1a2310;
+  transform: rotate(8deg);
+}
+
+.logo-mark__spark {
+  position: absolute;
+  right: 5px;
+  top: 5px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #1a2310;
+}
+
+.logo-mark--small {
+  width: 27px;
+  height: 27px;
+}
+
+.topbar {
+  z-index: 20;
+  display: grid;
+  grid-template-columns: 250px minmax(120px, 1fr) auto;
+  align-items: center;
+  gap: 20px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--line-soft);
+  background: rgba(14, 19, 17, 0.96);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.16);
+}
+
+.topbar__brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.topbar__identity {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.04;
+}
+
+.topbar__brand .style-button {
+  margin-left: 2px;
+}
+
+.topbar__brand strong {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.topbar__brand span:not(.logo-mark *) {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.topbar__document {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.topbar__document > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar__document i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--coral);
+  box-shadow: 0 0 0 3px rgba(255, 128, 100, 0.1);
+}
+
+.topbar__document small {
+  padding: 3px 5px;
+  border: 1px solid #334039;
+  border-radius: 4px;
+  color: #718078;
+  font-size: 7px;
+  letter-spacing: 0.12em;
+}
+
+.topbar__actions,
+.toolbar-group {
+  display: flex;
+  align-items: center;
+}
+
+.topbar__actions {
+  gap: 8px;
+}
+
+.toolbar-group {
+  gap: 1px;
+}
+
+.toolbar-divider {
+  width: 1px;
+  height: 21px;
+  background: var(--line-soft);
+}
+
+.studio-main {
+  display: grid;
+  grid-template-columns: 270px minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
+
+@media (max-width: 1240px) {
+  .topbar {
+    grid-template-columns: 220px minmax(80px, 1fr) auto;
+    gap: 8px;
+  }
+
+  .studio-main {
+    grid-template-columns: 240px minmax(0, 1fr);
+  }
+}
+
+@media (max-height: 760px) {
+  .app-shell {
+    grid-template-rows: 58px minmax(0, 1fr) 70px;
+  }
+}
