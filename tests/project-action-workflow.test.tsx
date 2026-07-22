@@ -29,6 +29,7 @@ describe('project action workflow wiring', () => {
 
   it('keeps trusted, bounded, exact-ID close IPC and ordinary beforeunload', () => {
     const main = source('../electron/main.cjs')
+    const windowSecurity = source('../electron/window-security.cjs')
     const preload = source('../electron/preload.cjs')
 
     expect(main).toMatch(/getPendingWindowClose[\s\S]{0,180}assertTrustedSender/)
@@ -41,19 +42,22 @@ describe('project action workflow wiring', () => {
     expect(preload).toContain('value.length === 36')
     expect(preload).toContain('isWindowCloseRequestId(value.requestId)')
     expect(preload).toContain('isWindowCloseRequestId(requestId)')
-    expect(main).toMatch(/will-prevent-unload[\s\S]{0,700}Discard the unsaved changes/)
+    expect(windowSecurity).toMatch(/will-prevent-unload[\s\S]{0,700}Discard the unsaved changes/)
   })
 
   it('gates arbitration on renderer readiness and clears it across renderer teardown', () => {
     const main = source('../electron/main.cjs')
+    const windowSecurity = source('../electron/window-security.cjs')
     const hook = source('../src/hooks/useProjectActionArbiter.ts')
 
     expect(main).toMatch(
       /window\.on\('close',[\s\S]{0,260}nativeCloseRendererReadiness\.isReady[\s\S]{0,120}preventDefault\(\)/,
     )
-    expect(main).toContain("contents.once('render-process-gone', releaseTerminalScope)")
-    expect(main).toMatch(/did-start-navigation[\s\S]{0,180}clearNativeCloseOwnership\(ownerId\)/)
-    expect(main).toMatch(/contents\.once\('destroyed',[\s\S]{0,100}releaseTerminalScope/)
+    expect(windowSecurity).toContain("contents.once('render-process-gone', releaseTerminalScope)")
+    expect(windowSecurity).toMatch(
+      /did-start-navigation[\s\S]{0,180}clearNativeCloseOwnership\(ownerId\)/,
+    )
+    expect(windowSecurity).toMatch(/contents\.once\('destroyed',[\s\S]{0,100}releaseTerminalScope/)
     expect(main).toMatch(/window\.on\('closed',[\s\S]{0,100}clearNativeCloseOwnership/)
     expect(main).toMatch(
       /app\.on\('before-quit',[\s\S]{0,360}nativeCloseRendererReadiness\.isReady[\s\S]{0,160}requestAppQuit\(\)/,

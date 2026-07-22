@@ -500,8 +500,11 @@ describe('first-time workflow', () => {
   it('enforces a scroll-safe workflow layout at the 1280 by 720 contract', () => {
     const styles = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
     const identity = readFileSync(new URL('../src/identity.css', import.meta.url), 'utf8')
-    const electronMain = readFileSync(new URL('../electron/main.cjs', import.meta.url), 'utf8')
-    const minimumWindow = electronMain.match(/minWidth:\s*(\d+),\s*\n\s*minHeight:\s*(\d+)/)
+    const windowSecurity = readFileSync(
+      new URL('../electron/window-security.cjs', import.meta.url),
+      'utf8',
+    )
+    const minimumWindow = windowSecurity.match(/minWidth:\s*(\d+),\s*\n\s*minHeight:\s*(\d+)/)
 
     expect(minimumWindow).not.toBeNull()
     expect(Number(minimumWindow?.[1])).toBeLessThanOrEqual(1280)

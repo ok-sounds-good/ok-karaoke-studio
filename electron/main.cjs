@@ -2,10 +2,8 @@
 
 const { app, BrowserWindow, dialog, ipcMain, Menu, protocol, session, shell } = require('electron')
 const { randomUUID } = require('node:crypto')
-const { createReadStream } = require('node:fs')
 const fs = require('node:fs/promises')
 const path = require('node:path')
-const { Readable } = require('node:stream')
 const {
   queueProjectWrite,
   readUtf8FileWithinLimit,
@@ -60,12 +58,17 @@ const {
   isNativeCloseRequestId,
 } = require('./native-close-arbiter.cjs')
 const {
-  VIEWPORT: VISUAL_SMOKE_VIEWPORT,
-  configureVisualSmokeBeforeReady,
-  installVisualSmokeFatalObserver,
-  parseVisualSmokeArguments,
-  runVisualSmoke,
-} = require('./video-style-visual-smoke.cjs')
+  createStudioProtocolHandlers,
+  installStudioProtocolHandlers,
+  registerStudioSchemes,
+} = require('./studio-protocols.cjs')
+const {
+  createExternalUrlOpener,
+  createMainWindowOptions,
+  isAllowedAppNavigation,
+  secureWebContents,
+} = require('./window-security.cjs')
+const { prepareVisualSmokeStartup } = require('./visual-smoke-startup.cjs')
 
 const APP_NAME = 'Okay Karaoke Studio'
 const APP_SCHEME = 'studio-app'
@@ -215,54 +218,22 @@ let mainWindow = null
 
 app.setName(APP_NAME)
 
-let visualSmokeConfig = null
-let visualSmokeFatalObserver = null
-let visualSmokeStartupFailed = false
-try {
-  visualSmokeConfig = configureVisualSmokeBeforeReady(app, parseVisualSmokeArguments(process.argv))
-  if (visualSmokeConfig) visualSmokeFatalObserver = installVisualSmokeFatalObserver(process)
-} catch {
-  visualSmokeStartupFailed = true
-}
+const visualSmokeStartup = prepareVisualSmokeStartup({
+  argv: process.argv,
+  app,
+  processHandle: process,
+  loadVisualSmoke: () => require('./video-style-visual-smoke.cjs'),
+})
+const visualSmokeConfig = visualSmokeStartup.config
+const visualSmokeFatalObserver = visualSmokeStartup.fatalObserver
+const visualSmokeModule = visualSmokeStartup.module
+const visualSmokeStartupFailed = visualSmokeStartup.startupFailed
 
 const styleTemplateStore = createStyleTemplateStore({
   filePath: path.join(app.getPath('userData'), 'style-templates.json'),
 })
 
-protocol.registerSchemesAsPrivileged([
-  {
-    scheme: APP_SCHEME,
-    privileges: {
-      standard: true,
-      secure: true,
-      supportFetchAPI: true,
-      corsEnabled: true,
-      stream: true,
-      codeCache: true,
-    },
-  },
-  {
-    scheme: MEDIA_SCHEME,
-    privileges: {
-      standard: true,
-      secure: true,
-      supportFetchAPI: true,
-      corsEnabled: true,
-      stream: true,
-    },
-  },
-])
-
-function textResponse(message, status, extraHeaders = {}) {
-  return new Response(message, {
-    status,
-    headers: {
-      'Content-Type': 'text/plain; charset=utf-8',
-      'X-Content-Type-Options': 'nosniff',
-      ...extraHeaders,
-    },
-  })
-}
+registerStudioSchemes({ protocol, appScheme: APP_SCHEME, mediaScheme: MEDIA_SCHEME })
 
 function rendererOrigin() {
   return useBuiltRenderer() ? `${APP_SCHEME}://${APP_HOST}` : new URL(DEVELOPMENT_URL).origin
@@ -272,217 +243,18 @@ function useBuiltRenderer() {
   return app.isPackaged || visualSmokeConfig !== null
 }
 
-function appFilePathFromUrl(rawUrl) {
-  try {
-    const url = new URL(rawUrl)
-    if (
-      url.protocol !== `${APP_SCHEME}:` ||
-      url.hostname !== APP_HOST ||
-      url.port ||
-      url.username ||
-      url.password
-    ) {
-      return null
-    }
-
-    const decodedPath = decodeURIComponent(url.pathname)
-    if (decodedPath.includes('\0')) return null
-    const relativePath =
-      decodedPath === '/' || decodedPath === '' ? 'index.html' : decodedPath.replace(/^\/+/, '')
-    const filePath = path.resolve(DIST_ROOT, relativePath)
-    const pathWithinDist = path.relative(DIST_ROOT, filePath)
-    if (
-      pathWithinDist === '..' ||
-      pathWithinDist.startsWith(`..${path.sep}`) ||
-      path.isAbsolute(pathWithinDist)
-    ) {
-      return null
-    }
-    return filePath
-  } catch {
-    return null
-  }
-}
-
-function installApplicationProtocol() {
-  let canonicalDistRoot
-  protocol.handle(APP_SCHEME, async (request) => {
-    if (request.method !== 'GET' && request.method !== 'HEAD') {
-      return textResponse('Method not allowed', 405, { Allow: 'GET, HEAD' })
-    }
-
-    const requestedFilePath = appFilePathFromUrl(request.url)
-    if (!requestedFilePath) return textResponse('Not found', 404)
-
-    let filePath
-    let fileStats
-    try {
-      canonicalDistRoot ||= fs.realpath(DIST_ROOT)
-      const [distRoot, canonicalFilePath] = await Promise.all([
-        canonicalDistRoot,
-        fs.realpath(requestedFilePath),
-      ])
-      const pathWithinDist = path.relative(distRoot, canonicalFilePath)
-      if (
-        pathWithinDist === '..' ||
-        pathWithinDist.startsWith(`..${path.sep}`) ||
-        path.isAbsolute(pathWithinDist)
-      ) {
-        return textResponse('Not found', 404)
-      }
-      filePath = canonicalFilePath
-      fileStats = await fs.stat(filePath)
-    } catch {
-      return textResponse('Not found', 404)
-    }
-    if (!fileStats.isFile()) return textResponse('Not found', 404)
-
-    const relativePath = path.relative(DIST_ROOT, filePath)
-    const headers = {
-      'Cache-Control': relativePath.startsWith(`assets${path.sep}`)
-        ? 'public, max-age=31536000, immutable'
-        : 'no-cache',
-      'Content-Length': String(fileStats.size),
-      'Content-Type':
-        APP_MIME_TYPES.get(path.extname(filePath).toLowerCase()) || 'application/octet-stream',
-      'X-Content-Type-Options': 'nosniff',
-    }
-
-    if (request.method === 'HEAD' || fileStats.size === 0) {
-      return new Response(null, { status: 200, headers })
-    }
-
-    return new Response(Readable.toWeb(createReadStream(filePath)), {
-      status: 200,
-      headers,
-    })
-  })
-}
-
-function mediaResponseHeaders() {
-  return {
-    'Access-Control-Allow-Origin': rendererOrigin(),
-    'Access-Control-Expose-Headers': 'Accept-Ranges, Content-Length, Content-Range',
-    'Cache-Control': 'no-store',
-    'X-Content-Type-Options': 'nosniff',
-  }
-}
-
-function parseByteRange(value, size) {
-  if (!value) return null
-
-  const match = /^bytes=(\d*)-(\d*)$/.exec(value.trim())
-  if (!match || size === 0 || (!match[1] && !match[2])) return false
-
-  let start
-  let end
-
-  if (!match[1]) {
-    const suffixLength = Number(match[2])
-    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) return false
-    start = Math.max(0, size - suffixLength)
-    end = size - 1
-  } else {
-    start = Number(match[1])
-    end = match[2] ? Number(match[2]) : size - 1
-    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end)) return false
-    if (start >= size || end < start) return false
-    end = Math.min(end, size - 1)
-  }
-
-  return { start, end }
-}
-
-function installMediaProtocol() {
-  protocol.handle(MEDIA_SCHEME, async (request) => {
-    if (request.method !== 'GET' && request.method !== 'HEAD') {
-      return textResponse('Method not allowed', 405, {
-        ...mediaResponseHeaders(),
-        Allow: 'GET, HEAD',
-      })
-    }
-
-    const token = mediaTokenFromUrl(request.url, MEDIA_SCHEME)
-    const mediaFile = token ? mediaCapabilities.get(token) : null
-    const hasActiveOwner = Boolean(
-      mediaFile &&
-      mainWindow &&
-      !mainWindow.isDestroyed() &&
-      !mainWindow.webContents.isDestroyed() &&
-      mainWindow.webContents.id === mediaFile.ownerId,
-    )
-    if (token && mediaFile && !hasActiveOwner) mediaCapabilities.revokeToken(token)
-    if (!hasActiveOwner) return textResponse('Media not found', 404, mediaResponseHeaders())
-
-    if (mediaFile.kind === 'background') {
-      const size = mediaFile.bytes.length
-      const range = parseByteRange(request.headers.get('range'), size)
-      if (range === false) {
-        return textResponse('Requested range not satisfiable', 416, {
-          ...mediaResponseHeaders(),
-          'Content-Range': `bytes */${size}`,
-        })
-      }
-      const start = range ? range.start : 0
-      const end = range ? range.end : size - 1
-      const headers = {
-        ...mediaResponseHeaders(),
-        'Accept-Ranges': 'bytes',
-        'Content-Length': String(range ? end - start + 1 : size),
-        'Content-Type': mediaFile.mime,
-      }
-      if (range) headers['Content-Range'] = `bytes ${start}-${end}/${size}`
-      const body =
-        request.method === 'HEAD' ? null : Buffer.from(mediaFile.bytes.subarray(start, end + 1))
-      return new Response(body, { status: range ? 206 : 200, headers })
-    }
-
-    const filePath = mediaFile.filePath
-
-    let fileStats
-    try {
-      fileStats = await fs.stat(filePath)
-    } catch {
-      if (token) mediaCapabilities.revokeToken(token)
-      return textResponse('Media not found', 404, mediaResponseHeaders())
-    }
-
-    if (!fileStats.isFile()) {
-      if (token) mediaCapabilities.revokeToken(token)
-      return textResponse('Media not found', 404, mediaResponseHeaders())
-    }
-
-    const range = parseByteRange(request.headers.get('range'), fileStats.size)
-    if (range === false) {
-      return textResponse('Requested range not satisfiable', 416, {
-        ...mediaResponseHeaders(),
-        'Content-Range': `bytes */${fileStats.size}`,
-      })
-    }
-
-    const extension = path.extname(filePath).toLowerCase()
-    const headers = {
-      ...mediaResponseHeaders(),
-      'Accept-Ranges': 'bytes',
-      'Content-Type': AUDIO_MIME_TYPES.get(extension) || 'application/octet-stream',
-    }
-
-    const start = range ? range.start : 0
-    const end = range ? range.end : Math.max(0, fileStats.size - 1)
-    headers['Content-Length'] = String(range ? end - start + 1 : fileStats.size)
-    if (range) headers['Content-Range'] = `bytes ${start}-${end}/${fileStats.size}`
-
-    if (request.method === 'HEAD' || fileStats.size === 0) {
-      return new Response(null, { status: range ? 206 : 200, headers })
-    }
-
-    const stream = createReadStream(filePath, { start, end })
-    return new Response(Readable.toWeb(stream), {
-      status: range ? 206 : 200,
-      headers,
-    })
-  })
-}
+const protocolHandlers = createStudioProtocolHandlers({
+  appHost: APP_HOST,
+  appMimeTypes: APP_MIME_TYPES,
+  appScheme: APP_SCHEME,
+  audioMimeTypes: AUDIO_MIME_TYPES,
+  distRoot: DIST_ROOT,
+  getMainWindow: () => mainWindow,
+  getRendererOrigin: rendererOrigin,
+  mediaCapabilities,
+  mediaScheme: MEDIA_SCHEME,
+  mediaTokenFromUrl,
+})
 
 function isRecord(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -1265,122 +1037,40 @@ function installApplicationMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(applicationMenuTemplate()))
 }
 
-function isAllowedAppNavigation(rawUrl) {
-  try {
-    const url = new URL(rawUrl)
+const openExternalUrl = createExternalUrlOpener({ openExternal: shell.openExternal.bind(shell) })
 
-    if (!useBuiltRenderer()) {
-      return url.origin === new URL(DEVELOPMENT_URL).origin
-    }
-
-    return (
-      url.protocol === `${APP_SCHEME}:` &&
-      url.hostname === APP_HOST &&
-      !url.port &&
-      !url.username &&
-      !url.password &&
-      (url.pathname === '/' || url.pathname === '/index.html')
-    )
-  } catch {
-    return false
-  }
-}
-
-async function openExternalUrl(rawUrl) {
-  try {
-    const url = new URL(rawUrl)
-    if (!['https:', 'http:', 'mailto:'].includes(url.protocol)) return
-    await shell.openExternal(url.toString())
-  } catch (error) {
-    console.error('Unable to open external URL:', error)
-  }
-}
-
-function secureWebContents(contents) {
-  const ownerId = contents.id
-  const releaseRendererScope = () => {
-    mediaCapabilities.releaseOwner(ownerId)
-    void projectOpens.releaseOwner(ownerId)
-  }
-  contents.setWindowOpenHandler(({ url }) => {
-    void openExternalUrl(url)
-    return { action: 'deny' }
+const allowedAppNavigation = (url) =>
+  isAllowedAppNavigation(url, {
+    appHost: APP_HOST,
+    appScheme: APP_SCHEME,
+    developmentUrl: DEVELOPMENT_URL,
+    useBuiltRenderer,
   })
-
-  contents.on('will-navigate', (event, url) => {
-    if (isAllowedAppNavigation(url)) return
-    event.preventDefault()
-    void openExternalUrl(url)
-  })
-
-  contents.on('will-attach-webview', (event) => event.preventDefault())
-  contents.on('will-prevent-unload', (event) => {
-    const owner = BrowserWindow.fromWebContents(contents)
-    const options = {
-      type: 'warning',
-      buttons: ['Discard Changes', 'Keep Editing'],
-      defaultId: 1,
-      cancelId: 1,
-      noLink: true,
-      title: 'Unsaved karaoke project',
-      message: 'Discard the unsaved changes?',
-      detail: 'Your latest lyric and timing edits have not been saved.',
-    }
-    const choice = owner
-      ? dialog.showMessageBoxSync(owner, options)
-      : dialog.showMessageBoxSync(options)
-    // Electron prevents the unload by default. Preventing this event allows
-    // the renderer-requested unload to continue after explicit confirmation.
-    if (choice === 0) event.preventDefault()
-  })
-  contents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
-    if (isMainFrame && !isInPlace) {
-      clearNativeCloseOwnership(ownerId)
-      releaseRendererScope()
-    }
-  })
-  let terminalScopeReleased = false
-  const releaseTerminalScope = () => {
-    if (terminalScopeReleased) return
-    terminalScopeReleased = true
-    clearNativeCloseOwnership(ownerId)
-    releaseRendererScope()
-  }
-  contents.once('render-process-gone', releaseTerminalScope)
-  contents.once('destroyed', () => {
-    releaseTerminalScope()
-  })
-}
 
 async function createMainWindow() {
   if (mainWindow && !mainWindow.isDestroyed()) return mainWindow
 
-  const contentSize = visualSmokeConfig ? VISUAL_SMOKE_VIEWPORT : { height: 900, width: 1440 }
-
-  const window = new BrowserWindow({
-    title: APP_NAME,
-    width: contentSize.width,
-    height: contentSize.height,
-    minWidth: 1080,
-    minHeight: 680,
-    enableLargerThanScreen: visualSmokeConfig !== null,
-    show: false,
-    backgroundColor: '#f8f6fb',
-    useContentSize: true,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      webSecurity: true,
-      allowRunningInsecureContent: false,
-      navigateOnDragDrop: false,
-      spellcheck: true,
-    },
-  })
+  const window = new BrowserWindow(
+    createMainWindowOptions({
+      appName: APP_NAME,
+      preloadPath: path.join(__dirname, 'preload.cjs'),
+      visualSmokeConfig,
+      visualSmokeViewport: visualSmokeModule?.VIEWPORT,
+    }),
+  )
 
   mainWindow = window
-  secureWebContents(window.webContents)
+  secureWebContents(window.webContents, {
+    BrowserWindow,
+    clearNativeCloseOwnership,
+    dialog,
+    isAllowedNavigation: allowedAppNavigation,
+    openExternalUrl,
+    releaseOwner(ownerId) {
+      mediaCapabilities.releaseOwner(ownerId)
+      void projectOpens.releaseOwner(ownerId)
+    },
+  })
   if (visualSmokeConfig) visualSmokeFatalObserver.observeRenderer(window.webContents)
   const clearNativeCloseOwnershipAfterWindowClosed = createNativeCloseOwnershipCleanup(
     window.webContents,
@@ -1470,8 +1160,13 @@ if (visualSmokeStartupFailed) {
   app
     .whenReady()
     .then(async () => {
-      if (useBuiltRenderer()) installApplicationProtocol()
-      installMediaProtocol()
+      installStudioProtocolHandlers({
+        protocol,
+        handlers: protocolHandlers,
+        appScheme: APP_SCHEME,
+        mediaScheme: MEDIA_SCHEME,
+        installApplication: useBuiltRenderer(),
+      })
       registerIpcHandlers()
       installApplicationMenu()
 
@@ -1484,7 +1179,7 @@ if (visualSmokeStartupFailed) {
 
       const window = await createMainWindow()
       if (visualSmokeConfig) {
-        const outcome = await runVisualSmoke({
+        const outcome = await visualSmokeModule.runVisualSmoke({
           app,
           config: visualSmokeConfig,
           fatalObserver: visualSmokeFatalObserver,

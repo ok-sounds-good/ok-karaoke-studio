@@ -1061,18 +1061,24 @@ describe('production-window visual smoke', () => {
 
   it('routes smoke mode through the built protocol without weakening window security', async () => {
     const source = await readFile(join(process.cwd(), 'electron/main.cjs'), 'utf8')
-    expect(source.indexOf('configureVisualSmokeBeforeReady')).toBeLessThan(
+    const startup = await readFile(join(process.cwd(), 'electron/visual-smoke-startup.cjs'), 'utf8')
+    const windowSecurity = await readFile(
+      join(process.cwd(), 'electron/window-security.cjs'),
+      'utf8',
+    )
+    expect(source.indexOf('prepareVisualSmokeStartup({')).toBeLessThan(
       source.indexOf('requestSingleInstanceLock'),
     )
-    expect(source.indexOf('visualSmokeConfig = configureVisualSmokeBeforeReady')).toBeLessThan(
+    expect(source.indexOf('prepareVisualSmokeStartup({')).toBeLessThan(
       source.indexOf('const styleTemplateStore = createStyleTemplateStore'),
     )
     expect(source).toContain('app.isPackaged || visualSmokeConfig !== null')
+    expect(startup).toMatch(
+      /module\.configureVisualSmokeBeforeReady\(\s*app,\s*module\.parseVisualSmokeArguments\(argv\),\s*\)/,
+    )
     expect(source).toContain('await window.loadURL(PACKAGED_APP_URL)')
     expect(source).toContain('getWindows: () => BrowserWindow.getAllWindows()')
-    expect(source).toContain(
-      'if (visualSmokeConfig) visualSmokeFatalObserver = installVisualSmokeFatalObserver(process)',
-    )
+    expect(startup).toContain('module.installVisualSmokeFatalObserver(processHandle)')
     expect(
       source.indexOf('visualSmokeFatalObserver.observeRenderer(window.webContents)'),
     ).toBeLessThan(source.indexOf('await window.loadURL(PACKAGED_APP_URL)'))
@@ -1086,6 +1092,6 @@ describe('production-window visual smoke', () => {
       'allowRunningInsecureContent: false',
       'enableLargerThanScreen: visualSmokeConfig !== null',
     ])
-      expect(source).toContain(invariant)
+      expect(windowSecurity).toContain(invariant)
   })
 })
