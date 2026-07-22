@@ -133,23 +133,6 @@ select:focus-visible {
   box-shadow: 0 0 0 3px rgba(255, 138, 43, 0.13);
 }
 
-.validation-button {
-  color: var(--accent-soft);
-}
-
-.validation-button:hover {
-  border-color: var(--line);
-  background: var(--purple-soft);
-}
-
-.validation-button.has-issues {
-  color: #98400a;
-}
-
-.workflow-button {
-  color: var(--muted-strong);
-}
-
 .panel {
   border-color: var(--line-soft);
   background: rgba(255, 255, 255, 0.96);
@@ -182,41 +165,26 @@ select:focus-visible {
 }
 
 .inspector-section__title,
-.dialog-section-title,
 .field > span {
   color: #776b82;
 }
 
-.field input,
-.raw-lyrics textarea {
+.field input {
   border-color: var(--control-line);
   background: #fff;
   color: var(--text);
   box-shadow: inset 0 1px 2px rgba(76, 55, 101, 0.04);
 }
 
-.field input:focus,
-.raw-lyrics textarea:focus {
+.field input:focus {
   border-color: var(--accent);
   background: #fff;
   box-shadow: 0 0 0 3px rgba(155, 120, 207, 0.11);
 }
 
 .field--inline em,
-.dialog-section-title small,
 .audio-source small,
-.vocal-track-card__status,
-.modal-note,
-.workflow-guide p,
-.raw-lyrics > p,
-.fit-line > span,
-.fit-line > small,
-.export-readiness span,
-.export-options small,
-.validation-item small,
-.validation-item em,
-.validation-empty p,
-.video-export-progress {
+.vocal-track-card__status {
   color: var(--muted);
 }
 
@@ -230,9 +198,7 @@ select:focus-visible {
   background: #f2eafb;
 }
 
-.audio-source__icon,
-.workflow-guide > li > span,
-.validation-empty > span {
+.audio-source__icon {
   background: var(--purple-soft);
   color: var(--accent-soft);
 }
@@ -284,8 +250,7 @@ select:focus-visible {
   color: var(--accent-soft);
 }
 
-.project-health,
-.export-readiness {
+.project-health {
   border-color: rgba(155, 120, 207, 0.28);
   background: rgba(155, 120, 207, 0.08);
   color: var(--accent-soft);
@@ -295,14 +260,12 @@ select:focus-visible {
   color: var(--accent-soft);
 }
 
-.project-health--warning,
-.export-readiness--warning {
+.project-health--warning {
   border-color: rgba(255, 138, 43, 0.3);
   background: rgba(255, 138, 43, 0.09);
 }
 
-.project-health--warning .project-health__score,
-.export-readiness--warning {
+.project-health--warning .project-health__score {
   color: #98400a;
 }
 
@@ -534,8 +497,7 @@ select:focus-visible {
   color: var(--muted);
 }
 
-.preview-setting select,
-.video-export-settings select {
+.preview-setting select {
   border-color: var(--control-line);
   background: #fff;
   color: var(--text);
@@ -543,169 +505,18 @@ select:focus-visible {
   box-shadow: inset 0 1px 2px rgba(76, 55, 101, 0.04);
 }
 
-.preview-setting select:hover,
-.video-export-settings select:hover {
+.preview-setting select:hover {
   border-color: #80649a;
 }
 
-.preview-setting select:focus,
-.video-export-settings select:focus {
+.preview-setting select:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(155, 120, 207, 0.11);
 }
 
-.preview-setting select option,
-.video-export-settings select option {
+.preview-setting select option {
   background: #fff;
   color: var(--text);
-}
-
-.modal-backdrop {
-  background: rgba(48, 37, 60, 0.43);
-}
-
-.modal {
-  border-color: #d7cae4;
-  background: #fff;
-  box-shadow: 0 28px 90px rgba(52, 37, 68, 0.24);
-}
-
-.modal__footer {
-  background: #f8f4fa;
-}
-
-.workflow-guide > li,
-.export-options > button,
-.validation-item {
-  border-color: #e0d6e9;
-  background: #fdfcfe;
-}
-
-.video-export-settings {
-  border-color: #ded2e8;
-  background: linear-gradient(180deg, #fbf9fd, #f7f3fa);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
-}
-
-.video-export-settings legend {
-  color: var(--muted-strong);
-}
-
-.video-export-settings label {
-  color: var(--muted);
-}
-
-.video-export-settings:disabled {
-  opacity: 1;
-}
-
-.video-export-settings:disabled select {
-  border-color: #ddd4e4;
-  background: #f2eef5;
-  color: #8b8192;
-}
-
-.export-option__icon {
-  background: var(--purple-soft);
-  color: var(--accent-soft);
-}
-
-.workflow-guide__intro {
-  color: var(--muted);
-}
-
-.workflow-guide > li > span::after {
-  border-color: #fdfcfe;
-  background: var(--orange);
-  color: #3c200e;
-}
-
-.workflow-guide code,
-.raw-lyrics code {
-  color: var(--accent-soft);
-}
-
-.raw-lyrics code {
-  background: var(--purple-soft);
-}
-
-.fit-line {
-  border-bottom-color: #e5dcec;
-  color: var(--text-soft);
-}
-
-.fit-line--warning > small {
-  color: #8f3f12;
-}
-
-.fit-line--danger > small {
-  color: var(--danger);
-}
-
-.export-options > button:hover {
-  border-color: #b99fd5;
-  background: #f5effa;
-  box-shadow: 0 4px 12px rgba(76, 55, 101, 0.08);
-  transform: translateY(-1px);
-}
-
-.export-options > button:disabled,
-.export-options > button:disabled:hover {
-  border-color: #e0d6e9;
-  background: #f8f5fa;
-  box-shadow: none;
-  opacity: 1;
-  transform: none;
-}
-
-.export-options > button:disabled .export-option__icon {
-  background: #f0ebf3;
-  color: #968a9e;
-}
-
-.export-options > button:disabled strong,
-.export-options > button:disabled small,
-.export-options > button:disabled > svg {
-  color: #8f8496;
-}
-
-.export-options > button > svg {
-  color: var(--accent-soft);
-}
-
-.validation-item > span {
-  background: var(--orange-soft);
-  color: #98400a;
-}
-
-.validation-item--error > span {
-  background: #fff0f1;
-  color: var(--danger);
-}
-
-.validation-item strong {
-  color: var(--text-soft);
-}
-
-.toast {
-  border-color: #d3c6df;
-  background: #fff;
-  box-shadow: 0 15px 35px rgba(52, 37, 68, 0.17);
-  color: var(--text-soft);
-}
-
-.toast > span {
-  background: var(--accent);
-}
-
-.toast--success > span {
-  background: var(--accent);
-  box-shadow: 0 0 0 3px rgba(155, 120, 207, 0.11);
-}
-
-.toast--warning > span {
-  background: var(--orange);
-  box-shadow: 0 0 0 3px rgba(255, 138, 43, 0.11);
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -249,25 +249,14 @@ describe('Timeline and Sync Focus styling regressions', () => {
     expect(cssContrast('#fff', '#70469e')).toBeGreaterThanOrEqual(4.5)
   })
 
-  it('keeps shared light-theme ownership for non-timeline and non-transport selectors in identity.css', () => {
+  it('keeps shared non-dialog primitives in identity.css', () => {
     const timeline = readFileSync(new URL('../src/timeline.css', import.meta.url), 'utf8')
     const identity = readFileSync(new URL('../src/identity.css', import.meta.url), 'utf8')
+    const dialogExport = readFileSync(new URL('../src/dialog-export.css', import.meta.url), 'utf8')
 
     const sharedSelectors = [
       '.field--inline em',
-      '.dialog-section-title small',
       '.audio-source small',
-      '.modal-note',
-      '.workflow-guide p',
-      '.raw-lyrics > p',
-      '.fit-line > span',
-      '.fit-line > small',
-      '.export-readiness span',
-      '.export-options small',
-      '.validation-item small',
-      '.validation-item em',
-      '.validation-empty p',
-      '.video-export-progress',
       '.vocal-track-card__status',
       '.vocal-track-card__number',
       '.track-tab > span',
@@ -277,7 +266,58 @@ describe('Timeline and Sync Focus styling regressions', () => {
     for (const selector of sharedSelectors) {
       expect(timeline.includes(selector)).toBe(false)
       expect(identity.includes(selector)).toBe(true)
+      expect(dialogExport.includes(selector)).toBe(false)
     }
+  })
+
+  it('moves dialog, export, validation, and failure-state ownership to dialog-export.css', () => {
+    const main = readFileSync(new URL('../src/main.tsx', import.meta.url), 'utf8')
+    const styles = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
+    const identity = readFileSync(new URL('../src/identity.css', import.meta.url), 'utf8')
+    const dialogExport = readFileSync(new URL('../src/dialog-export.css', import.meta.url), 'utf8')
+
+    const importedStyles = main.indexOf("import './styles.css'")
+    const importedIdentity = main.indexOf("import './identity.css'")
+    const importedDialogExport = main.indexOf("import './dialog-export.css'")
+    const importedTimeline = main.indexOf("import './timeline.css'")
+
+    expect(importedDialogExport).toBeGreaterThan(importedIdentity)
+    expect(importedTimeline).toBeGreaterThan(importedDialogExport)
+    expect(importedIdentity).toBeGreaterThan(importedStyles)
+
+    const dialogExportSelectors = [
+      '.validation-button',
+      '.workflow-button',
+      '.dialog-section-title',
+      '.modal-backdrop',
+      '.modal__body',
+      '.workflow-guide',
+      '.raw-lyrics textarea',
+      '.fit-line--danger > small',
+      '.export-readiness--warning',
+      '.video-export-progress progress',
+      '.video-export-cancel-error',
+      '.video-export-settings:disabled select',
+      '.export-options > button:disabled:hover',
+      '.validation-item--error > span',
+      '.toast--warning > span',
+    ]
+
+    for (const selector of dialogExportSelectors) {
+      expect(styles.includes(selector)).toBe(false)
+      expect(identity.includes(selector)).toBe(false)
+      expect(dialogExport.includes(selector)).toBe(true)
+    }
+
+    expect(dialogExport).toMatch(
+      /\.modal-backdrop\s*\{[^}]*z-index:\s*100;[\s\S]*?\.modal__body\s*\{[^}]*overflow:\s*auto;/,
+    )
+    expect(dialogExport).toMatch(
+      /\.export-options > button:disabled,[\s\S]*?\.export-options > button:disabled:hover\s*\{[^}]*opacity:\s*1;[\s\S]*?transform:\s*none;/,
+    )
+    expect(dialogExport).toMatch(
+      /@media \(max-height: 720px\)\s*\{[\s\S]*?\.workflow-guide > li\s*\{[^}]*min-height:\s*52px;/,
+    )
   })
 
   it('moves transport ownership to transport.css with explicit selector migration and import order', () => {
@@ -288,13 +328,15 @@ describe('Timeline and Sync Focus styling regressions', () => {
 
     const importedStyles = main.indexOf("import './styles.css'")
     const importedIdentity = main.indexOf("import './identity.css'")
+    const importedDialogExport = main.indexOf("import './dialog-export.css'")
     const importedTimeline = main.indexOf("import './timeline.css'")
     const importedTransport = main.indexOf("import './transport.css'")
     const importedStageRendering = main.indexOf("import './stage-rendering.css'")
 
     expect(importedStyles).toBeGreaterThan(-1)
     expect(importedIdentity).toBeGreaterThan(importedStyles)
-    expect(importedTimeline).toBeGreaterThan(importedIdentity)
+    expect(importedDialogExport).toBeGreaterThan(importedIdentity)
+    expect(importedTimeline).toBeGreaterThan(importedDialogExport)
     expect(importedTransport).toBeGreaterThan(importedTimeline)
     expect(importedStageRendering).toBeGreaterThan(importedTransport)
 
@@ -603,6 +645,7 @@ describe('first-time workflow', () => {
   it('enforces a scroll-safe workflow layout at the 1280 by 720 contract', () => {
     const styles = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
     const identity = readFileSync(new URL('../src/identity.css', import.meta.url), 'utf8')
+    const dialogExport = readFileSync(new URL('../src/dialog-export.css', import.meta.url), 'utf8')
     const windowSecurity = readFileSync(
       new URL('../electron/window-security.cjs', import.meta.url),
       'utf8',
@@ -612,10 +655,10 @@ describe('first-time workflow', () => {
     expect(minimumWindow).not.toBeNull()
     expect(Number(minimumWindow?.[1])).toBeLessThanOrEqual(1280)
     expect(Number(minimumWindow?.[2])).toBeLessThanOrEqual(720)
-    expect(styles).toMatch(
+    expect(dialogExport).toMatch(
       /\.modal__body\s*\{[\s\S]*?max-height:\s*calc\(100vh - 190px\);[\s\S]*?overflow:\s*auto;/,
     )
-    expect(styles).toMatch(
+    expect(dialogExport).toMatch(
       /@media \(max-height: 720px\)\s*\{[\s\S]*?\.workflow-guide > li\s*\{[\s\S]*?min-height:\s*52px;/,
     )
     expect(styles).toMatch(
