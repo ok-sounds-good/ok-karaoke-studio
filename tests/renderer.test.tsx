@@ -207,7 +207,7 @@ describe('offset-aware renderer state', () => {
 })
 describe('Timeline and Sync Focus styling regressions', () => {
   it('keeps split resize handles exposed for compact timing blocks', () => {
-    const styles = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
+    const styles = readFileSync(new URL('../src/timeline.css', import.meta.url), 'utf8')
 
     expect(styles).not.toMatch(
       /\.timeline-word\.is-compact \.timeline-word__handle\s*\{[^}]*display:\s*none/,
@@ -247,6 +247,41 @@ describe('Timeline and Sync Focus styling regressions', () => {
       /\.sync-cue__line b\.is-target,[\s\S]*?background:\s*#70469e;[\s\S]*?color:\s*#fff;/,
     )
     expect(cssContrast('#fff', '#70469e')).toBeGreaterThanOrEqual(4.5)
+  })
+
+  it('keeps shared light-theme ownership for non-timeline selectors in identity.css', () => {
+    const timeline = readFileSync(new URL('../src/timeline.css', import.meta.url), 'utf8')
+    const identity = readFileSync(new URL('../src/identity.css', import.meta.url), 'utf8')
+
+    const sharedSelectors = [
+      '.field--inline em',
+      '.dialog-section-title small',
+      '.audio-source small',
+      '.sync-button small',
+      '.time-readout span',
+      '.time-readout em',
+      '.transport-status',
+      '.modal-note',
+      '.workflow-guide p',
+      '.raw-lyrics > p',
+      '.fit-line > span',
+      '.fit-line > small',
+      '.export-readiness span',
+      '.export-options small',
+      '.validation-item small',
+      '.validation-item em',
+      '.validation-empty p',
+      '.video-export-progress',
+      '.vocal-track-card__status',
+      '.vocal-track-card__number',
+      '.track-tab > span',
+      '.field input',
+    ]
+
+    for (const selector of sharedSelectors) {
+      expect(timeline.includes(selector)).toBe(false)
+      expect(identity.includes(selector)).toBe(true)
+    }
   })
 })
 
