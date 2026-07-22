@@ -5,6 +5,8 @@ const source = (file: string) => readFileSync(new URL(`../${file}`, import.meta.
 
 describe('linked-background Electron boundary', () => {
   const main = source('electron/main.cjs')
+  const protocols = source('electron/studio-protocols.cjs')
+  const windowSecurity = source('electron/window-security.cjs')
   const preload = source('electron/preload.cjs')
   const types = source('src/electron.d.ts')
   const videoExport = source('electron/video-export.cjs')
@@ -26,9 +28,9 @@ describe('linked-background Electron boundary', () => {
   })
 
   it('serves background snapshot bytes and decoder MIME instead of reopening its path', () => {
-    const start = main.indexOf("if (mediaFile.kind === 'background')")
-    const end = main.indexOf('const filePath = mediaFile.filePath', start)
-    const branch = main.slice(start, end)
+    const start = protocols.indexOf("if (mediaFile.kind === 'background')")
+    const end = protocols.indexOf('let fileStats', start)
+    const branch = protocols.slice(start, end)
     expect(branch).toContain("'Content-Type': mediaFile.mime")
     expect(branch).toContain('Buffer.from(mediaFile.bytes.subarray')
     expect(branch).not.toContain('createReadStream')
@@ -80,8 +82,11 @@ describe('linked-background Electron boundary', () => {
   })
 
   it('cleans capability ownership on navigation, renderer loss, and destruction', () => {
-    const secureContents = main.slice(main.indexOf('function secureWebContents'))
-    expect(secureContents).toContain('mediaCapabilities.releaseOwner(ownerId)')
+    const secureContents = windowSecurity.slice(
+      windowSecurity.indexOf('function secureWebContents'),
+    )
+    expect(main).toContain('mediaCapabilities.releaseOwner(ownerId)')
+    expect(secureContents).toContain('const releaseRendererScope = () => releaseOwner(ownerId)')
     expect(secureContents).toContain("contents.on('did-start-navigation'")
     expect(secureContents).toContain("contents.once('render-process-gone', releaseTerminalScope)")
     expect(secureContents).toContain("contents.once('destroyed'")

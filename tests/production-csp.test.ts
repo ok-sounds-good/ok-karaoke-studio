@@ -3,6 +3,10 @@ import { describe, expect, it } from 'vitest'
 
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8')
 const main = readFileSync(new URL('../electron/main.cjs', import.meta.url), 'utf8')
+const windowSecurity = readFileSync(
+  new URL('../electron/window-security.cjs', import.meta.url),
+  'utf8',
+)
 
 function cspDirectives() {
   const policy = html.match(/http-equiv="Content-Security-Policy"[\s\S]*?content="([^"]+)"/)?.[1]
@@ -27,9 +31,12 @@ describe('production linked-image Content Security Policy', () => {
   })
 
   it('keeps the packaged renderer isolated while permitting capability-backed images', () => {
-    const createWindow = main.indexOf('async function createMainWindow')
-    const webPreferences = main.indexOf('webPreferences: {', createWindow)
-    const windowOptions = main.slice(webPreferences, main.indexOf('},', webPreferences))
+    expect(main).toContain('createMainWindowOptions(')
+    const webPreferences = windowSecurity.indexOf('webPreferences: {')
+    const windowOptions = windowSecurity.slice(
+      webPreferences,
+      windowSecurity.indexOf('},', webPreferences),
+    )
 
     expect(windowOptions).toContain('contextIsolation: true')
     expect(windowOptions).toContain('nodeIntegration: false')
