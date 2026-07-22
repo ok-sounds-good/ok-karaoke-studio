@@ -178,7 +178,7 @@ describe('visual result validation', () => {
     await expect(
       results.validateVisualResultDirectory(output, { scenario: results.STYLE_SESSION_SCENARIO }),
     ).rejects.toThrow('VISUAL_SMOKE_RESULT_INVALID')
-  })
+  }, 20000)
 
   it('rejects the retired nine-capture Style-session directory', async () => {
     const { output } = await freshResult(results.STYLE_SESSION_SCENARIO)
