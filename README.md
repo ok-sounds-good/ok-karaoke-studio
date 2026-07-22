@@ -31,9 +31,7 @@ bun run dev
 
 On Windows x64, `bun run dist:win` creates an unsigned NSIS installer named
 `Okay-Karaoke-Studio-<version>-x64-setup.exe` and a `release/win-unpacked`
-application. The command never publishes an artifact. CircleCI validates the
-actual PE architecture, installer payload, packaged-file inventory, and bounded
-artifact sizes before retaining both outputs.
+application. The command never publishes an artifact.
 
 FFmpeg and FFprobe command-line executables and external encoder libraries are
 not included in either artifact. Electron's standard `ffmpeg.dll` media runtime
