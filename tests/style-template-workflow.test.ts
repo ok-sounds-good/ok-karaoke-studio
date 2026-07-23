@@ -4,14 +4,16 @@ import {
   captureStyleTemplatePreferences,
   loadStyleTemplateIntoDraft,
 } from '../src/lib/style-template-workflow'
+import { createProject } from '../src/lib/model'
 import { cloneStageStyle, cloneVocalStyle } from '../src/lib/video-style'
 import { DEFAULT_VIDEO_EXPORT_SETTINGS } from '../src/lib/video-export-settings'
 import { VOCAL_STYLE_TIMING_ERROR } from '../src/lib/vocal-style-timing'
 
 function draft() {
+  const tracks = createProject().tracks
   return createProjectStyleDraft(
     cloneStageStyle(),
-    cloneVocalStyle(),
+    tracks,
     { lineCount: 3, advanceMode: 'scroll' },
     { resolution: '1080p', fps: 60 },
   )
@@ -20,10 +22,11 @@ function draft() {
 describe('style template workflow helpers', () => {
   it('captures all template-owned groups as isolated values', () => {
     const source = draft()
+    const singer = source.singers[0]!
     source.stageStyle.titleCard.title.position = { x: 1_500, y: 240 }
-    source.vocalStyle.position = { x: 480, y: 760 }
-    source.vocalTiming = { previewMs: '4321', minLeadMs: '2100', maxLeadMs: '3200' }
-    const preferences = captureStyleTemplatePreferences(source)
+    singer.vocalStyle.position = { x: 480, y: 760 }
+    singer.vocalTiming = { previewMs: '4321', minLeadMs: '2100', maxLeadMs: '3200' }
+    const preferences = captureStyleTemplatePreferences(source, singer.trackId)
 
     expect(preferences).toMatchObject({
       lyricDisplay: { lineCount: 3, advanceMode: 'scroll' },
@@ -42,48 +45,69 @@ describe('style template workflow helpers', () => {
     expect(source.stageStyle.background.solidColor).not.toBe('#010203')
     expect(preferences.stageStyle.titleCard.title.position).toEqual({ x: 1_500, y: 240 })
     expect(source.lyricDisplay.lineCount).toBe(3)
-    expect(source.vocalStyle.syncAid.enabled).toBe(false)
+    expect(singer.vocalStyle.syncAid.enabled).toBe(false)
     expect(source.videoExportDefaults.fps).toBe(60)
   })
 
   it('loads only template-owned groups and synchronizes editable vocal timing text', () => {
     const source = draft()
-    source.vocalTiming.previewMs = '4321'
+    const lead = source.singers[0]!
+    source.singers.push({
+      ...structuredClone(lead),
+      trackId: 'harmony',
+      name: 'Harmony',
+    })
+    const singer = source.singers[1]!
+    singer.vocalTiming.previewMs = '4321'
+    const leadBefore = structuredClone(lead)
     const vocalStyle = cloneVocalStyle()
     vocalStyle.position = { x: 340, y: 820 }
     vocalStyle.previewMs = 5_500
     vocalStyle.syncAid.minLeadMs = 2_500
     vocalStyle.syncAid.maxLeadMs = 4_500
-    const loaded = loadStyleTemplateIntoDraft(source, {
-      preferences: {
-        stageStyle: (() => {
-          const stageStyle = cloneStageStyle()
-          stageStyle.titleCard.artist.position = { x: 1_620, y: 930 }
-          return stageStyle
-        })(),
-        lyricDisplay: { lineCount: 1, advanceMode: 'clear' },
-        vocalStyle,
-        videoExportDefaults: { ...DEFAULT_VIDEO_EXPORT_SETTINGS },
+    const loaded = loadStyleTemplateIntoDraft(
+      source,
+      {
+        preferences: {
+          stageStyle: (() => {
+            const stageStyle = cloneStageStyle()
+            stageStyle.titleCard.artist.position = { x: 1_620, y: 930 }
+            return stageStyle
+          })(),
+          lyricDisplay: { lineCount: 1, advanceMode: 'clear' },
+          vocalStyle,
+          videoExportDefaults: { ...DEFAULT_VIDEO_EXPORT_SETTINGS },
+        },
       },
-    })
+      singer.trackId,
+    )
 
     expect(loaded.lyricDisplay).toEqual({ lineCount: 1, advanceMode: 'clear' })
     expect(loaded.videoExportDefaults).toEqual(DEFAULT_VIDEO_EXPORT_SETTINGS)
-    expect(loaded.vocalTiming).toEqual({
+    expect(loaded.singers[0]!.vocalTiming).toEqual({
+      previewMs: '3000',
+      minLeadMs: '2000',
+      maxLeadMs: '3000',
+    })
+    expect(loaded.singers[1]!.vocalTiming).toEqual({
       previewMs: '5500',
       minLeadMs: '2500',
       maxLeadMs: '4500',
     })
-    expect(loaded.vocalStyle.position).toEqual({ x: 340, y: 820 })
+    expect(loaded.singers[0]).toEqual(leadBefore)
+    expect(loaded.singers[1]!.vocalStyle.position).toEqual({ x: 340, y: 820 })
     expect(loaded.stageStyle.titleCard.artist.position).toEqual({ x: 1_620, y: 930 })
     expect(loaded.stageStyle).not.toBe(source.stageStyle)
-    expect(loaded.vocalStyle).not.toBe(source.vocalStyle)
+    expect(loaded.singers[1]!.vocalStyle).not.toBe(singer.vocalStyle)
   })
 
   it('rejects saving a draft whose editable vocal timing is invalid', () => {
     const source = draft()
-    source.vocalTiming.previewMs = ''
+    const singer = source.singers[0]!
+    singer.vocalTiming.previewMs = ''
 
-    expect(() => captureStyleTemplatePreferences(source)).toThrow(VOCAL_STYLE_TIMING_ERROR)
+    expect(() => captureStyleTemplatePreferences(source, singer.trackId)).toThrow(
+      VOCAL_STYLE_TIMING_ERROR,
+    )
   })
 })

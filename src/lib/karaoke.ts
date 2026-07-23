@@ -3,6 +3,7 @@ import {
   DEFAULT_VOCAL_STYLE,
   cloneStageStyle,
   cloneVocalStyle,
+  defaultSingerColors,
   type StageStyle,
   type VocalStyle,
 } from './video-style'
@@ -187,12 +188,22 @@ export function createLyricLine(
 }
 
 export function createVocalTrack(
-  options: Partial<VocalTrack> & Pick<VocalTrack, 'id'>,
+  options: Partial<VocalTrack> &
+    Pick<VocalTrack, 'id'> & {
+      /** Stable zero-based order used for deterministic new-singer colors. */
+      defaultStyleIndex?: number
+    },
 ): VocalTrack {
+  const defaultColors = defaultSingerColors(options.defaultStyleIndex ?? 0)
   return {
     id: options.id,
     name: options.name ?? 'Lead Vocal',
-    vocalStyle: cloneVocalStyle(options.vocalStyle ?? DEFAULT_VOCAL_STYLE),
+    vocalStyle: cloneVocalStyle(
+      options.vocalStyle ?? {
+        ...DEFAULT_VOCAL_STYLE,
+        ...defaultColors,
+      },
+    ),
     muted: options.muted ?? false,
     solo: options.solo ?? false,
     lines: options.lines?.map(cloneLine) ?? [],

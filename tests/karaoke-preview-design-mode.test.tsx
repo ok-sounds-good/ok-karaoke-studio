@@ -50,8 +50,6 @@ function localLyricStyle(
     typeface,
     fontStyle: face,
     sizePx: 82,
-    sungColor: '#FF8A2B',
-    unsungColor: '#72687D',
   }
 }
 
@@ -106,8 +104,6 @@ describe('Karaoke Preview project-lyrics design mode', () => {
       typeface: SYSTEM_MONOSPACE_TYPEFACE,
       fontStyle: genericFontFace(SYSTEM_MONOSPACE_TYPEFACE, 'Bold'),
       sizePx: 104,
-      sungColor: '#ABCDEF',
-      unsungColor: '#234567',
     }
     const designMode = projectLyricsDesignMode(style, project)
     designMode.stageStyle.background.mode = 'solid'
@@ -116,9 +112,7 @@ describe('Karaoke Preview project-lyrics design mode', () => {
     const markup = previewMarkup(designMode, project, 0, vi.fn())
     const rendered = document.createElement('div')
     rendered.innerHTML = markup
-    const panel = rendered.querySelector<HTMLElement>(
-      '[aria-label="Project lyrics design preview"]',
-    )
+    const panel = rendered.querySelector<HTMLElement>('[aria-label="Lyrics design preview"]')
     const stage = panel?.querySelector<HTMLElement>('.karaoke-stage')
     const design = stage?.querySelector<HTMLElement>('[data-design-preview="project-lyrics"]')
     const line = design?.querySelector<HTMLElement>('.stage-line')
@@ -136,8 +130,8 @@ describe('Karaoke Preview project-lyrics design mode', () => {
     expect(line?.style.fontFamily).toContain('ui-monospace')
     expect(line?.style.fontWeight).toBe('700')
     expect(line?.getAttribute('style')).toContain(`font-size:${logicalStagePx(104)}`)
-    expect(line?.style.getPropertyValue('--track-color')).toBe('#ABCDEF')
-    expect(line?.style.getPropertyValue('--unsung-color')).toBe('#234567')
+    expect(line?.style.getPropertyValue('--track-color')).toBe('#FF8A2B')
+    expect(line?.style.getPropertyValue('--unsung-color')).toBe('#72687D')
     expect(words.map((word) => word.style.getPropertyValue('--word-progress'))).toEqual([
       '100%',
       '50%',
@@ -155,9 +149,6 @@ describe('Karaoke Preview project-lyrics design mode', () => {
 
     const vocalStyle = cloneVocalStyle()
     Object.assign(vocalStyle, {
-      typeface: SYSTEM_MONOSPACE_TYPEFACE,
-      fontStyle: genericFontFace(SYSTEM_MONOSPACE_TYPEFACE, 'Bold'),
-      sizePx: 96,
       sungColor: '#102030',
       unsungColor: '#405060',
       alignment: 'right',
@@ -171,31 +162,22 @@ describe('Karaoke Preview project-lyrics design mode', () => {
       timingValid: true,
     } satisfies KaraokePreviewDesignMode
     rendered.innerHTML = previewMarkup(leadDesignMode, project)
-    const vocalPanel = rendered.querySelector<HTMLElement>(
-      '[aria-label="Lead Vocal design preview"]',
-    )!
+    const vocalPanel = rendered.querySelector<HTMLElement>('[aria-label="Lyrics design preview"]')!
     const vocalLine = vocalPanel.querySelector<HTMLElement>(
       '[data-design-preview="lead-vocal"] .stage-line',
     )!
     expect(vocalLine.classList.contains('stage-line--right')).toBe(true)
-    expect(vocalLine.dataset.stageFontSize).toBe('96')
+    expect(vocalLine.dataset.stageFontSize).toBe('104')
     expect(vocalLine.style.getPropertyValue('--track-color')).toBe('#102030')
     expect(vocalLine.style.getPropertyValue('--unsung-color')).toBe('#405060')
     const vocalLines = [...vocalPanel.querySelectorAll<HTMLElement>('.stage-line')]
-    expect(vocalLines).toHaveLength(2)
+    expect(vocalLines).toHaveLength(1)
     expect(
       [...vocalLines[0]!.querySelectorAll<HTMLElement>('.stage-word')].map((word) =>
         word.style.getPropertyValue('--word-progress'),
       ),
-    ).toEqual(Array.from({ length: 8 }, () => '0%'))
-    expect(
-      [...vocalLines[1]!.querySelectorAll<HTMLElement>('.stage-word')].map((word) =>
-        word.style.getPropertyValue('--word-progress'),
-      ),
-    ).toEqual(['100%', '50%', '0%'])
-    expect(
-      vocalPanel.querySelector<HTMLElement>('.sync-aid')?.style.getPropertyValue('--sync-progress'),
-    ).toBe('0.5')
+    ).toEqual(['100%', '50%', '0%', '0%', '0%', '0%', '0%', '0%'])
+    expect(vocalPanel.querySelector('.sync-aid')).toBeNull()
     expect(vocalPanel.textContent).not.toContain('This is')
     expect(previewMarkup(leadDesignMode, project, 54_321)).toBe(
       previewMarkup(leadDesignMode, project, 0),
@@ -556,14 +538,11 @@ describe('Karaoke Preview project-lyrics design mode', () => {
     const lyrics = localLyricStyle('Ordinary Lyrics', 'OrdinaryLyrics-Regular')
     const title = localLyricStyle('Future Title', 'FutureTitle-Regular')
     const frame = localLyricStyle('Future Frame', 'FutureFrame-Regular')
-    const vocal = localLyricStyle('Future Vocal', 'FutureVocal-Regular')
     project.stageStyle.lyrics = lyrics
     applyFont(project.stageStyle.titleCard.title, title)
     project.stageStyle.titleCard.title.visible = false
     applyFont(project.stageStyle.stageFrame.brand, frame)
     project.stageStyle.stageFrame.enabled = false
-    project.tracks[0]!.vocalStyle.typeface = vocal.typeface
-    project.tracks[0]!.vocalStyle.fontStyle = vocal.fontStyle
     const container = document.createElement('div')
     document.body.append(container)
     const root = createRoot(container)
@@ -579,7 +558,6 @@ describe('Karaoke Preview project-lyrics design mode', () => {
       'local("OrdinaryLyrics-Regular")',
       'local("FutureTitle-Regular")',
       'local("FutureFrame-Regular")',
-      'local("FutureVocal-Regular")',
     ])
     expect(container.querySelector('[data-design-preview]')).toBeNull()
     expect(container.querySelector('[aria-label="Visible lyric lines"]')).not.toBeNull()
@@ -611,14 +589,11 @@ describe('Karaoke Preview project-lyrics design mode', () => {
     })
     const project = createProject()
     const staleLyrics = localLyricStyle('Stale Lyrics', 'StaleLyrics-Regular')
-    const staleVocal = localLyricStyle('Stale Vocal', 'StaleVocal-Regular')
     const staleTitle = localLyricStyle('Stale Title', 'StaleTitle-Regular')
     const renderedBrand = localLyricStyle('Rendered Brand', 'RenderedBrand-Regular')
     project.stageStyle.lyrics = staleLyrics
     applyFont(project.stageStyle.titleCard.title, staleTitle)
     applyFont(project.stageStyle.stageFrame.brand, renderedBrand)
-    project.tracks[0]!.vocalStyle.typeface = staleVocal.typeface
-    project.tracks[0]!.vocalStyle.fontStyle = staleVocal.fontStyle
     const available = localLyricStyle('Available Design', 'AvailableDesign-Regular')
     const container = document.createElement('div')
     document.body.append(container)

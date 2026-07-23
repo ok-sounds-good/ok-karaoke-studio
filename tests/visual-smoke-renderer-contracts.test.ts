@@ -138,12 +138,12 @@ describe('visual smoke renderer contracts', () => {
       contracts.validLeadVocalState(
         {
           controls: 4,
-          cueProgress: 0.5,
           height: 720,
           resourcesReady: true,
           stageHeight: 360,
           stageWidth: 640,
           width: 1280,
+          wordProgress: ['100%', '50%', '0%', '0%', '0%', '0%', '0%', '0%'],
         },
         viewport,
       ),
@@ -152,12 +152,12 @@ describe('visual smoke renderer contracts', () => {
       contracts.validLeadVocalState(
         {
           controls: 4,
-          cueProgress: 0.4,
           height: 720,
           resourcesReady: true,
           stageHeight: 360,
           stageWidth: 640,
           width: 1280,
+          wordProgress: ['100%', '40%', '0%', '0%', '0%', '0%', '0%', '0%'],
         },
         viewport,
       ),
@@ -220,7 +220,7 @@ describe('visual smoke renderer contracts', () => {
     )
   })
 
-  it('uses the editor’s project-lyrics design preview while editing background style', () => {
+  it('uses the unified lyric design preview while editing background style', () => {
     expect(
       contracts.projectLyricsReadinessScript(
         { height: 720, width: 1280 },
@@ -229,7 +229,7 @@ describe('visual smoke renderer contracts', () => {
           mode: 'gradient',
         },
       ),
-    ).toContain('[aria-label="Project lyrics design preview"]')
+    ).toContain('[aria-label="Lyrics design preview"]')
   })
 
   it('uses a bounded deadline and exposes neither Node authority nor action interpolation', async () => {

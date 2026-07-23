@@ -205,12 +205,10 @@ function validStageStyle(value) {
     validColor(background.gradientEndColor) &&
     validPath &&
     (background.mode !== 'image' || background.imagePath !== null) &&
-    exactRecord(lyrics, ['typeface', 'fontStyle', 'sizePx', 'unsungColor', 'sungColor']) &&
+    exactRecord(lyrics, ['typeface', 'fontStyle', 'sizePx']) &&
     validTypeface(lyrics.typeface) &&
     validFace(lyrics.fontStyle) &&
     FONT_SIZES.has(lyrics.sizePx) &&
-    validColor(lyrics.unsungColor) &&
-    validColor(lyrics.sungColor) &&
     exactRecord(titleCard, ['eyebrow', 'title', 'artist']) &&
     ['eyebrow', 'title', 'artist'].every((key) => validTextStyle(titleCard[key], true, true)) &&
     exactRecord(stageFrame, ['enabled', 'lineColor', 'lineWidthPx', 'brand', 'clock', 'footer']) &&
@@ -226,9 +224,6 @@ function validStageStyle(value) {
 function validVocalStyle(value) {
   if (
     !exactRecord(value, [
-      'typeface',
-      'fontStyle',
-      'sizePx',
       'unsungColor',
       'sungColor',
       'alignment',
@@ -239,13 +234,9 @@ function validVocalStyle(value) {
   ) {
     return false
   }
-  const nullableColor = (candidate) => candidate === null || validColor(candidate)
   return (
-    (value.typeface === null || validTypeface(value.typeface)) &&
-    (value.fontStyle === null || validFace(value.fontStyle)) &&
-    (value.sizePx === null || FONT_SIZES.has(value.sizePx)) &&
-    nullableColor(value.unsungColor) &&
-    nullableColor(value.sungColor) &&
+    validColor(value.unsungColor) &&
+    validColor(value.sungColor) &&
     ['left', 'center', 'right'].includes(value.alignment) &&
     validPosition(value.position) &&
     Number.isSafeInteger(value.previewMs) &&

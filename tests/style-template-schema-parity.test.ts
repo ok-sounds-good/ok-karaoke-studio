@@ -62,9 +62,7 @@ function template(id = 'template-1', name = 'Warm Stage'): StyleTemplate {
   stageStyle.titleCard.eyebrow.position = { x: 280, y: 190 }
   stageStyle.titleCard.title.position = { x: 1_420, y: 460 }
   stageStyle.titleCard.artist.position = { x: 960, y: 900 }
-  const vocalStyle = cloneVocalStyle()
-  vocalStyle.position = { x: 640, y: 720 }
-  vocalStyle.typeface = {
+  stageStyle.lyrics.typeface = {
     kind: 'local',
     family: 'Unavailable Template Font',
     faces: [
@@ -77,7 +75,9 @@ function template(id = 'template-1', name = 'Warm Stage'): StyleTemplate {
       },
     ],
   }
-  vocalStyle.fontStyle = { ...vocalStyle.typeface.faces[0]! }
+  stageStyle.lyrics.fontStyle = { ...stageStyle.lyrics.typeface.faces[0]! }
+  const vocalStyle = cloneVocalStyle()
+  vocalStyle.position = { x: 640, y: 720 }
   return {
     id,
     name,
@@ -123,7 +123,7 @@ describe('TypeScript and main-process style template schema parity', () => {
     expect(decoded.templates[0]?.preferences.stageStyle.background.imagePath).toBe(
       '/missing-but-retained/background.png',
     )
-    expect(decoded.templates[0]?.preferences.vocalStyle.typeface?.family).toBe(
+    expect(decoded.templates[0]?.preferences.stageStyle.lyrics.typeface.family).toBe(
       'Unavailable Template Font',
     )
   })
@@ -153,19 +153,19 @@ describe('TypeScript and main-process style template schema parity', () => {
     expect(first.templates[0]?.preferences.stageStyle).not.toBe(
       source.templates[0]?.preferences.stageStyle,
     )
-    expect(first.templates[0]?.preferences.vocalStyle.typeface).not.toBe(
-      source.templates[0]?.preferences.vocalStyle.typeface,
+    expect(first.templates[0]?.preferences.stageStyle.lyrics.typeface).not.toBe(
+      source.templates[0]?.preferences.stageStyle.lyrics.typeface,
     )
-    expect(first.templates[0]?.preferences.vocalStyle.typeface?.faces[0]).not.toBe(
-      source.templates[0]?.preferences.vocalStyle.typeface?.faces[0],
+    expect(first.templates[0]?.preferences.stageStyle.lyrics.typeface.faces[0]).not.toBe(
+      source.templates[0]?.preferences.stageStyle.lyrics.typeface.faces[0],
     )
     expect(first.templates[0]).not.toBe(second.templates[0])
     first.templates[0]!.preferences.stageStyle.background.imagePath = '/changed.png'
-    first.templates[0]!.preferences.vocalStyle.typeface!.faces[0]!.fullName = 'Changed'
+    first.templates[0]!.preferences.stageStyle.lyrics.typeface.faces[0]!.fullName = 'Changed'
     expect(source.templates[0]?.preferences.stageStyle.background.imagePath).toBe(
       '/missing-but-retained/background.png',
     )
-    expect(second.templates[0]?.preferences.vocalStyle.typeface?.faces[0]?.fullName).toBe(
+    expect(second.templates[0]?.preferences.stageStyle.lyrics.typeface.faces[0]?.fullName).toBe(
       'Unavailable Template Font Bold',
     )
   })

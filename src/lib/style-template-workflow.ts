@@ -9,8 +9,11 @@ import {
 
 export function captureStyleTemplatePreferences(
   draft: ProjectStyleDraft,
+  selectedSingerTrackId: string,
 ): StyleTemplatePreferences {
-  const vocalStyle = vocalStyleWithTiming(draft.vocalStyle, draft.vocalTiming)
+  const singer = draft.singers.find(({ trackId }) => trackId === selectedSingerTrackId)
+  if (!singer) throw new Error('Select a singer before saving a style template.')
+  const vocalStyle = vocalStyleWithTiming(singer.vocalStyle, singer.vocalTiming)
   if (!vocalStyle) throw new Error(VOCAL_STYLE_TIMING_ERROR)
 
   return {
@@ -24,6 +27,7 @@ export function captureStyleTemplatePreferences(
 export function loadStyleTemplateIntoDraft(
   draft: ProjectStyleDraft,
   template: Pick<StyleTemplate, 'preferences'>,
+  selectedSingerTrackId: string,
 ): ProjectStyleDraft {
   const preferences = template.preferences
   const vocalStyle = cloneVocalStyle(preferences.vocalStyle)
@@ -31,8 +35,15 @@ export function loadStyleTemplateIntoDraft(
     ...draft,
     stageStyle: cloneStageStyle(preferences.stageStyle),
     lyricDisplay: { ...preferences.lyricDisplay },
-    vocalStyle,
-    vocalTiming: vocalStyleTimingDraft(vocalStyle),
+    singers: draft.singers.map((singer) =>
+      singer.trackId === selectedSingerTrackId
+        ? {
+            ...singer,
+            vocalStyle,
+            vocalTiming: vocalStyleTimingDraft(vocalStyle),
+          }
+        : singer,
+    ),
     videoExportDefaults: { ...preferences.videoExportDefaults },
   }
 }

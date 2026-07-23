@@ -22,6 +22,7 @@ import {
   type StageStyle,
   type VocalStyle,
 } from '../src/lib/video-style'
+import { createVocalTrack } from '../src/lib/model'
 
 function lyricStyle(
   family = 'Studio Sans',
@@ -39,8 +40,6 @@ function lyricStyle(
     typeface: { kind: 'local', family, faces: [{ ...face }] },
     fontStyle: { ...face },
     sizePx: 82,
-    unsungColor,
-    sungColor,
   }
 }
 
@@ -59,7 +58,12 @@ function projectStyleDraft(
   unsungColor = '#72687D',
   sungColor = '#FF8A2B',
 ): ProjectStyleDraft {
-  return createProjectStyleDraft(stageStyle(family, unsungColor, sungColor), cloneVocalStyle())
+  const vocalStyle = cloneVocalStyle()
+  vocalStyle.unsungColor = unsungColor
+  vocalStyle.sungColor = sungColor
+  return createProjectStyleDraft(stageStyle(family), [
+    createVocalTrack({ id: 'lead-a', vocalStyle }),
+  ])
 }
 
 function visibleTextStyles(style: StageStyle) {
@@ -77,9 +81,10 @@ function expectIsolatedClone(actual: ProjectStyleDraft, expected: ProjectStyleDr
   expect(actual).toEqual(expected)
   expect(actual).not.toBe(expected)
   expect(actual.stageStyle).not.toBe(expected.stageStyle)
-  expect(actual.vocalStyle).not.toBe(expected.vocalStyle)
-  expect(actual.vocalStyle.syncAid).not.toBe(expected.vocalStyle.syncAid)
-  expect(actual.vocalTiming).not.toBe(expected.vocalTiming)
+  expect(actual.singers).not.toBe(expected.singers)
+  expect(actual.singers[0]!.vocalStyle).not.toBe(expected.singers[0]!.vocalStyle)
+  expect(actual.singers[0]!.vocalStyle.syncAid).not.toBe(expected.singers[0]!.vocalStyle.syncAid)
+  expect(actual.singers[0]!.vocalTiming).not.toBe(expected.singers[0]!.vocalTiming)
   const actualStage = actual.stageStyle
   const expectedStage = expected.stageStyle
   expect(actualStage.background).not.toBe(expectedStage.background)
@@ -208,7 +213,7 @@ describe('project Style session', () => {
     source.stageStyle.lyrics.typeface.faces[0].fullName = 'Changed after render'
     source.stageStyle.lyrics.fontStyle.fullName = 'Changed after render'
     source.stageStyle.background.imagePath = '/changed-after-render.png'
-    source.vocalStyle.syncAid.maxLeadMs = 9_000
+    source.singers[0]!.vocalStyle.syncAid.maxLeadMs = 9_000
     await act(async () => {
       insideStart = true
       currentSession.start(button)
@@ -226,7 +231,7 @@ describe('project Style session', () => {
     )
     expect(currentSession.draft?.stageStyle.lyrics.fontStyle.fullName).toBe('Studio Sans Regular')
     expect(currentSession.draft?.stageStyle.background.imagePath).toBeNull()
-    expect(currentSession.draft?.vocalStyle.syncAid.maxLeadMs).toBe(3_000)
+    expect(currentSession.draft?.singers[0]!.vocalStyle.syncAid.maxLeadMs).toBe(3_000)
   })
 
   it('deep-clones the complete source, exposed drafts, values, and updater results', async () => {
@@ -238,7 +243,7 @@ describe('project Style session', () => {
     currentSession.draft!.stageStyle.titleCard.title.typeface.faces[0].fullName =
       'Exposed title mutation'
     currentSession.draft!.stageStyle.background.solidColor = '#010203'
-    currentSession.draft!.vocalStyle.syncAid.enabled = true
+    currentSession.draft!.singers[0]!.vocalStyle.syncAid.enabled = true
     await render()
     expect(currentSession.draft?.stageStyle.lyrics.typeface.faces[0].fullName).toBe(
       'Studio Sans Regular',
@@ -247,49 +252,49 @@ describe('project Style session', () => {
       'Exposed title mutation',
     )
     expect(currentSession.draft?.stageStyle.background.solidColor).not.toBe('#010203')
-    expect(currentSession.draft?.vocalStyle.syncAid.enabled).toBe(false)
+    expect(currentSession.draft?.singers[0]!.vocalStyle.syncAid.enabled).toBe(false)
 
     const replacement = projectStyleDraft('Value Sans')
     replacement.stageStyle.background.imagePath = '/replacement.png'
-    replacement.vocalStyle.previewMs = 4_500
-    replacement.vocalTiming.previewMs = '4500'
+    replacement.singers[0]!.vocalStyle.previewMs = 4_500
+    replacement.singers[0]!.vocalTiming.previewMs = '4500'
     await change(replacement)
     replacement.stageStyle.lyrics.typeface.family = 'Mutated after change'
     replacement.stageStyle.lyrics.typeface.faces[0].fullName = 'Mutated after change'
     replacement.stageStyle.lyrics.fontStyle.fullName = 'Mutated after change'
     replacement.stageStyle.background.imagePath = '/mutated.png'
-    replacement.vocalStyle.previewMs = 1
-    replacement.vocalTiming.previewMs = '1'
+    replacement.singers[0]!.vocalStyle.previewMs = 1
+    replacement.singers[0]!.vocalTiming.previewMs = '1'
     expect(currentSession.draft?.stageStyle.lyrics.typeface.family).toBe('Value Sans')
     expect(currentSession.draft?.stageStyle.lyrics.fontStyle.fullName).toBe('Value Sans Regular')
     expect(currentSession.draft?.stageStyle.background.imagePath).toBe('/replacement.png')
-    expect(currentSession.draft?.vocalStyle.previewMs).toBe(4_500)
+    expect(currentSession.draft?.singers[0]!.vocalStyle.previewMs).toBe(4_500)
 
     let updaterInput: ProjectStyleDraft | null = null
     await act(async () => {
       currentSession.change((draft) => {
         updaterInput = draft
-        draft.stageStyle.lyrics.sungColor = '#123456'
+        draft.singers[0]!.vocalStyle.sungColor = '#123456'
         draft.stageStyle.lyrics.typeface.faces[0].fullName = 'Updater result'
         draft.stageStyle.titleCard.title.visible = false
-        draft.vocalStyle.syncAid.minLeadMs = 2_500
-        draft.vocalTiming.minLeadMs = '2500'
+        draft.singers[0]!.vocalStyle.syncAid.minLeadMs = 2_500
+        draft.singers[0]!.vocalTiming.minLeadMs = '2500'
         return draft
       })
     })
-    updaterInput!.stageStyle.lyrics.sungColor = '#654321'
+    updaterInput!.singers[0]!.vocalStyle.sungColor = '#654321'
     updaterInput!.stageStyle.lyrics.typeface.faces[0].fullName = 'Mutated callback result'
     updaterInput!.stageStyle.titleCard.title.visible = true
-    updaterInput!.vocalStyle.syncAid.minLeadMs = 1
-    updaterInput!.vocalTiming.minLeadMs = '1'
+    updaterInput!.singers[0]!.vocalStyle.syncAid.minLeadMs = 1
+    updaterInput!.singers[0]!.vocalTiming.minLeadMs = '1'
     await render()
 
-    expect(currentSession.draft?.stageStyle.lyrics.sungColor).toBe('#123456')
+    expect(currentSession.draft?.singers[0]!.vocalStyle.sungColor).toBe('#123456')
     expect(currentSession.draft?.stageStyle.lyrics.typeface.faces[0].fullName).toBe(
       'Updater result',
     )
     expect(currentSession.draft?.stageStyle.titleCard.title.visible).toBe(false)
-    expect(currentSession.draft?.vocalStyle.syncAid.minLeadMs).toBe(2_500)
+    expect(currentSession.draft?.singers[0]!.vocalStyle.syncAid.minLeadMs).toBe(2_500)
     expect(source).toEqual(projectStyleDraft())
   })
 
@@ -315,16 +320,18 @@ describe('project Style session', () => {
     await act(async () => {
       currentSession.change((draft) => ({
         ...draft,
-        stageStyle: {
-          ...draft.stageStyle,
-          lyrics: { ...draft.stageStyle.lyrics, unsungColor: '#ABCDEF' },
-        },
+        singers: [
+          {
+            ...draft.singers[0]!,
+            vocalStyle: { ...draft.singers[0]!.vocalStyle, unsungColor: '#ABCDEF' },
+          },
+        ],
       }))
     })
     await act(async () => currentSession.apply())
 
     expect(commitDraft).toHaveBeenCalledOnce()
-    expect(commitDraft.mock.calls[0]?.[1].stageStyle.lyrics).toMatchObject({
+    expect(commitDraft.mock.calls[0]?.[1].singers[0].vocalStyle).toMatchObject({
       sungColor: '#123456',
       unsungColor: '#ABCDEF',
     })
@@ -344,17 +351,49 @@ describe('project Style session', () => {
     await act(async () =>
       currentSession.change((draft) => ({
         ...draft,
-        vocalTiming: { ...draft.vocalTiming, [field]: value },
+        singers: [
+          {
+            ...draft.singers[0]!,
+            vocalTiming: { ...draft.singers[0]!.vocalTiming, [field]: value },
+          },
+        ],
       })),
     )
 
-    expect(currentSession.draft?.vocalTiming[field]).toBe(value)
+    expect(currentSession.draft?.singers[0]!.vocalTiming[field]).toBe(value)
     expect(currentSession.canApply).toBe(false)
-    expect(currentSession.applyBlockedReason).toContain('Fix the Lead Vocal')
+    expect(currentSession.applyBlockedReason).toContain('Lead Vocal')
     expect(currentSession.apply()).toBe(false)
     expect(commitDraft).not.toHaveBeenCalled()
     expect(currentSession.isOpen).toBe(true)
-    expect(currentSession.draft?.vocalTiming[field]).toBe(value)
+    expect(currentSession.draft?.singers[0]!.vocalTiming[field]).toBe(value)
+  })
+
+  it('names a hidden invalid singer after the user switches to another singer', async () => {
+    source = createProjectStyleDraft(stageStyle(), [
+      createVocalTrack({ id: 'lead-a', name: 'Lead' }),
+      createVocalTrack({ id: 'harmony-b', name: 'Harmony', defaultStyleIndex: 1 }),
+    ])
+    await render({ source })
+    await start()
+    await act(async () =>
+      currentSession.change((draft) => ({
+        ...draft,
+        singers: draft.singers.map((singer) =>
+          singer.trackId === 'lead-a'
+            ? {
+                ...singer,
+                vocalTiming: { ...singer.vocalTiming, previewMs: '' },
+              }
+            : singer,
+        ),
+      })),
+    )
+
+    expect(currentSession.canApply).toBe(false)
+    expect(currentSession.applyBlockedReason).toContain('Lead')
+    expect(currentSession.applyBlockedReason).not.toContain('Harmony')
+    expect(currentSession.draft?.singers[1]!.vocalTiming.previewMs).toBe('3000')
   })
 
   it.each([
@@ -369,7 +408,12 @@ describe('project Style session', () => {
       await act(async () =>
         currentSession.change((draft) => ({
           ...draft,
-          vocalTiming: { previewMs, minLeadMs, maxLeadMs },
+          singers: [
+            {
+              ...draft.singers[0]!,
+              vocalTiming: { previewMs, minLeadMs, maxLeadMs },
+            },
+          ],
         })),
       )
 
@@ -379,13 +423,17 @@ describe('project Style session', () => {
       expect(commitDraft).toHaveBeenCalledWith(
         ownerKey,
         expect.objectContaining({
-          vocalStyle: expect.objectContaining({
-            previewMs: Number(previewMs),
-            syncAid: expect.objectContaining({
-              minLeadMs: Number(minLeadMs),
-              maxLeadMs: Number(maxLeadMs),
+          singers: [
+            expect.objectContaining({
+              vocalStyle: expect.objectContaining({
+                previewMs: Number(previewMs),
+                syncAid: expect.objectContaining({
+                  minLeadMs: Number(minLeadMs),
+                  maxLeadMs: Number(maxLeadMs),
+                }),
+              }),
             }),
-          }),
+          ],
         }),
       )
     },
@@ -438,9 +486,9 @@ describe('project Style session', () => {
       draft.stageStyle.lyrics.typeface.family = 'Callback mutation'
       draft.stageStyle.lyrics.typeface.faces[0].fullName = 'Callback mutation'
       draft.stageStyle.lyrics.fontStyle.fullName = 'Callback mutation'
-      draft.stageStyle.lyrics.sungColor = '#FFFFFF'
+      draft.singers[0]!.vocalStyle.sungColor = '#FFFFFF'
       draft.stageStyle.background.imagePath = '/callback-mutation.png'
-      draft.vocalStyle.syncAid.enabled = true
+      draft.singers[0]!.vocalStyle.syncAid.enabled = true
       return 'blocked'
     })
 
@@ -463,8 +511,8 @@ describe('project Style session', () => {
     await start()
     const changed = projectStyleDraft('Retry Sans')
     changed.stageStyle.background.imagePath = '/latent-retry.png'
-    changed.vocalStyle.previewMs = 7_000
-    changed.vocalTiming.previewMs = '7000'
+    changed.singers[0]!.vocalStyle.previewMs = 7_000
+    changed.singers[0]!.vocalTiming.previewMs = '7000'
     await change(changed)
     const heldDraft = structuredClone(currentSession.draft!)
     commitDraft.mockImplementationOnce(() => {
@@ -597,7 +645,12 @@ describe('project Style session', () => {
             },
           },
         },
-        vocalStyle: { ...draft.vocalStyle, position: { x: 420, y: 810 } },
+        singers: [
+          {
+            ...draft.singers[0]!,
+            vocalStyle: { ...draft.singers[0]!.vocalStyle, position: { x: 420, y: 810 } },
+          },
+        ],
       })),
     )
     expect(currentSession.isDirty).toBe(true)
@@ -619,7 +672,12 @@ describe('project Style session', () => {
             },
           },
         },
-        vocalStyle: { ...draft.vocalStyle, position: { x: 420, y: 810 } },
+        singers: [
+          {
+            ...draft.singers[0]!,
+            vocalStyle: { ...draft.singers[0]!.vocalStyle, position: { x: 420, y: 810 } },
+          },
+        ],
       })),
     )
     expect(currentSession.apply()).toBe(true)
@@ -631,7 +689,11 @@ describe('project Style session', () => {
             title: expect.objectContaining({ position: { x: 1_500, y: 220 } }),
           }),
         }),
-        vocalStyle: expect.objectContaining({ position: { x: 420, y: 810 } }),
+        singers: [
+          expect.objectContaining({
+            vocalStyle: expect.objectContaining({ position: { x: 420, y: 810 } }),
+          }),
+        ],
       }),
     )
   })
@@ -661,12 +723,6 @@ describe('project Style session', () => {
       },
       'lyrics size': (style) => {
         style.lyrics.sizePx = 96
-      },
-      'lyrics unsung color': (style) => {
-        style.lyrics.unsungColor = '#000004'
-      },
-      'lyrics sung color': (style) => {
-        style.lyrics.sungColor = '#000005'
       },
       'Stage frame enabled': (style) => {
         style.stageFrame.enabled = !style.stageFrame.enabled
@@ -720,34 +776,21 @@ describe('project Style session', () => {
     })
   })
 
-  it('compares complete vocal overrides semantically, including timing fields', () => {
-    const baseline = cloneVocalStyle(source.vocalStyle)
-    baseline.typeface = lyricStyle().typeface
-    baseline.fontStyle = lyricStyle().fontStyle
-    baseline.sizePx = 82
+  it('compares complete singer appearance semantically, including timing fields', () => {
+    const baseline = cloneVocalStyle(source.singers[0]!.vocalStyle)
     baseline.sungColor = '#ABCDEF'
     baseline.unsungColor = '#123456'
     const equivalent = cloneVocalStyle(baseline)
-    equivalent.typeface!.faces.reverse()
     equivalent.sungColor = '#abcdef'
     equivalent.unsungColor = '#123456'
     expect(sameVocalStyle(baseline, equivalent)).toBe(true)
 
     const mutations: Array<(style: VocalStyle) => void> = [
       (style) => {
-        style.typeface = null
+        style.sungColor = '#000001'
       },
       (style) => {
-        style.fontStyle = null
-      },
-      (style) => {
-        style.sizePx = null
-      },
-      (style) => {
-        style.sungColor = null
-      },
-      (style) => {
-        style.unsungColor = null
+        style.unsungColor = '#000002'
       },
       (style) => {
         style.alignment = 'left'
@@ -783,8 +826,10 @@ describe('project Style session', () => {
       caseOnly.stageStyle.background.gradientStartColor.toLowerCase()
     caseOnly.stageStyle.background.gradientEndColor =
       caseOnly.stageStyle.background.gradientEndColor.toLowerCase()
-    caseOnly.stageStyle.lyrics.unsungColor = caseOnly.stageStyle.lyrics.unsungColor.toLowerCase()
-    caseOnly.stageStyle.lyrics.sungColor = caseOnly.stageStyle.lyrics.sungColor.toLowerCase()
+    caseOnly.singers[0]!.vocalStyle.unsungColor =
+      caseOnly.singers[0]!.vocalStyle.unsungColor.toLowerCase()
+    caseOnly.singers[0]!.vocalStyle.sungColor =
+      caseOnly.singers[0]!.vocalStyle.sungColor.toLowerCase()
     visibleTextStyles(caseOnly.stageStyle).forEach((role) => {
       role.color = role.color.toLowerCase()
       role.typeface.faces.reverse()

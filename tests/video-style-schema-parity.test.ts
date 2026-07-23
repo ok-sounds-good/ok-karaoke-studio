@@ -112,7 +112,7 @@ const EXPECTED_SYSTEM_MONOSPACE: FontTypefaceDescriptor = {
 const GOLDEN_STYLE_JSON = String.raw`{
   "stage": {
     "background": {"mode":"image","solidColor":"#aBcDeF","gradientStartColor":"#123aBc","gradientEndColor":"#DeF456","imagePath":"/golden/stage.png"},
-    "lyrics": {"typeface":{"kind":"local","family":"Golden Sans","faces":[{"fullName":"Golden Sans Regular","style":"Regular","postscriptName":"Golden:\"\\Face","weight":400,"slant":"normal"}]},"fontStyle":{"fullName":"Golden Sans Regular","style":"Regular","postscriptName":"Golden:\"\\Face","weight":400,"slant":"normal"},"sizePx":82,"unsungColor":"#ab12Cd","sungColor":"#Ef3456"},
+    "lyrics": {"typeface":{"kind":"local","family":"Golden Sans","faces":[{"fullName":"Golden Sans Regular","style":"Regular","postscriptName":"Golden:\"\\Face","weight":400,"slant":"normal"}]},"fontStyle":{"fullName":"Golden Sans Regular","style":"Regular","postscriptName":"Golden:\"\\Face","weight":400,"slant":"normal"},"sizePx":82},
     "titleCard": {
       "eyebrow": {"typeface":{"kind":"local","family":"Golden Sans","faces":[{"fullName":"Golden Sans Regular","style":"Regular","postscriptName":"Golden:\"\\Face","weight":400,"slant":"normal"}]},"fontStyle":{"fullName":"Golden Sans Regular","style":"Regular","postscriptName":"Golden:\"\\Face","weight":400,"slant":"normal"},"sizePx":25,"color":"#A1b2C3","visible":true,"position":{"x":123,"y":234}},
       "title": {"typeface":{"kind":"local","family":"Golden Sans","faces":[{"fullName":"Golden Sans Regular","style":"Regular","postscriptName":"Golden:\"\\Face","weight":400,"slant":"normal"}]},"fontStyle":{"fullName":"Golden Sans Regular","style":"Regular","postscriptName":"Golden:\"\\Face","weight":400,"slant":"normal"},"sizePx":104,"color":"#d4E5f6","visible":false,"position":{"x":960,"y":540}},
@@ -126,9 +126,7 @@ const GOLDEN_STYLE_JSON = String.raw`{
     }
   },
   "vocal": {
-    "typeface":{"kind":"local","family":"Golden Sans","faces":[{"fullName":"Golden Sans Oblique","style":"Oblique","postscriptName":"Golden:Oblique","weight":900,"slant":"oblique"}]},
-    "fontStyle":{"fullName":"Golden Sans Oblique","style":"Oblique","postscriptName":"Golden:Oblique","weight":900,"slant":"oblique"},
-    "sizePx":400,"unsungColor":"#a1B2c3","sungColor":"#D4e5F6","alignment":"right","position":{"x":1500,"y":800},"previewMs":60000,
+    "unsungColor":"#a1B2c3","sungColor":"#D4e5F6","alignment":"right","position":{"x":1500,"y":800},"previewMs":60000,
     "syncAid":{"enabled":true,"minLeadMs":0,"maxLeadMs":60000}
   }
 }`
@@ -192,9 +190,6 @@ function localStage(count = 2): StageStyle {
 
 function localVocal(): VocalStyle {
   const vocal = cloneVocalStyle()
-  vocal.typeface = localTypeface()
-  vocal.fontStyle = { ...vocal.typeface.faces[1] }
-  vocal.sizePx = 400
   vocal.unsungColor = '#aBcDeF'
   vocal.sungColor = '#12aBcD'
   return vocal
@@ -257,7 +252,7 @@ const STAGE_SIZE_PATHS = [
 const EXACT_KEY_SHAPES = [
   { kind: 'stage', path: [], key: 'background' },
   { kind: 'stage', path: ['background'], key: 'mode' },
-  { kind: 'stage', path: ['lyrics'], key: 'unsungColor' },
+  { kind: 'stage', path: ['lyrics'], key: 'sizePx' },
   { kind: 'stage', path: ['lyrics', 'typeface'], key: 'kind' },
   { kind: 'stage', path: ['lyrics', 'typeface', 'faces', 0], key: 'fullName' },
   { kind: 'stage', path: ['titleCard'], key: 'eyebrow' },
@@ -344,14 +339,11 @@ describe('TypeScript and main-process video style schema parity', () => {
     }
   })
 
-  it('accepts only the literal font-size catalog for every text role and vocal override', () => {
+  it('accepts only the literal font-size catalog for global and stage text roles', () => {
     EXPECTED_FONT_SIZES.forEach((size) => {
       const stage = cloneStageStyle()
       stage.lyrics.sizePx = size
-      const vocal = cloneVocalStyle()
-      vocal.sizePx = size
       expectParity('stage', stage, true)
-      expectParity('vocal', vocal, true)
     })
     STAGE_SIZE_PATHS.forEach((path, index) => {
       const valid = cloneStageStyle()
@@ -361,11 +353,6 @@ describe('TypeScript and main-process video style schema parity', () => {
       setAt(invalid, path, 15)
       expectParity('stage', invalid, false)
     })
-    for (const invalid of [7, 15, 401, 82.5, '82', Number.NaN, Number.POSITIVE_INFINITY]) {
-      const vocal = cloneVocalStyle() as unknown as JsonObject
-      vocal.sizePx = invalid
-      expectParity('vocal', vocal, false)
-    }
   })
 
   it('enforces canonical generic catalogs and bounded local face identities', () => {
@@ -447,8 +434,6 @@ describe('TypeScript and main-process video style schema parity', () => {
       ['background', 'solidColor'],
       ['background', 'gradientStartColor'],
       ['background', 'gradientEndColor'],
-      ['lyrics', 'unsungColor'],
-      ['lyrics', 'sungColor'],
       ['titleCard', 'eyebrow', 'color'],
       ['titleCard', 'title', 'color'],
       ['titleCard', 'artist', 'color'],
@@ -539,7 +524,7 @@ describe('TypeScript and main-process video style schema parity', () => {
     expectParity('stage', missing, false)
   })
 
-  it('validates independent nullable vocal overrides, alignment, and sync timing bounds', () => {
+  it('validates required singer colors, alignment, placement, and sync timing bounds', () => {
     expectParity('vocal', cloneVocalStyle(), true)
     const populated = localVocal()
     for (const alignment of ['left', 'center', 'right'] as const) {
@@ -557,11 +542,6 @@ describe('TypeScript and main-process video style schema parity', () => {
       const stage = cloneStageStyle()
       stage.titleCard.title.position = position
       expectParity('stage', stage, true)
-    }
-    for (const key of ['typeface', 'fontStyle', 'sizePx', 'unsungColor', 'sungColor'] as const) {
-      const inherited = localVocal()
-      inherited[key] = null
-      expectParity('vocal', inherited, true)
     }
     for (const [previewMs, minLeadMs, maxLeadMs] of [
       [0, 0, 0],
@@ -593,8 +573,6 @@ describe('TypeScript and main-process video style schema parity', () => {
       expectParity('vocal', vocal, false)
     })
     const invalidFields: Array<[readonly PathPart[], unknown]> = [
-      [['typeface'], 'local'],
-      [['fontStyle'], {}],
       [['unsungColor'], 'orange'],
       [['sungColor'], 7],
       [['alignment'], 'middle'],

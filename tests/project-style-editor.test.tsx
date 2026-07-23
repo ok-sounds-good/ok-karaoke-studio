@@ -37,7 +37,7 @@ const READY_FONTS: EditorProps['fonts'] = {
 function applyChange(change: ProjectStyleDraftChange | undefined, current: StageStyle) {
   expect(change).toBeTypeOf('function')
   if (typeof change !== 'function') throw new Error('Expected a functional draft update')
-  return change(createProjectStyleDraft(current, cloneVocalStyle())).stageStyle
+  return change(createProjectStyleDraft(current, createProject().tracks)).stageStyle
 }
 
 function applyDraftChange(change: ProjectStyleDraftChange | undefined, current: ProjectStyleDraft) {
@@ -153,15 +153,12 @@ describe('ProjectStyleEditor', () => {
     const draft: ProjectStyleDraft =
       suppliedDraft && 'stageStyle' in suppliedDraft
         ? suppliedDraft
-        : createProjectStyleDraft(
-            suppliedDraft ?? project.stageStyle,
-            cloneVocalStyle(project.tracks[0]?.vocalStyle),
-          )
+        : createProjectStyleDraft(suppliedDraft ?? project.stageStyle, project.tracks)
     const props: EditorProps = {
       project,
       playbackMs: 1_250,
       draft,
-      leadVocalAvailable: Boolean(project.tracks[0]),
+      initialSingerTrackId: project.tracks[0]?.id ?? null,
       fonts: READY_FONTS,
       onDraftChange: vi.fn(),
       onRetryFonts: vi.fn(),
@@ -186,19 +183,17 @@ describe('ProjectStyleEditor', () => {
     const { draft } = await renderEditor({ onCancel })
     const dialog = container.querySelector<HTMLElement>('[role="dialog"]')!
     const heading = container.querySelector<HTMLHeadingElement>('h2')!
-    const preview = container.querySelector<HTMLElement>(
-      '[aria-label="Project lyrics design preview"]',
-    )!
+    const preview = container.querySelector<HTMLElement>('[aria-label="Lyrics design preview"]')!
     const stage = preview.querySelector<HTMLElement>('[data-logical-stage="1920x1080"]')!
-    const designLine = stage.querySelector<HTMLElement>('[data-design-preview="project-lyrics"]')!
+    const designLine = stage.querySelector<HTMLElement>('[data-design-preview="lead-vocal"]')!
 
     expect(dialog.getAttribute('aria-labelledby')).toBe(heading.id)
     expect(heading.textContent).toBe('Style')
     expect(heading.tabIndex).toBe(-1)
-    expect(container.textContent).toContain('Project lyrics')
+    expect(container.textContent).toContain('Lyrics')
     expect(document.activeElement).toBe(heading)
     expect(dialog.children[1]).toBe(preview)
-    expect(designLine.textContent).toBe('Sing the first words and see the rest')
+    expect(designLine.textContent).toContain('Sing the first words and see the rest')
     expect(container.textContent).not.toContain('This is')
     expect(container.textContent).not.toContain(draft.stageStyle.lyrics.typeface.family)
     expect(container.querySelector<HTMLInputElement>('[role="combobox"]')?.value).toBe(
@@ -214,13 +209,12 @@ describe('ProjectStyleEditor', () => {
   it('uses automatic accessible destination tabs with wrapping Arrow and Home/End navigation', async () => {
     await renderEditor()
     const tabs = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
-    const [lyricsTab, leadVocalTab, backgroundTab, titleCardTab, stageFrameTab, templatesTab] = tabs
+    const [lyricsTab, backgroundTab, titleCardTab, stageFrameTab, templatesTab] = tabs
     const controlledPanel = (tab: HTMLButtonElement) =>
       container.querySelector<HTMLElement>(`#${CSS.escape(tab.getAttribute('aria-controls')!)}`)!
 
     expect(tabs.map((tab) => tab.textContent)).toEqual([
-      'Project lyrics',
-      'Lead Vocal',
+      'Lyrics',
       'Background',
       'Title card',
       'Stage frame',
@@ -230,9 +224,6 @@ describe('ProjectStyleEditor', () => {
 
     lyricsTab.focus()
     await act(async () => keyDown(lyricsTab, { code: 'ArrowRight', key: 'ArrowRight' }))
-    expect(document.activeElement).toBe(leadVocalTab)
-
-    await act(async () => keyDown(leadVocalTab, { code: 'ArrowRight', key: 'ArrowRight' }))
     expect(document.activeElement).toBe(backgroundTab)
     await act(async () => keyDown(backgroundTab, { code: 'ArrowRight', key: 'ArrowRight' }))
     expect(document.activeElement).toBe(titleCardTab)
@@ -290,7 +281,7 @@ describe('ProjectStyleEditor', () => {
     const loaded = applyDraftChange(onDraftChange.mock.calls.at(-1)?.[0], draft)
     expect(loaded.stageStyle.lyrics.sizePx).toBe(96)
     expect(loaded.lyricDisplay).toEqual({ lineCount: 3, advanceMode: 'scroll' })
-    expect(loaded.vocalTiming).toEqual({
+    expect(loaded.singers[0]!.vocalTiming).toEqual({
       previewMs: '5500',
       minLeadMs: '2500',
       maxLeadMs: '4500',
@@ -399,186 +390,66 @@ describe('ProjectStyleEditor', () => {
     expect(findButton(container, 'Warm stage')).not.toBeNull()
   })
 
-  it('edits Lead Vocal overrides and exposes planner-backed timing controls', async () => {
-    const project = createProject({ id: 'lead-vocal-style' })
-    const face = project.stageStyle.lyrics.fontStyle
-    const vocalStyle = {
-      ...cloneVocalStyle(project.tracks[0]!.vocalStyle),
-      fontStyle: { ...face },
-      sizePx: 96 as const,
+  it('edits global typography and selected-singer appearance without override machinery', async () => {
+    const project = createProject({ id: 'singer-style' })
+    project.tracks[0]!.vocalStyle = {
+      ...project.tracks[0]!.vocalStyle,
       sungColor: '#123456',
       unsungColor: '#654321',
       previewMs: 7_000,
       syncAid: { enabled: true, minLeadMs: 2_500, maxLeadMs: 6_000 },
     }
-    let draft = createProjectStyleDraft(structuredClone(project.stageStyle), vocalStyle)
+    let draft = createProjectStyleDraft(structuredClone(project.stageStyle), project.tracks)
     const onDraftChange = vi.fn<ProjectStyleSession['change']>()
     await renderEditor({ project, draft, onDraftChange })
-    await act(async () => findButton(container, 'Lead Vocal').click())
 
-    const panel = container.querySelector<HTMLElement>('[role="tabpanel"]:not([hidden])')!
+    const panel = container.querySelector<HTMLElement>('[role=tabpanel]:not([hidden])')!
+    expect(panel.textContent).toContain('Typeface, face, and size apply to every singer.')
+    expect(panel.textContent).toContain('Color and placement belong only to this singer.')
+    expect(panel.querySelector('.style-override-toggle')).toBeNull()
     expect(
-      [...panel.querySelectorAll('.style-override-toggle > strong')].map(
-        (label) => label.textContent,
-      ),
-    ).toEqual(['Typeface', 'Face', 'Size', 'Sung', 'Unsung'])
-    expect(
-      [...panel.querySelectorAll('.style-override-color-field output')].map(
-        (output) => output.textContent,
-      ),
+      [...panel.querySelectorAll('.style-color-field output')].map((output) => output.textContent),
     ).toEqual(['#123456', '#654321'])
     expect(panel.textContent).toContain('Preview Time')
     expect(panel.textContent).toContain('Sync Aid')
-    expect(panel.textContent).toContain('literal blank row starts a new lyric section')
-    expect(panel.textContent).toContain('literal first word itself has valid start and end timing')
-    expect(panel.textContent).toContain('Arrow Up or Arrow Down adjusts by 100 ms')
-    const timingInputs = [
-      panel.querySelector<HTMLInputElement>('[aria-label="Lead Vocal Preview Time"]')!,
-      panel.querySelector<HTMLInputElement>('[aria-label="Lead Vocal Sync Aid Minimum lead"]')!,
-      panel.querySelector<HTMLInputElement>('[aria-label="Lead Vocal Sync Aid Maximum lead"]')!,
-    ]
-    expect(timingInputs.map(({ value }) => value)).toEqual(['7000', '2500', '6000'])
     expect(
-      timingInputs.map(({ dataset, max, min, step, type }) => [
-        type,
-        step,
-        dataset.stepMs,
-        min,
-        max,
-      ]),
-    ).toEqual(Array(3).fill(['number', 'any', '100', '0', '60000']))
-    const designPreview = container.querySelector<HTMLElement>(
-      '[aria-label="Lead Vocal design preview"]',
-    )!
-    expect(designPreview.querySelectorAll('.stage-line')).toHaveLength(2)
-    expect(
-      [
-        ...designPreview
-          .querySelectorAll<HTMLElement>('.stage-line')[1]!
-          .querySelectorAll('.stage-word'),
-      ].map((word) => word.style.getPropertyValue('--word-progress')),
-    ).toEqual(['100%', '50%', '0%'])
-    expect(
-      designPreview
-        .querySelector<HTMLElement>('.sync-aid')
-        ?.style.getPropertyValue('--sync-progress'),
-    ).toBe('0.5')
-    expect(
-      [
-        ...panel.querySelectorAll<HTMLSelectElement>('[aria-label="Lead Vocal font size"] option'),
-      ].map((option) => Number(option.value)),
-    ).toEqual(FONT_SIZE_OPTIONS)
-
-    const syncEnabled = panel.querySelector<HTMLInputElement>(
-      '[aria-label="Enable Lead Vocal Sync Aid"]',
-    )!
-    await act(async () => syncEnabled.click())
-    draft = applyDraftChange(onDraftChange.mock.calls.at(-1)?.[0], draft)
-    expect(draft.vocalStyle.syncAid.enabled).toBe(false)
-    expect(draft.vocalTiming).toEqual({
-      previewMs: '7000',
-      minLeadMs: '2500',
-      maxLeadMs: '6000',
-    })
-    await renderEditor({ project, draft, onDraftChange })
-    expect(container.querySelector('[aria-label="Lead Vocal design preview"] .sync-aid')).toBeNull()
-    await act(async () =>
-      container
-        .querySelector<HTMLInputElement>('[aria-label="Enable Lead Vocal Sync Aid"]')!
-        .click(),
-    )
-    draft = applyDraftChange(onDraftChange.mock.calls.at(-1)?.[0], draft)
+      container.querySelector('[aria-label="Lyrics design preview"] .stage-line'),
+    ).not.toBeNull()
 
     await act(async () =>
-      panel.querySelector<HTMLInputElement>('[aria-label="Override Lead Vocal Typeface"]')!.click(),
+      replaceInput(
+        panel.querySelector<HTMLInputElement>('[aria-label="Selected singer sung color"]')!,
+        '#234567',
+      ),
     )
     draft = applyDraftChange(onDraftChange.mock.calls.at(-1)?.[0], draft)
-    expect(draft.vocalStyle.typeface).toEqual(project.stageStyle.lyrics.typeface)
-    expect(draft.vocalStyle).toMatchObject({
-      fontStyle: face,
-      sizePx: 96,
-      sungColor: '#123456',
-      unsungColor: '#654321',
-      previewMs: 7_000,
-      syncAid: { enabled: true, minLeadMs: 2_500, maxLeadMs: 6_000 },
-    })
+    expect(draft.singers[0]!.vocalStyle.sungColor).toBe('#234567')
+    expect(draft.stageStyle.lyrics).toEqual(project.stageStyle.lyrics)
 
     await renderEditor({ project, draft, onDraftChange })
-    const typeface = container.querySelector<HTMLInputElement>(
-      '[aria-label="Lead Vocal typeface"]',
-    )!
-    await act(async () => typeface.focus())
-    await act(async () =>
-      container
-        .querySelector<HTMLElement>('[data-font-family="System Monospace"]')!
-        .dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })),
-    )
+    await act(async () => container.querySelector<HTMLInputElement>('input[value=right]')!.click())
     draft = applyDraftChange(onDraftChange.mock.calls.at(-1)?.[0], draft)
-    expect(draft.vocalStyle.typeface).toEqual(SYSTEM_MONOSPACE_TYPEFACE)
-    expect(draft.vocalStyle.fontStyle).toEqual(face)
-    expect(draft.vocalStyle.sizePx).toBe(96)
-
-    for (const [label, field] of [
-      ['Face', 'fontStyle'],
-      ['Size', 'sizePx'],
-      ['Unsung', 'unsungColor'],
-    ] as const) {
-      await renderEditor({ project, draft, onDraftChange })
-      const before = structuredClone(draft.vocalStyle)
-      await act(async () =>
-        container
-          .querySelector<HTMLInputElement>(`[aria-label="Override Lead Vocal ${label}"]`)!
-          .click(),
-      )
-      draft = applyDraftChange(onDraftChange.mock.calls.at(-1)?.[0], draft)
-      expect(draft.vocalStyle).toEqual({ ...before, [field]: null })
-    }
-
-    await renderEditor({ project, draft, onDraftChange })
-    await act(async () =>
-      container.querySelector<HTMLInputElement>('[aria-label="Override Lead Vocal Sung"]')!.click(),
-    )
-    draft = applyDraftChange(onDraftChange.mock.calls.at(-1)?.[0], draft)
-    expect(draft.vocalStyle.sungColor).toBeNull()
-    await renderEditor({ project, draft, onDraftChange })
-    await act(async () =>
-      container.querySelector<HTMLInputElement>('[aria-label="Override Lead Vocal Sung"]')!.click(),
-    )
-    draft = applyDraftChange(onDraftChange.mock.calls.at(-1)?.[0], draft)
-    expect(draft.vocalStyle.sungColor).toBe(project.stageStyle.lyrics.sungColor)
-
-    await renderEditor({ project, draft, onDraftChange })
-    await act(async () =>
-      container.querySelector<HTMLInputElement>('input[value="right"]')!.click(),
-    )
-    draft = applyDraftChange(onDraftChange.mock.calls.at(-1)?.[0], draft)
-    expect(draft.vocalStyle.alignment).toBe('right')
-    expect(draft.vocalStyle.previewMs).toBe(7_000)
-    expect(draft.vocalStyle.syncAid).toEqual({
-      enabled: true,
-      minLeadMs: 2_500,
-      maxLeadMs: 6_000,
-    })
+    expect(draft.singers[0]!.vocalStyle.alignment).toBe('right')
   })
 
   it('preserves invalid linked timing text with associated errors and blocks direct Apply', async () => {
     const project = createProject({ id: 'invalid-lead-vocal-timing' })
-    let draft = createProjectStyleDraft(project.stageStyle, project.tracks[0]!.vocalStyle)
+    let draft = createProjectStyleDraft(project.stageStyle, project.tracks)
     const onDraftChange = vi.fn<ProjectStyleSession['change']>()
     const onApply = vi.fn()
     await renderEditor({ project, draft, onDraftChange, onApply })
-    await act(async () => findButton(container, 'Lead Vocal').click())
 
     const preview = container.querySelector<HTMLInputElement>(
       '[aria-label="Lead Vocal Preview Time"]',
     )!
     await act(async () => replaceInput(preview, '1000.5'))
     draft = applyDraftChange(onDraftChange.mock.calls.at(-1)?.[0], draft)
-    expect(draft.vocalTiming.previewMs).toBe('1000.5')
-    expect(draft.vocalStyle.previewMs).toBe(3_000)
-    expect(draft.vocalStyle.syncAid.enabled).toBe(false)
+    expect(draft.singers[0]!.vocalTiming.previewMs).toBe('1000.5')
+    expect(draft.singers[0]!.vocalStyle.previewMs).toBe(3_000)
+    expect(draft.singers[0]!.vocalStyle.syncAid.enabled).toBe(false)
 
-    const reason = 'Fix the Lead Vocal Preview Time and Sync Aid timing errors before applying.'
+    const reason =
+      'Fix Preview Time and Sync Aid timing errors for Lead Vocal before applying Style changes.'
     await renderEditor({
       project,
       draft,
@@ -588,7 +459,7 @@ describe('ProjectStyleEditor', () => {
       applyBlockedReason: reason,
     })
     await act(async () => findButton(container, 'Background').click())
-    await act(async () => findButton(container, 'Lead Vocal').click())
+    await act(async () => findButton(container, 'Lyrics').click())
     const retained = container.querySelector<HTMLInputElement>(
       '[aria-label="Lead Vocal Preview Time"]',
     )!
@@ -603,7 +474,7 @@ describe('ProjectStyleEditor', () => {
     expect(invalidStep.defaultPrevented).toBe(true)
     expect(onDraftChange).not.toHaveBeenCalled()
     expect(retained.value).toBe('1000.5')
-    expect(container.querySelector('[aria-label="Lead Vocal design preview"] .sync-aid')).toBeNull()
+    expect(container.querySelector('[aria-label="Lyrics design preview"] .sync-aid')).toBeNull()
     const apply = findButton(container, 'Apply & close')
     expect(apply.disabled).toBe(true)
     expect(container.textContent).toContain(reason)
@@ -612,8 +483,8 @@ describe('ProjectStyleEditor', () => {
 
     await act(async () => replaceInput(retained, '4501'))
     draft = applyDraftChange(onDraftChange.mock.calls.at(-1)?.[0], draft)
-    expect(draft.vocalTiming.previewMs).toBe('4501')
-    expect(draft.vocalStyle.previewMs).toBe(4_501)
+    expect(draft.singers[0]!.vocalTiming.previewMs).toBe('4501')
+    expect(draft.singers[0]!.vocalStyle.previewMs).toBe(4_501)
     await renderEditor({ project, draft, onDraftChange, onApply, canApply: true })
     expect(
       container
@@ -636,7 +507,10 @@ describe('ProjectStyleEditor', () => {
     const arrowUp = keyDown(accepted, { code: 'ArrowUp', key: 'ArrowUp' })
     expect(arrowUp.defaultPrevented).toBe(true)
     draft = applyDraftChange(onDraftChange.mock.calls.at(-1)?.[0], draft)
-    expect([draft.vocalTiming.previewMs, draft.vocalStyle.previewMs]).toEqual(['4601', 4_601])
+    expect([
+      draft.singers[0]!.vocalTiming.previewMs,
+      draft.singers[0]!.vocalStyle.previewMs,
+    ]).toEqual(['4601', 4_601])
     await renderEditor({ project, draft, onDraftChange })
     const stepped = container.querySelector<HTMLInputElement>(
       '[aria-label="Lead Vocal Preview Time"]',
@@ -645,15 +519,16 @@ describe('ProjectStyleEditor', () => {
     const arrowDown = keyDown(stepped, { code: 'ArrowDown', key: 'ArrowDown' })
     expect(arrowDown.defaultPrevented).toBe(true)
     draft = applyDraftChange(onDraftChange.mock.calls.at(-1)?.[0], draft)
-    expect([draft.vocalTiming.previewMs, draft.vocalStyle.previewMs]).toEqual(['4501', 4_501])
+    expect([
+      draft.singers[0]!.vocalTiming.previewMs,
+      draft.singers[0]!.vocalStyle.previewMs,
+    ]).toEqual(['4501', 4_501])
   })
 
-  it('makes Lead Vocal unavailable when the project has no track', async () => {
+  it('makes singer styling unavailable when the project has no track', async () => {
     const project = createProject({ id: 'no-vocal-track' })
     project.tracks = []
     await renderEditor({ project })
-    await act(async () => findButton(container, 'Lead Vocal').click())
-
     expect(container.querySelector('[role="status"]')?.textContent).toContain('no vocal track')
     expect(container.querySelector('.style-override-toggle')).toBeNull()
   })
@@ -780,9 +655,10 @@ describe('ProjectStyleEditor', () => {
       typeface,
       fontStyle: face,
       sizePx: 104,
-      sungColor: '#445566',
-      unsungColor: '#778899',
     })
+    const styleDraft = createProjectStyleDraft(draft, project.tracks)
+    styleDraft.singers[0]!.vocalStyle.sungColor = '#445566'
+    styleDraft.singers[0]!.vocalStyle.unsungColor = '#778899'
     const accepted = structuredClone(project)
     const onApply = vi.fn()
     let alias = ''
@@ -798,7 +674,7 @@ describe('ProjectStyleEditor', () => {
       },
     )
 
-    await renderEditor({ project, draft, onApply })
+    await renderEditor({ project, draft: styleDraft, onApply })
     await act(async () => {
       findButton(container, 'Stage frame').click()
       await Promise.resolve()
@@ -994,7 +870,7 @@ describe('ProjectStyleEditor', () => {
     const { draft: aggregateDraft } = await renderEditor({ onDraftChange })
     const draft = aggregateDraft.stageStyle
     const select = container.querySelector<HTMLSelectElement>(
-      '[aria-label="Project lyric font size"]',
+      '[aria-label="Global lyric font size"]',
     )!
     expect([...select.options].map((option) => Number(option.value))).toEqual(FONT_SIZE_OPTIONS)
 
@@ -1021,15 +897,13 @@ describe('ProjectStyleEditor', () => {
     const project = createProject({ id: 'color-draft' })
     const snapshot = structuredClone(project)
     const onDraftChange = vi.fn<ProjectStyleSession['change']>()
-    let draft: StageStyle = {
-      ...project.stageStyle,
-      background: {
-        ...project.stageStyle.background,
-        mode: 'solid',
-        solidColor: '#345678',
-      },
-      stageFrame: { ...project.stageStyle.stageFrame, lineColor: '#456789' },
+    let draft = createProjectStyleDraft(structuredClone(project.stageStyle), project.tracks)
+    draft.stageStyle.background = {
+      ...draft.stageStyle.background,
+      mode: 'solid',
+      solidColor: '#345678',
     }
+    draft.stageStyle.stageFrame.lineColor = '#456789'
     await renderEditor({ project, draft, onDraftChange })
     const lyricsPanel = container.querySelector<HTMLElement>('[role="tabpanel"]:not([hidden])')!
 
@@ -1042,17 +916,20 @@ describe('ProjectStyleEditor', () => {
       [...lyricsPanel.querySelectorAll('.style-color-field output')].map(
         (output) => output.textContent,
       ),
-    ).toEqual([draft.lyrics.sungColor.toUpperCase(), draft.lyrics.unsungColor.toUpperCase()])
+    ).toEqual([
+      draft.singers[0]!.vocalStyle.sungColor.toUpperCase(),
+      draft.singers[0]!.vocalStyle.unsungColor.toUpperCase(),
+    ])
     const stage = container.querySelector<HTMLElement>('.karaoke-stage')!
     expect(stage.style.background).toBe('#345678')
     expect(stage.style.getPropertyValue('--stage-frame-color')).toBe('#456789')
 
     const sung = container.querySelector<HTMLInputElement>(
-      '[aria-label="Project lyric sung color"]',
+      '[aria-label="Selected singer sung color"]',
     )!
     await act(async () => replaceInput(sung, '#123456'))
-    draft = applyChange(onDraftChange.mock.calls.at(-1)?.[0], draft)
-    expect(draft.lyrics.unsungColor).toBe(project.stageStyle.lyrics.unsungColor)
+    draft = applyDraftChange(onDraftChange.mock.calls.at(-1)?.[0], draft)
+    expect(draft.singers[0]!.vocalStyle.unsungColor).toBe(project.tracks[0]!.vocalStyle.unsungColor)
     await renderEditor({ project, draft, onDraftChange })
     expect(
       container.querySelector<HTMLElement>('.stage-line')?.style.getPropertyValue('--track-color'),
@@ -1061,11 +938,11 @@ describe('ProjectStyleEditor', () => {
 
     onDraftChange.mockClear()
     const unsung = container.querySelector<HTMLInputElement>(
-      '[aria-label="Project lyric unsung color"]',
+      '[aria-label="Selected singer unsung color"]',
     )!
     await act(async () => replaceInput(unsung, '#654321'))
-    draft = applyChange(onDraftChange.mock.calls.at(-1)?.[0], draft)
-    expect(draft.lyrics.sungColor).toBe('#123456')
+    draft = applyDraftChange(onDraftChange.mock.calls.at(-1)?.[0], draft)
+    expect(draft.singers[0]!.vocalStyle.sungColor).toBe('#123456')
     await renderEditor({ project, draft, onDraftChange })
     expect(
       container.querySelector<HTMLElement>('.stage-line')?.style.getPropertyValue('--unsung-color'),

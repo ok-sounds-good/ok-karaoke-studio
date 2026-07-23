@@ -593,12 +593,12 @@ export function KaraokePreview({
     designMode?.target === 'background'
       ? 'Background'
       : designMode?.target === 'lead-vocal'
-        ? 'Lead Vocal'
+        ? 'Lyrics'
         : isTitleCardDesign
           ? 'Title card'
           : stageFrameDesign
             ? 'Stage frame'
-            : 'Project lyrics'
+            : 'Lyrics'
   const rolePresentation = (role: StageFrameTextRole) => {
     const selected = stageFrameDesign?.role === role
     const outputVisible = stageFrame.enabled && stageFrame[role].visible
@@ -794,9 +794,7 @@ export function KaraokePreview({
             <DisplayObject
               className="active-lines"
               data-design-preview={designMode?.target}
-              label={
-                designMode?.target === 'lead-vocal' ? 'Active vocal lyric block' : 'Project lyrics'
-              }
+              label="Lyrics"
               position={designLines[0]?.style.position ?? DEFAULT_VOCAL_STYLE.position}
               selected={designMode?.target === 'lead-vocal'}
               stageRef={stageRef}

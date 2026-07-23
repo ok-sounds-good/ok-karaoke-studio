@@ -17,7 +17,7 @@ import {
   serializeProject,
   validateProject,
 } from './lib/model'
-import { DEFAULT_VOCAL_STYLE, cloneStageStyle, cloneVocalStyle } from './lib/video-style'
+import { cloneStageStyle, cloneVocalStyle } from './lib/video-style'
 import {
   DEFAULT_VIDEO_EXPORT_SETTINGS,
   type VideoExportDefaults,
@@ -43,7 +43,7 @@ import { useProjectActionArbiter } from './hooks/useProjectActionArbiter'
 import { useProjectBackgroundImage } from './hooks/useProjectBackgroundImage'
 import { useBackgroundImageStyleSession } from './hooks/useBackgroundImageStyleSession'
 import {
-  canonicalVocalStyle,
+  canonicalSingerStyles,
   createProjectStyleDraft,
   sameStageStyle,
   sameVocalStyle,
@@ -478,41 +478,42 @@ export default function App() {
   const commitProjectStyle = useCallback(
     (ownerKey: ProjectStyleOwnerKey, draft: ProjectStyleDraft): ProjectStyleCommitResult => {
       const current = projectRef.current
-      const currentTrack =
-        ownerKey.trackId === null
-          ? null
-          : current.tracks.find((track) => track.id === ownerKey.trackId)
+      const currentTrackIds = new Set(current.tracks.map((track) => track.id))
       if (
         ownerKey.projectId !== current.id ||
         ownerKey.lifecycle !== projectLifecycleSequenceRef.current ||
-        (ownerKey.trackId === null ? current.tracks.length > 0 : !currentTrack)
+        (ownerKey.trackId !== null && !currentTrackIds.has(ownerKey.trackId)) ||
+        draft.singers.length !== current.tracks.length ||
+        draft.singers.some((singer) => !currentTrackIds.has(singer.trackId))
       ) {
         return 'stale'
       }
       if (projectMutationIsBlocked()) return 'blocked'
-      const canonicalVocal = canonicalVocalStyle(draft)
-      if (!canonicalVocal) return 'blocked'
+      const canonicalSingers = canonicalSingerStyles(draft)
+      if (!canonicalSingers) return 'blocked'
+      const acceptedSingerStyles = new Map(
+        canonicalSingers.map((singer) => [singer.trackId, cloneVocalStyle(singer.vocalStyle)]),
+      )
       if (
         sameStageStyle(current.stageStyle, draft.stageStyle) &&
         current.lyricDisplay.lineCount === draft.lyricDisplay.lineCount &&
         current.lyricDisplay.advanceMode === draft.lyricDisplay.advanceMode &&
-        (!currentTrack || sameVocalStyle(currentTrack.vocalStyle, canonicalVocal))
+        current.tracks.every((track) =>
+          sameVocalStyle(track.vocalStyle, acceptedSingerStyles.get(track.id)!),
+        )
       ) {
         setNextExportDefaults({ ...draft.videoExportDefaults })
         return 'noop'
       }
 
       const acceptedStageStyle = cloneStageStyle(draft.stageStyle)
-      const acceptedVocalStyle = cloneVocalStyle(canonicalVocal)
       commitHistory((latest) => {
-        const targetIndex =
-          ownerKey.trackId === null
-            ? -1
-            : latest.tracks.findIndex((track) => track.id === ownerKey.trackId)
+        const latestTrackIds = new Set(latest.tracks.map((track) => track.id))
         if (
           ownerKey.projectId !== latest.id ||
           ownerKey.lifecycle !== projectLifecycleSequenceRef.current ||
-          (ownerKey.trackId === null ? latest.tracks.length > 0 : targetIndex < 0)
+          latest.tracks.length !== acceptedSingerStyles.size ||
+          [...acceptedSingerStyles.keys()].some((trackId) => !latestTrackIds.has(trackId))
         ) {
           return latest
         }
@@ -520,20 +521,19 @@ export default function App() {
         const lyricDisplayChanged =
           latest.lyricDisplay.lineCount !== draft.lyricDisplay.lineCount ||
           latest.lyricDisplay.advanceMode !== draft.lyricDisplay.advanceMode
-        const vocalChanged =
-          targetIndex >= 0 &&
-          !sameVocalStyle(latest.tracks[targetIndex]!.vocalStyle, acceptedVocalStyle)
-        if (!stageChanged && !lyricDisplayChanged && !vocalChanged) return latest
+        const singersChanged = latest.tracks.some(
+          (track) => !sameVocalStyle(track.vocalStyle, acceptedSingerStyles.get(track.id)!),
+        )
+        if (!stageChanged && !lyricDisplayChanged && !singersChanged) return latest
         return {
           ...latest,
           stageStyle: stageChanged ? cloneStageStyle(acceptedStageStyle) : latest.stageStyle,
           lyricDisplay: lyricDisplayChanged ? { ...draft.lyricDisplay } : latest.lyricDisplay,
-          tracks: vocalChanged
-            ? latest.tracks.map((track, index) =>
-                index === targetIndex
-                  ? { ...track, vocalStyle: cloneVocalStyle(acceptedVocalStyle) }
-                  : track,
-              )
+          tracks: singersChanged
+            ? latest.tracks.map((track) => ({
+                ...track,
+                vocalStyle: cloneVocalStyle(acceptedSingerStyles.get(track.id)!),
+              }))
             : latest.tracks,
         }
       })
@@ -546,11 +546,11 @@ export default function App() {
     () =>
       createProjectStyleDraft(
         project.stageStyle,
-        activeTrack?.vocalStyle ?? DEFAULT_VOCAL_STYLE,
+        project.tracks,
         project.lyricDisplay,
         nextExportDefaults,
       ),
-    [activeTrack?.vocalStyle, nextExportDefaults, project.lyricDisplay, project.stageStyle],
+    [nextExportDefaults, project.lyricDisplay, project.stageStyle, project.tracks],
   )
   const styleSession = useProjectStyleSession({
     ownerKey: {
@@ -1831,7 +1831,7 @@ export default function App() {
           project={project}
           playbackMs={playback.currentMs}
           draft={styleSession.draft}
-          leadVocalAvailable={Boolean(activeTrack)}
+          initialSingerTrackId={activeTrack?.id ?? null}
           fonts={installedFonts}
           onDraftChange={styleSession.change}
           onPrepareTemplateBackground={backgroundStyleSession.prepareTemplateBackground}

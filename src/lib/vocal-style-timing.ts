@@ -14,7 +14,7 @@ export interface VocalStyleTimingValidation {
 }
 
 export const VOCAL_STYLE_TIMING_ERROR =
-  'Fix the Lead Vocal Preview Time and Sync Aid timing errors before applying Style changes.'
+  'Fix singer Preview Time and Sync Aid timing errors before applying Style changes.'
 
 export function vocalStyleTimingDraft(style: VocalStyle): VocalStyleTimingDraft {
   return {

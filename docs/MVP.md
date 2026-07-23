@@ -174,8 +174,7 @@ Karaoke Studio identity.
 - Per-word highlighting is the lyric progress signal; the stage does not add a
   separate whole-line progress meter.
 - Render full lyric lines without repeating the singer or track name above each
-  line. The authored lead track still supplies the lyrics and any vocal style
-  overrides.
+  line. The authored track supplies the lyrics and its singer-owned appearance.
 - A project-persisted visible-line count from 1 through 5 governs both Live
   Preview and MP4 output. The stage renders only those full lines, with no
   miniature upcoming-line treatment.
@@ -228,9 +227,10 @@ Karaoke Studio identity.
 - Positioned display objects may overlap intentionally. The Studio does not
   warn about, reject, reflow, or automatically separate overlapping lyric or
   title objects. The background and Stage frame do not own placement state.
-- Project lyric defaults include typeface, style, size, unsung color, and sung
-  color. The sung color is the progressive fill applied to words as they are
-  performed; it is independent of Clear or Scroll line advance mode.
+- Project lyric style includes typeface, style, and size. Each singer owns an
+  unsung color and a sung color; the sung color is the progressive fill applied
+  to that singer's words as they are performed and is independent of Clear or
+  Scroll line advance mode.
 - The font selector uses a searchable, keyboard-accessible typeface combobox.
   Visible options render in their own typeface and are loaded incrementally so
   a large installed catalog remains responsive. Available face traits use
@@ -242,8 +242,8 @@ Karaoke Studio identity.
   the real video frame. There is no separate oversized `This is <typeface>`
   specimen in the control panel.
 - The chosen face must resolve consistently in Live Preview and MP4 output.
-  Typeface, Style, and Size are separate persisted fields; selecting or
-  inheriting one does not mutate the others. Persisted local faces use actual
+  Typeface, Style, and Size are separate persisted fields; selecting one does
+  not mutate the others. Persisted local faces use actual
   enumerated PostScript names and a deterministic catalog/trait fallback, never
   a guessed name. A changed installed catalog is an explicit Typeface
   replacement: until chosen, the persisted face and its shared Preview/MP4
@@ -252,10 +252,12 @@ Karaoke Studio identity.
   Reopening a project on a system without its selected font produces a visible
   warning and uses a deterministic fallback rather than silently changing only
   one renderer.
-- A vocal track can independently inherit or override the project lyric
-  typeface, style, size, unsung color, and sung color. It also owns horizontal
-  alignment (**Left**, **Center**, or **Right**), line preview time, and sync-aid
-  settings.
+- Lyric typeface, face, and size are project-global and apply to every singer.
+  Each vocal track owns required sung and unsung colors, stage placement,
+  horizontal alignment (**Left**, **Center**, or **Right**), line preview time,
+  and sync-aid settings. Projects with more than one track select the singer by
+  its actual track name while styling; new singers receive deterministic,
+  visibly distinct default colors.
 - Preview time is measured in milliseconds and controls how far before a lyric
   line's first sung word the line becomes eligible to appear, subject to the
   configured line count and Clear or Scroll advance behavior.
@@ -281,9 +283,10 @@ Karaoke Studio identity.
 
 - Save the Studio's creator preferences as named, application-level templates
   that can be created, applied, renamed, and deleted.
-- A template includes every supported creator-configurable stage, lyric-display,
-  vocal-style, sync-aid, and export-default setting. It includes the linked
-  background-image selection and path, but does not copy or embed the image.
+- A template includes every supported creator-configurable global stage,
+  lyric-display, and export-default setting plus the selected singer's
+  appearance and sync-aid settings. It includes the linked background-image
+  selection and path, but does not copy or embed the image.
 - A template excludes project content and timing: title, artist, loaded audio,
   audio metadata, lyrics, section separators, word timings, global offset, and
   vocal-track identity remain properties of the `.oks` project.
@@ -299,7 +302,7 @@ Karaoke Studio identity.
 ### Save and export
 
 - Save lyric text, blank-row section separators, word timings, lyric-display
-  settings, stage style, track styling and overrides, linked media paths, and
+  settings, stage style, singer-owned track appearance, linked media paths, and
   metadata in the current v0 `.oks` format.
 - The current build accepts only numeric `schemaVersion: 0`. Any other value is
   rejected with one clear unsupported-format error. This build does not provide
@@ -438,9 +441,9 @@ Karaoke Studio identity.
       mode that shows the selected face, traits, and size relative to the video
       frame, and produces the same resolved font or visible fallback warning in MP4
       output without a separate oversized control-panel specimen.
-- [x] Project lyric defaults and vocal overrides produce matching typeface,
-      style, size, unsung color, sung color, and horizontal alignment in Live
-      Preview and MP4 output.
+- [x] Global lyric typeface, face, and size plus each singer's required colors,
+      placement, horizontal alignment, and cue settings match in Live Preview
+      and MP4 output.
 - [x] Active-vocal and title-card display objects move transactionally in Design
       Preview, persist through projects and Style templates, remain within the
       logical stage, and retain matching positions in Live Preview and MP4
@@ -449,9 +452,9 @@ Karaoke Studio identity.
       only on the first line of a blank-row-separated section when at least its
       configured minimum lead time is available.
 - [x] Named style templates preserve every supported creator preference,
-      including the linked background-image path, and applying one leaves title,
-      artist, audio, lyrics, section separators, word timing, global offset, and
-      vocal-track identity unchanged.
+      including the linked background-image path and selected singer appearance,
+      and applying one leaves title, artist, audio, lyrics, section separators,
+      word timing, global offset, and vocal-track identity unchanged.
 - [x] Style-template create, apply, rename, and delete behavior persists across
       application restarts; missing linked images remain explicit and block MP4
       export, while missing fonts remain explicit and use the same deterministic

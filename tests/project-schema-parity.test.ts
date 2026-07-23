@@ -126,9 +126,9 @@ describe('current project schema parity', () => {
       weight: 400,
       slant: 'normal',
     }
-    const localVocal = objectAt(localFontProject, ['tracks', 0, 'vocalStyle'])
-    localVocal.typeface = { kind: 'local', family: 'Fixture Local', faces: [localFace] }
-    localVocal.fontStyle = localFace
+    const localLyrics = objectAt(localFontProject, ['stageStyle', 'lyrics'])
+    localLyrics.typeface = { kind: 'local', family: 'Fixture Local', faces: [localFace] }
+    localLyrics.fontStyle = localFace
     const localOutcomes = parity(JSON.stringify(localFontProject), true)
     localOutcomes.forEach(({ value }) => expect(value).toStrictEqual(localFontProject))
     expect(JSON.parse(serializeProject(localOutcomes[0].value as KaraokeProject))).toStrictEqual(

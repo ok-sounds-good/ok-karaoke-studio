@@ -62,10 +62,7 @@ export interface TextStyle extends FontSizeStyle {
   color: string
 }
 
-export interface LyricTextStyle extends FontSizeStyle {
-  unsungColor: string
-  sungColor: string
-}
+export type LyricTextStyle = FontSizeStyle
 
 export interface VisibleTextStyle extends TextStyle {
   visible: boolean
@@ -114,13 +111,9 @@ export interface StageStyle {
   stageFrame: StageFrameStyle
 }
 
-/** Null means the project lyric value is inherited independently for that field. */
 export interface VocalStyle {
-  typeface: FontTypefaceDescriptor | null
-  fontStyle: FontFaceDescriptor | null
-  sizePx: FontSizePx | null
-  unsungColor: string | null
-  sungColor: string | null
+  unsungColor: string
+  sungColor: string
   alignment: VocalAlignment
   position: DisplayPosition
   previewMs: number
@@ -203,8 +196,6 @@ export const DEFAULT_STAGE_COLORS = Object.freeze({
   backgroundSolid: '#21182D',
   backgroundGradientStart: '#322242',
   backgroundGradientEnd: '#1E1629',
-  lyricsUnsung: '#72687D',
-  lyricsSung: '#FF8A2B',
   titleEyebrow: '#FFAD69',
   title: '#FBF9FD',
   titleArtist: '#B4ACBD',
@@ -226,8 +217,6 @@ export const DEFAULT_STAGE_STYLE: StageStyle = Object.freeze({
     typeface: SYSTEM_UI_TYPEFACE,
     fontStyle: genericFontFace(SYSTEM_UI_TYPEFACE, 'Extra Bold'),
     sizePx: 82,
-    unsungColor: DEFAULT_STAGE_COLORS.lyricsUnsung,
-    sungColor: DEFAULT_STAGE_COLORS.lyricsSung,
   }),
   titleCard: Object.freeze({
     eyebrow: Object.freeze({
@@ -265,12 +254,13 @@ export const DEFAULT_STAGE_STYLE: StageStyle = Object.freeze({
   }),
 }) as StageStyle
 
+export const DEFAULT_SINGER_COLORS = Object.freeze({
+  unsungColor: '#72687D',
+  sungColor: '#FF8A2B',
+})
+
 export const DEFAULT_VOCAL_STYLE: VocalStyle = Object.freeze({
-  typeface: null,
-  fontStyle: null,
-  sizePx: null,
-  unsungColor: null,
-  sungColor: null,
+  ...DEFAULT_SINGER_COLORS,
   alignment: 'center',
   position: Object.freeze({ ...stageLayout.placement.defaults.vocal }),
   previewMs: DEFAULT_PREVIEW_MS,
@@ -280,6 +270,28 @@ export const DEFAULT_VOCAL_STYLE: VocalStyle = Object.freeze({
     maxLeadMs: DEFAULT_SYNC_AID_MAX_MS,
   }),
 }) as VocalStyle
+
+export const DEFAULT_SINGER_COLOR_PALETTE = Object.freeze([
+  Object.freeze({
+    ...DEFAULT_SINGER_COLORS,
+  }),
+  Object.freeze({ unsungColor: '#53707A', sungColor: '#42D3E8' }),
+  Object.freeze({ unsungColor: '#765F7F', sungColor: '#E879F9' }),
+  Object.freeze({ unsungColor: '#66714D', sungColor: '#A3E635' }),
+  Object.freeze({ unsungColor: '#7C6252', sungColor: '#FB7185' }),
+  Object.freeze({ unsungColor: '#596A86', sungColor: '#60A5FA' }),
+  Object.freeze({ unsungColor: '#7A6546', sungColor: '#FACC15' }),
+  Object.freeze({ unsungColor: '#4E7467', sungColor: '#34D399' }),
+])
+
+export function defaultSingerColors(index: number): {
+  unsungColor: string
+  sungColor: string
+} {
+  const normalized = Number.isSafeInteger(index) && index >= 0 ? index : 0
+  const colors = DEFAULT_SINGER_COLOR_PALETTE[normalized % DEFAULT_SINGER_COLOR_PALETTE.length]!
+  return { ...colors }
+}
 
 export function cloneFontFace(face: FontFaceDescriptor): FontFaceDescriptor {
   return { ...face }
@@ -327,8 +339,6 @@ export function cloneStageStyle(style: StageStyle = DEFAULT_STAGE_STYLE): StageS
 export function cloneVocalStyle(style: VocalStyle = DEFAULT_VOCAL_STYLE): VocalStyle {
   return {
     ...style,
-    typeface: style.typeface ? cloneTypeface(style.typeface) : null,
-    fontStyle: style.fontStyle ? cloneFontFace(style.fontStyle) : null,
     position: { ...style.position },
     syncAid: { ...style.syncAid },
   }
@@ -338,14 +348,13 @@ export function resolveVocalStyle(
   projectLyrics: LyricTextStyle,
   vocal: VocalStyle,
 ): ResolvedVocalStyle {
-  const typeface = cloneTypeface(vocal.typeface ?? projectLyrics.typeface)
-  const requestedStyle = vocal.fontStyle ?? projectLyrics.fontStyle
+  const typeface = cloneTypeface(projectLyrics.typeface)
   return {
     typeface,
-    fontStyle: resolveFontFace(typeface, requestedStyle),
-    sizePx: vocal.sizePx ?? projectLyrics.sizePx,
-    unsungColor: vocal.unsungColor ?? projectLyrics.unsungColor,
-    sungColor: vocal.sungColor ?? projectLyrics.sungColor,
+    fontStyle: resolveFontFace(typeface, projectLyrics.fontStyle),
+    sizePx: projectLyrics.sizePx,
+    unsungColor: vocal.unsungColor,
+    sungColor: vocal.sungColor,
     alignment: vocal.alignment,
     position: { ...vocal.position },
     previewMs: vocal.previewMs,
@@ -353,8 +362,8 @@ export function resolveVocalStyle(
   }
 }
 
-export function resolveVocalSungColor(stage: StageStyle, vocal: VocalStyle): string {
-  return vocal.sungColor ?? stage.lyrics.sungColor
+export function resolveVocalSungColor(_stage: StageStyle, vocal: VocalStyle): string {
+  return vocal.sungColor
 }
 
 function compareOrdinal(left: string, right: string): number {
