@@ -59,7 +59,11 @@ function template(id = 'template-1', name = 'Warm Stage'): StyleTemplate {
   const stageStyle = cloneStageStyle()
   stageStyle.background.mode = 'image'
   stageStyle.background.imagePath = '/missing-but-retained/background.png'
+  stageStyle.titleCard.eyebrow.position = { x: 280, y: 190 }
+  stageStyle.titleCard.title.position = { x: 1_420, y: 460 }
+  stageStyle.titleCard.artist.position = { x: 960, y: 900 }
   const vocalStyle = cloneVocalStyle()
+  vocalStyle.position = { x: 640, y: 720 }
   vocalStyle.typeface = {
     kind: 'local',
     family: 'Unavailable Template Font',

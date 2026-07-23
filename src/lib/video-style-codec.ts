@@ -8,6 +8,7 @@ import {
   type FontFaceDescriptor,
   type FontSizePx,
   type FontTypefaceDescriptor,
+  type DisplayPosition,
   type StageStyle,
   type TextStyle,
   type VocalStyle,
@@ -73,6 +74,15 @@ function boundedInteger(
     throw new RangeError(`${path}.${key} must be from ${minimum} to ${maximum}.`)
   }
   return result
+}
+
+function decodeDisplayPosition(value: unknown, path: string): DisplayPosition {
+  const source = record(value, path)
+  exactKeys(source, ['x', 'y'], path)
+  return {
+    x: boundedInteger(source, 'x', path, 0, 1920),
+    y: boundedInteger(source, 'y', path, 0, 1080),
+  }
 }
 
 function fontSize(value: RecordValue, key: string, path: string): FontSizePx {
@@ -164,12 +174,22 @@ export function validTypefaceDescriptor(value: unknown): value is FontTypefaceDe
   )
 }
 
-function validTextStyle(value: unknown, withVisibility = false): value is TextStyle {
+function validTextStyle(
+  value: unknown,
+  withVisibility = false,
+  withPosition = false,
+): value is TextStyle {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
   const style = value as RecordValue
-  const keys = withVisibility
-    ? ['typeface', 'fontStyle', 'sizePx', 'color', 'visible']
-    : ['typeface', 'fontStyle', 'sizePx', 'color']
+  const position = style.position as RecordValue | undefined
+  const keys = [
+    'typeface',
+    'fontStyle',
+    'sizePx',
+    'color',
+    ...(withVisibility ? ['visible'] : []),
+    ...(withPosition ? ['position'] : []),
+  ]
   return (
     hasExactKeys(style, keys) &&
     validTypefaceDescriptor(style.typeface) &&
@@ -177,7 +197,18 @@ function validTextStyle(value: unknown, withVisibility = false): value is TextSt
     isFontSizePx(style.sizePx) &&
     typeof style.color === 'string' &&
     isHexColor(style.color) &&
-    (!withVisibility || typeof style.visible === 'boolean')
+    (!withVisibility || typeof style.visible === 'boolean') &&
+    (!withPosition ||
+      (typeof style.position === 'object' &&
+        style.position !== null &&
+        !Array.isArray(style.position) &&
+        hasExactKeys(position!, ['x', 'y']) &&
+        Number.isSafeInteger(position!.x) &&
+        Number(position!.x) >= 0 &&
+        Number(position!.x) <= 1920 &&
+        Number.isSafeInteger(position!.y) &&
+        Number(position!.y) >= 0 &&
+        Number(position!.y) <= 1080))
   )
 }
 
@@ -211,13 +242,23 @@ export function decodeTypeface(value: unknown, path: string): FontTypefaceDescri
   return typeface
 }
 
-function decodeTextStyle(value: unknown, path: string, withVisibility = false) {
+function decodeTextStyle(
+  value: unknown,
+  path: string,
+  withVisibility = false,
+  withPosition = false,
+) {
   const source = record(value, path)
   exactKeys(
     source,
-    withVisibility
-      ? ['typeface', 'fontStyle', 'sizePx', 'color', 'visible']
-      : ['typeface', 'fontStyle', 'sizePx', 'color'],
+    [
+      'typeface',
+      'fontStyle',
+      'sizePx',
+      'color',
+      ...(withVisibility ? ['visible'] : []),
+      ...(withPosition ? ['position'] : []),
+    ],
     path,
   )
   const decoded = {
@@ -226,8 +267,11 @@ function decodeTextStyle(value: unknown, path: string, withVisibility = false) {
     sizePx: fontSize(source, 'sizePx', path),
     color: color(source, 'color', path),
     ...(withVisibility ? { visible: boolean(source, 'visible', path) } : {}),
+    ...(withPosition
+      ? { position: decodeDisplayPosition(source.position, `${path}.position`) }
+      : {}),
   }
-  if (!validTextStyle(decoded, withVisibility)) {
+  if (!validTextStyle(decoded, withVisibility, withPosition)) {
     throw new TypeError(`${path} is not a valid text style.`)
   }
   return decoded
@@ -297,15 +341,18 @@ export function decodeStageStyle(value: unknown): StageStyle {
         title.eyebrow,
         'project.stageStyle.titleCard.eyebrow',
         true,
+        true,
       ) as StageStyle['titleCard']['eyebrow'],
       title: decodeTextStyle(
         title.title,
         'project.stageStyle.titleCard.title',
         true,
+        true,
       ) as StageStyle['titleCard']['title'],
       artist: decodeTextStyle(
         title.artist,
         'project.stageStyle.titleCard.artist',
+        true,
         true,
       ) as StageStyle['titleCard']['artist'],
     },
@@ -343,6 +390,7 @@ export function decodeVocalStyle(value: unknown, path: string): VocalStyle {
       'unsungColor',
       'sungColor',
       'alignment',
+      'position',
       'previewMs',
       'syncAid',
     ],
@@ -374,6 +422,7 @@ export function decodeVocalStyle(value: unknown, path: string): VocalStyle {
     unsungColor: nullableColor('unsungColor'),
     sungColor: nullableColor('sungColor'),
     alignment,
+    position: decodeDisplayPosition(source.position, `${path}.position`),
     previewMs: integer(source, 'previewMs', path),
     syncAid: {
       enabled: boolean(syncAid, 'enabled', `${path}.syncAid`),

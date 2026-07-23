@@ -10,11 +10,13 @@ function installKaraokeRuntime() {
   let assetGeneration = 0
   let nextFontAlias = 0
   let layoutKey = ''
-  let wordNodes = []
+  let wordNodes = new Map()
   let lineTextNodes = new Map()
   let syncNodes = []
 
   const byId = (id) => document.getElementById(id)
+  const placement = window[Symbol.for('studio.okay-karaoke.display-placement')]
+  if (!placement) throw new Error('Shared display placement geometry is unavailable.')
 
   const node = (tag, className, text) => {
     const value = document.createElement(tag)
@@ -117,6 +119,16 @@ function installKaraokeRuntime() {
     element.style.fontWeight = String(face.weight)
     element.style.fontStyle = face.slant
     element.style.fontSynthesis = 'none'
+  }
+
+  const positionDisplayNode = (element, position) => {
+    const clamped = placement.clampDisplayPosition(
+      position,
+      element.offsetWidth,
+      element.offsetHeight,
+    )
+    element.style.left = `${clamped.x}px`
+    element.style.top = `${clamped.y}px`
   }
 
   const formatTime = (playbackMs) => {
@@ -255,48 +267,62 @@ function installKaraokeRuntime() {
 
   const appendTitleCard = (content, state) => {
     const card = node('div', 'title-card')
+    content.append(card)
     const roles = state.stageStyle.titleCard
     if (roles.eyebrow.visible) {
       const eyebrow = node('div', 'title-eyebrow', "Tonight's performance")
       applyText(eyebrow, roles.eyebrow)
       card.append(eyebrow)
+      positionDisplayNode(eyebrow, roles.eyebrow.position)
     }
     if (roles.title.visible) {
       const title = node('h1', 'title-main', state.title)
       applyText(title, roles.title)
       card.append(title)
+      positionDisplayNode(title, roles.title.position)
     }
     if (roles.artist.visible) {
       const artist = node('p', 'title-artist', state.artist)
       applyText(artist, roles.artist)
       card.append(artist)
+      positionDisplayNode(artist, roles.artist.position)
     }
-    content.append(card)
   }
 
   const appendLyrics = (content, lines) => {
-    const group = node('div', 'lines')
-    const actualLineCount = Math.max(1, Math.min(5, lines.length))
-    group.style.gap = `${window.stageLayout.lyric.gapsPx[actualLineCount]}px`
+    const trackGroups = new Map()
     for (const item of lines) {
-      const lyric = node('div', `lyric ${item.style.alignment}`)
-      const text = node('span', 'lyric-text')
-      applyText(lyric, { ...item.style, color: item.style.unsungColor })
-      lyric.style.setProperty('--sung', item.style.sungColor)
-      lyric.style.setProperty('--unsung', item.style.unsungColor)
-      item.words.forEach((word, index) => {
-        const wrapper = node('span', 'word')
-        const fill = node('span', 'word-fill', word.text)
-        wrapper.append(node('span', 'word-base', word.text), fill)
-        text.append(wrapper)
-        wordNodes.push(fill)
-        if (index < item.words.length - 1) text.append(document.createTextNode(' '))
-      })
-      lyric.append(text)
-      lineTextNodes.set(lineKey(item.trackId, item.id), text)
-      group.append(lyric)
+      const entries = trackGroups.get(item.trackId) ?? []
+      entries.push(item)
+      trackGroups.set(item.trackId, entries)
     }
-    content.append(group)
+    for (const entries of trackGroups.values()) {
+      const group = node('div', 'lines')
+      const actualLineCount = Math.max(1, Math.min(5, entries.length))
+      group.style.gap = `${window.stageLayout.lyric.gapsPx[actualLineCount]}px`
+      for (const item of entries) {
+        const lyric = node('div', `lyric ${item.style.alignment}`)
+        const text = node('span', 'lyric-text')
+        const fills = []
+        applyText(lyric, { ...item.style, color: item.style.unsungColor })
+        lyric.style.setProperty('--sung', item.style.sungColor)
+        lyric.style.setProperty('--unsung', item.style.unsungColor)
+        item.words.forEach((word, index) => {
+          const wrapper = node('span', 'word')
+          const fill = node('span', 'word-fill', word.text)
+          wrapper.append(node('span', 'word-base', word.text), fill)
+          text.append(wrapper)
+          fills.push(fill)
+          if (index < item.words.length - 1) text.append(document.createTextNode(' '))
+        })
+        lyric.append(text)
+        wordNodes.set(lineKey(item.trackId, item.id), fills)
+        lineTextNodes.set(lineKey(item.trackId, item.id), text)
+        group.append(lyric)
+      }
+      content.append(group)
+      positionDisplayNode(group, entries[0].style.position)
+    }
   }
 
   const syncBrightness = (progress) => {
@@ -363,7 +389,7 @@ function installKaraokeRuntime() {
   const rebuildLayout = (state) => {
     const content = byId('content')
     const syncLayer = byId('syncs')
-    wordNodes = []
+    wordNodes = new Map()
     lineTextNodes = new Map()
     syncNodes = []
     content.replaceChildren()
@@ -374,15 +400,14 @@ function installKaraokeRuntime() {
   }
 
   const updateFrameProgress = (state) => {
-    let index = 0
     for (const line of state.lines) {
-      for (const word of line.words) {
+      const fills = wordNodes.get(lineKey(line.trackId, line.id)) ?? []
+      line.words.forEach((word, index) => {
         const progress = Number.isFinite(word.progress)
           ? Math.max(0, Math.min(1, word.progress))
           : 0
-        wordNodes[index]?.style.setProperty('width', `${(progress * 100).toFixed(3)}%`)
-        index += 1
-      }
+        fills[index]?.style.setProperty('width', `${(progress * 100).toFixed(3)}%`)
+      })
     }
     state.syncAids.forEach((aid, cueIndex) => {
       const entry = syncNodes[cueIndex]

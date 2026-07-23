@@ -16,6 +16,19 @@
     "letterSpacingEm": 0.05
   },
   "content": { "topPx": 140, "rightPx": 128, "bottomPx": 120, "leftPx": 128 },
+  "placement": {
+    "keyboardStepPx": 1,
+    "keyboardLargeStepPx": 10,
+    "minimumLyricWidthPx": 960,
+    "defaults": {
+      "vocal": { "x": 960, "y": 550 },
+      "titleCard": {
+        "eyebrow": { "x": 960, "y": 447 },
+        "title": { "x": 960, "y": 550 },
+        "artist": { "x": 960, "y": 650 }
+      }
+    }
+  },
   "title": {
     "eyebrowLetterSpacingEm": 0.2,
     "marginTopPx": 34,

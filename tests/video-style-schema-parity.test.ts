@@ -114,9 +114,9 @@ const GOLDEN_STYLE_JSON = String.raw`{
     "background": {"mode":"image","solidColor":"#aBcDeF","gradientStartColor":"#123aBc","gradientEndColor":"#DeF456","imagePath":"/golden/stage.png"},
     "lyrics": {"typeface":{"kind":"local","family":"Golden Sans","faces":[{"fullName":"Golden Sans Regular","style":"Regular","postscriptName":"Golden:\"\\Face","weight":400,"slant":"normal"}]},"fontStyle":{"fullName":"Golden Sans Regular","style":"Regular","postscriptName":"Golden:\"\\Face","weight":400,"slant":"normal"},"sizePx":82,"unsungColor":"#ab12Cd","sungColor":"#Ef3456"},
     "titleCard": {
-      "eyebrow": {"typeface":{"kind":"local","family":"Golden Sans","faces":[{"fullName":"Golden Sans Regular","style":"Regular","postscriptName":"Golden:\"\\Face","weight":400,"slant":"normal"}]},"fontStyle":{"fullName":"Golden Sans Regular","style":"Regular","postscriptName":"Golden:\"\\Face","weight":400,"slant":"normal"},"sizePx":25,"color":"#A1b2C3","visible":true},
-      "title": {"typeface":{"kind":"local","family":"Golden Sans","faces":[{"fullName":"Golden Sans Regular","style":"Regular","postscriptName":"Golden:\"\\Face","weight":400,"slant":"normal"}]},"fontStyle":{"fullName":"Golden Sans Regular","style":"Regular","postscriptName":"Golden:\"\\Face","weight":400,"slant":"normal"},"sizePx":104,"color":"#d4E5f6","visible":false},
-      "artist": {"typeface":{"kind":"local","family":"Golden Sans","faces":[{"fullName":"Golden Sans Regular","style":"Regular","postscriptName":"Golden:\"\\Face","weight":400,"slant":"normal"}]},"fontStyle":{"fullName":"Golden Sans Regular","style":"Regular","postscriptName":"Golden:\"\\Face","weight":400,"slant":"normal"},"sizePx":42,"color":"#112aBc","visible":true}
+      "eyebrow": {"typeface":{"kind":"local","family":"Golden Sans","faces":[{"fullName":"Golden Sans Regular","style":"Regular","postscriptName":"Golden:\"\\Face","weight":400,"slant":"normal"}]},"fontStyle":{"fullName":"Golden Sans Regular","style":"Regular","postscriptName":"Golden:\"\\Face","weight":400,"slant":"normal"},"sizePx":25,"color":"#A1b2C3","visible":true,"position":{"x":123,"y":234}},
+      "title": {"typeface":{"kind":"local","family":"Golden Sans","faces":[{"fullName":"Golden Sans Regular","style":"Regular","postscriptName":"Golden:\"\\Face","weight":400,"slant":"normal"}]},"fontStyle":{"fullName":"Golden Sans Regular","style":"Regular","postscriptName":"Golden:\"\\Face","weight":400,"slant":"normal"},"sizePx":104,"color":"#d4E5f6","visible":false,"position":{"x":960,"y":540}},
+      "artist": {"typeface":{"kind":"local","family":"Golden Sans","faces":[{"fullName":"Golden Sans Regular","style":"Regular","postscriptName":"Golden:\"\\Face","weight":400,"slant":"normal"}]},"fontStyle":{"fullName":"Golden Sans Regular","style":"Regular","postscriptName":"Golden:\"\\Face","weight":400,"slant":"normal"},"sizePx":42,"color":"#112aBc","visible":true,"position":{"x":1800,"y":1000}}
     },
     "stageFrame": {
       "enabled":true,"lineColor":"#4a5B6c","lineWidthPx":32,
@@ -128,7 +128,7 @@ const GOLDEN_STYLE_JSON = String.raw`{
   "vocal": {
     "typeface":{"kind":"local","family":"Golden Sans","faces":[{"fullName":"Golden Sans Oblique","style":"Oblique","postscriptName":"Golden:Oblique","weight":900,"slant":"oblique"}]},
     "fontStyle":{"fullName":"Golden Sans Oblique","style":"Oblique","postscriptName":"Golden:Oblique","weight":900,"slant":"oblique"},
-    "sizePx":400,"unsungColor":"#a1B2c3","sungColor":"#D4e5F6","alignment":"right","previewMs":60000,
+    "sizePx":400,"unsungColor":"#a1B2c3","sungColor":"#D4e5F6","alignment":"right","position":{"x":1500,"y":800},"previewMs":60000,
     "syncAid":{"enabled":true,"minLeadMs":0,"maxLeadMs":60000}
   }
 }`
@@ -262,8 +262,12 @@ const EXACT_KEY_SHAPES = [
   { kind: 'stage', path: ['lyrics', 'typeface', 'faces', 0], key: 'fullName' },
   { kind: 'stage', path: ['titleCard'], key: 'eyebrow' },
   { kind: 'stage', path: ['titleCard', 'eyebrow'], key: 'visible' },
+  { kind: 'stage', path: ['titleCard', 'eyebrow'], key: 'position' },
+  { kind: 'stage', path: ['titleCard', 'eyebrow', 'position'], key: 'x' },
   { kind: 'stage', path: ['stageFrame'], key: 'enabled' },
   { kind: 'vocal', path: [], key: 'alignment' },
+  { kind: 'vocal', path: [], key: 'position' },
+  { kind: 'vocal', path: ['position'], key: 'y' },
   { kind: 'vocal', path: ['syncAid'], key: 'enabled' },
 ] as const
 
@@ -542,6 +546,18 @@ describe('TypeScript and main-process video style schema parity', () => {
       populated.alignment = alignment
       expectParity('vocal', populated, true)
     }
+    for (const position of [
+      { x: 0, y: 0 },
+      { x: 1_920, y: 1_080 },
+      { x: 731, y: 419 },
+    ]) {
+      const vocal = cloneVocalStyle()
+      vocal.position = position
+      expectParity('vocal', vocal, true)
+      const stage = cloneStageStyle()
+      stage.titleCard.title.position = position
+      expectParity('stage', stage, true)
+    }
     for (const key of ['typeface', 'fontStyle', 'sizePx', 'unsungColor', 'sungColor'] as const) {
       const inherited = localVocal()
       inherited[key] = null
@@ -582,6 +598,13 @@ describe('TypeScript and main-process video style schema parity', () => {
       [['unsungColor'], 'orange'],
       [['sungColor'], 7],
       [['alignment'], 'middle'],
+      [['position'], null],
+      [['position', 'x'], -1],
+      [['position', 'x'], 1_921],
+      [['position', 'x'], 12.5],
+      [['position', 'y'], -1],
+      [['position', 'y'], 1_081],
+      [['position', 'y'], Number.NaN],
       [['syncAid', 'enabled'], 1],
       [['syncAid'], null],
     ]
@@ -590,6 +613,15 @@ describe('TypeScript and main-process video style schema parity', () => {
       replaceAt(vocal, path, value)
       expectParity('vocal', vocal, false)
     })
+    for (const [path, value] of [
+      [['titleCard', 'title', 'position'], null],
+      [['titleCard', 'title', 'position', 'x'], Number.POSITIVE_INFINITY],
+      [['titleCard', 'title', 'position', 'y'], 1_081],
+    ] as Array<[readonly PathPart[], unknown]>) {
+      const stage = cloneStageStyle()
+      replaceAt(stage, path, value)
+      expectParity('stage', stage, false)
+    }
     for (const root of [null, [], 'vocal', 4]) expectParity('vocal', root, false)
   })
 })

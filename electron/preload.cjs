@@ -148,17 +148,35 @@ function validTypeface(value) {
   )
 }
 
-function validTextStyle(value, visibility = false) {
-  const keys = visibility
-    ? ['typeface', 'fontStyle', 'sizePx', 'color', 'visible']
-    : ['typeface', 'fontStyle', 'sizePx', 'color']
+function validPosition(value) {
+  return (
+    exactRecord(value, ['x', 'y']) &&
+    Number.isSafeInteger(value.x) &&
+    value.x >= 0 &&
+    value.x <= 1920 &&
+    Number.isSafeInteger(value.y) &&
+    value.y >= 0 &&
+    value.y <= 1080
+  )
+}
+
+function validTextStyle(value, visibility = false, position = false) {
+  const keys = [
+    'typeface',
+    'fontStyle',
+    'sizePx',
+    'color',
+    ...(visibility ? ['visible'] : []),
+    ...(position ? ['position'] : []),
+  ]
   return (
     exactRecord(value, keys) &&
     validTypeface(value.typeface) &&
     validFace(value.fontStyle) &&
     FONT_SIZES.has(value.sizePx) &&
     validColor(value.color) &&
-    (!visibility || typeof value.visible === 'boolean')
+    (!visibility || typeof value.visible === 'boolean') &&
+    (!position || validPosition(value.position))
   )
 }
 
@@ -194,7 +212,7 @@ function validStageStyle(value) {
     validColor(lyrics.unsungColor) &&
     validColor(lyrics.sungColor) &&
     exactRecord(titleCard, ['eyebrow', 'title', 'artist']) &&
-    ['eyebrow', 'title', 'artist'].every((key) => validTextStyle(titleCard[key], true)) &&
+    ['eyebrow', 'title', 'artist'].every((key) => validTextStyle(titleCard[key], true, true)) &&
     exactRecord(stageFrame, ['enabled', 'lineColor', 'lineWidthPx', 'brand', 'clock', 'footer']) &&
     typeof stageFrame.enabled === 'boolean' &&
     validColor(stageFrame.lineColor) &&
@@ -214,6 +232,7 @@ function validVocalStyle(value) {
       'unsungColor',
       'sungColor',
       'alignment',
+      'position',
       'previewMs',
       'syncAid',
     ])
@@ -228,6 +247,7 @@ function validVocalStyle(value) {
     nullableColor(value.unsungColor) &&
     nullableColor(value.sungColor) &&
     ['left', 'center', 'right'].includes(value.alignment) &&
+    validPosition(value.position) &&
     Number.isSafeInteger(value.previewMs) &&
     value.previewMs >= 0 &&
     value.previewMs <= 60_000 &&

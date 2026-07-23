@@ -1,4 +1,15 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type PointerEvent,
+  type ReactNode,
+  type RefObject,
+} from 'react'
 import { Edit3, MonitorPlay, ShieldCheck } from 'lucide-react'
 import {
   designPreviewFonts,
@@ -11,7 +22,12 @@ import {
 import type { KaraokeProject, LyricDisplaySettings } from '../lib/model'
 import { formatTime } from '../lib/model'
 import { fontFamilyFor } from '../lib/font-runtime'
-import { logicalStagePx, previewStageLayoutVariables } from '../lib/stage-layout'
+import {
+  clampDisplayPosition,
+  logicalObjectSize,
+  moveDisplayPosition,
+} from '../lib/display-placement'
+import { logicalStagePx, previewStageLayoutVariables, STAGE_LAYOUT } from '../lib/stage-layout'
 import { previewFrameStateAt, type StageFrameLine } from '../lib/stage-frame-state'
 import { DESIGN_LYRIC_WORDS, leadVocalDesignFrame } from '../lib/lead-vocal-design-frame'
 import { SYNC_AID_GEOMETRY, syncAidBrightness, syncAidPosition } from '../lib/sync-aid-geometry'
@@ -19,6 +35,7 @@ import {
   DEFAULT_VOCAL_STYLE,
   resolveFontFace,
   resolveVocalStyle,
+  type DisplayPosition,
   type LyricTextStyle,
   type StageStyle,
   type TextStyle,
@@ -37,11 +54,13 @@ export type KaraokePreviewDesignMode =
       stageStyle: StageStyle
       vocalStyle: VocalStyle
       timingValid: boolean
+      onPositionChange?: (position: DisplayPosition) => void
     }
   | {
       target: 'title-card'
       role: keyof StageStyle['titleCard']
       stageStyle: StageStyle
+      onPositionChange?: (position: DisplayPosition) => void
     }
   | {
       target: 'stage-frame'
@@ -78,6 +97,16 @@ function lineKey(trackId: string, lineId: string) {
   return JSON.stringify([trackId, lineId])
 }
 
+function groupLinesByTrack(lines: StageFrameLine[]): StageFrameLine[][] {
+  const groups = new Map<string, StageFrameLine[]>()
+  lines.forEach((line) => {
+    const group = groups.get(line.trackId) ?? []
+    group.push(line)
+    groups.set(line.trackId, group)
+  })
+  return [...groups.values()]
+}
+
 function projectLyricsDesignLine(style: LyricTextStyle): StageFrameLine {
   return {
     id: 'project-lyrics-design-line',
@@ -92,16 +121,149 @@ function projectLyricsDesignLine(style: LyricTextStyle): StageFrameLine {
   }
 }
 
+function DisplayObject({
+  children,
+  className,
+  label,
+  objectStyle,
+  onPositionChange,
+  position,
+  selected = false,
+  stageRef,
+  ...data
+}: {
+  children: ReactNode
+  className: string
+  label: string
+  objectStyle?: CSSProperties
+  onPositionChange?: (position: DisplayPosition) => void
+  position: DisplayPosition
+  selected?: boolean
+  stageRef: RefObject<HTMLDivElement | null>
+} & Record<`data-${string}`, string | undefined>) {
+  const objectRef = useRef<HTMLDivElement>(null)
+  const dragRef = useRef<{
+    pointerId: number
+    clientX: number
+    clientY: number
+    position: DisplayPosition
+  } | null>(null)
+  const [renderedPosition, setRenderedPosition] = useState(position)
+
+  const measuredSize = () => {
+    const stage = stageRef.current?.getBoundingClientRect()
+    const object = objectRef.current?.getBoundingClientRect()
+    return stage && object ? logicalObjectSize(stage, object) : { width: 0, height: 0 }
+  }
+
+  useLayoutEffect(() => {
+    const size = measuredSize()
+    const clamped = clampDisplayPosition(position, size.width, size.height)
+    setRenderedPosition((current) =>
+      current.x === clamped.x && current.y === clamped.y ? current : clamped,
+    )
+  })
+
+  const move = (deltaX: number, deltaY: number, origin = position) => {
+    if (!selected || !onPositionChange) return
+    const size = measuredSize()
+    onPositionChange(
+      moveDisplayPosition(origin, deltaX, deltaY, size.width, size.height) as DisplayPosition,
+    )
+  }
+
+  const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (!selected || !onPositionChange || event.button !== 0) return
+    event.preventDefault()
+    event.currentTarget.focus()
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    dragRef.current = {
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      position,
+    }
+  }
+  const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current
+    const stage = stageRef.current?.getBoundingClientRect()
+    if (!drag || drag.pointerId !== event.pointerId || !stage || stage.width <= 0) return
+    move(
+      ((event.clientX - drag.clientX) / stage.width) * STAGE_LAYOUT.stage.widthPx,
+      ((event.clientY - drag.clientY) / stage.height) * STAGE_LAYOUT.stage.heightPx,
+      drag.position,
+    )
+  }
+  const finishPointer = (event: PointerEvent<HTMLDivElement>) => {
+    if (dragRef.current?.pointerId !== event.pointerId) return
+    dragRef.current = null
+    event.currentTarget.releasePointerCapture?.(event.pointerId)
+  }
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (!selected || !onPositionChange) return
+    const step = event.shiftKey
+      ? STAGE_LAYOUT.placement.keyboardLargeStepPx
+      : STAGE_LAYOUT.placement.keyboardStepPx
+    const delta =
+      event.key === 'ArrowLeft'
+        ? [-step, 0]
+        : event.key === 'ArrowRight'
+          ? [step, 0]
+          : event.key === 'ArrowUp'
+            ? [0, -step]
+            : event.key === 'ArrowDown'
+              ? [0, step]
+              : null
+    if (!delta) return
+    event.preventDefault()
+    event.stopPropagation()
+    move(delta[0], delta[1])
+  }
+
+  return (
+    <div
+      {...data}
+      ref={objectRef}
+      className={className}
+      tabIndex={selected ? 0 : undefined}
+      aria-label={
+        selected
+          ? `${label} position ${position.x}, ${position.y}. Drag or use arrow keys to move; hold Shift for 10 pixels.`
+          : undefined
+      }
+      aria-keyshortcuts={selected ? 'ArrowUp ArrowDown ArrowLeft ArrowRight' : undefined}
+      data-display-object={label}
+      data-display-object-selected={selected ? 'true' : undefined}
+      onKeyDown={handleKeyDown}
+      onPointerCancel={finishPointer}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={finishPointer}
+      style={{
+        ...objectStyle,
+        left: logicalStagePx(renderedPosition.x),
+        top: logicalStagePx(renderedPosition.y),
+      }}
+    >
+      {children}
+    </div>
+  )
+}
+
 function PreviewTitleCard({
   artist,
   aliases,
   designRole,
+  onPositionChange,
+  stageRef,
   stageStyle,
   title,
 }: {
   artist: string
   aliases: Record<string, string | null>
   designRole?: keyof StageStyle['titleCard']
+  onPositionChange?: (position: DisplayPosition) => void
+  stageRef: RefObject<HTMLDivElement | null>
   stageStyle: StageStyle
   title: string
 }) {
@@ -116,19 +278,46 @@ function PreviewTitleCard({
   return (
     <div className="title-card" data-design-preview={designRole ? 'title-card' : undefined}>
       {(eyebrow.visible || designRole === 'eyebrow') && (
-        <span {...roleProps('eyebrow')} style={textStyle(eyebrow, aliases)}>
-          Tonight&apos;s performance
-        </span>
+        <DisplayObject
+          {...roleProps('eyebrow')}
+          className="title-card__object title-card__eyebrow"
+          label="Eyebrow"
+          objectStyle={textStyle(eyebrow, aliases)}
+          position={eyebrow.position}
+          selected={designRole === 'eyebrow'}
+          stageRef={stageRef}
+          onPositionChange={designRole === 'eyebrow' ? onPositionChange : undefined}
+        >
+          <span style={textStyle(eyebrow, aliases)}>Tonight&apos;s performance</span>
+        </DisplayObject>
       )}
       {(titleStyle.visible || designRole === 'title') && (
-        <h3 {...roleProps('title')} style={textStyle(titleStyle, aliases)}>
-          {title}
-        </h3>
+        <DisplayObject
+          {...roleProps('title')}
+          className="title-card__object title-card__title"
+          label="Song title"
+          objectStyle={textStyle(titleStyle, aliases)}
+          position={titleStyle.position}
+          selected={designRole === 'title'}
+          stageRef={stageRef}
+          onPositionChange={designRole === 'title' ? onPositionChange : undefined}
+        >
+          <h3 style={textStyle(titleStyle, aliases)}>{title}</h3>
+        </DisplayObject>
       )}
       {(artistStyle.visible || designRole === 'artist') && (
-        <p {...roleProps('artist')} style={textStyle(artistStyle, aliases)}>
-          {artist}
-        </p>
+        <DisplayObject
+          {...roleProps('artist')}
+          className="title-card__object title-card__artist"
+          label="Artist"
+          objectStyle={textStyle(artistStyle, aliases)}
+          position={artistStyle.position}
+          selected={designRole === 'artist'}
+          stageRef={stageRef}
+          onPositionChange={designRole === 'artist' ? onPositionChange : undefined}
+        >
+          <p style={textStyle(artistStyle, aliases)}>{artist}</p>
+        </DisplayObject>
       )}
       {selectedHidden && (
         <span className="title-card-design-status" role="status">
@@ -252,6 +441,7 @@ export function KaraokePreview({
   designMode,
   backgroundImage,
 }: KaraokePreviewProps) {
+  const stageRef = useRef<HTMLDivElement>(null)
   const designStyle = designMode?.stageStyle ?? null
   const previewProject = useMemo(
     () =>
@@ -534,7 +724,9 @@ export function KaraokePreview({
       </header>
 
       <div
+        ref={stageRef}
         className={stageClassName}
+        data-stage-canvas
         data-background-gradient-end-color={background.gradientEndColor}
         data-background-gradient-start-color={background.gradientStartColor}
         data-background-image-ready={imageReady ? 'true' : 'false'}
@@ -599,7 +791,19 @@ export function KaraokePreview({
         )}
         <div className="karaoke-stage__content">
           {designLines ? (
-            <div className="active-lines" data-design-preview={designMode?.target}>
+            <DisplayObject
+              className="active-lines"
+              data-design-preview={designMode?.target}
+              label={
+                designMode?.target === 'lead-vocal' ? 'Active vocal lyric block' : 'Project lyrics'
+              }
+              position={designLines[0]?.style.position ?? DEFAULT_VOCAL_STYLE.position}
+              selected={designMode?.target === 'lead-vocal'}
+              stageRef={stageRef}
+              onPositionChange={
+                designMode?.target === 'lead-vocal' ? designMode.onPositionChange : undefined
+              }
+            >
               {designLines.map((line) => (
                 <PreviewLine
                   key={lineKey(line.trackId, line.id)}
@@ -608,26 +812,36 @@ export function KaraokePreview({
                   aliases={fontRuntime.aliases}
                 />
               ))}
-            </div>
+            </DisplayObject>
           ) : isTitleCardDesign || frame.showTitle ? (
             <PreviewTitleCard
               artist={frame.artist}
               aliases={fontRuntime.aliases}
               designRole={isTitleCardDesign ? designMode.role : undefined}
+              onPositionChange={isTitleCardDesign ? designMode.onPositionChange : undefined}
+              stageRef={stageRef}
               stageStyle={stageStyle}
               title={frame.title}
             />
           ) : frame.lines.length ? (
-            <div className="active-lines">
-              {frame.lines.map((line) => (
-                <PreviewLine
-                  key={lineKey(line.trackId, line.id)}
-                  line={line}
-                  selectedWordIds={selectedWordIds}
-                  aliases={fontRuntime.aliases}
-                />
-              ))}
-            </div>
+            groupLinesByTrack(frame.lines).map((group) => (
+              <DisplayObject
+                key={group[0]!.trackId}
+                className="active-lines"
+                label={`${group[0]!.trackId} lyric block`}
+                position={group[0]!.style.position}
+                stageRef={stageRef}
+              >
+                {group.map((line) => (
+                  <PreviewLine
+                    key={lineKey(line.trackId, line.id)}
+                    line={line}
+                    selectedWordIds={selectedWordIds}
+                    aliases={fontRuntime.aliases}
+                  />
+                ))}
+              </DisplayObject>
+            ))
           ) : null}
         </div>
         {!projectDesignLine &&

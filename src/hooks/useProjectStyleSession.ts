@@ -5,6 +5,7 @@ import {
   fontFaceKey,
   fontTypefaceKey,
   type FontSizeStyle,
+  type DisplayPosition,
   type LyricTextStyle,
   type StageStyle,
   type TextStyle,
@@ -86,12 +87,23 @@ function sameColor(left: string, right: string): boolean {
   return left.toLowerCase() === right.toLowerCase()
 }
 
+function samePosition(left: DisplayPosition, right: DisplayPosition): boolean {
+  return left.x === right.x && left.y === right.y
+}
+
 function sameTextStyle(left: TextStyle, right: TextStyle): boolean {
   return sameFontSizeStyle(left, right) && sameColor(left.color, right.color)
 }
 
 function sameVisibleTextStyle(left: VisibleTextStyle, right: VisibleTextStyle): boolean {
   return sameTextStyle(left, right) && left.visible === right.visible
+}
+
+function samePositionedVisibleTextStyle(
+  left: StageStyle['titleCard']['eyebrow'],
+  right: StageStyle['titleCard']['eyebrow'],
+): boolean {
+  return sameVisibleTextStyle(left, right) && samePosition(left.position, right.position)
 }
 
 function sameLyricTextStyle(left: LyricTextStyle, right: LyricTextStyle): boolean {
@@ -110,9 +122,9 @@ export function sameStageStyle(left: StageStyle, right: StageStyle): boolean {
     sameColor(left.background.gradientEndColor, right.background.gradientEndColor) &&
     left.background.imagePath === right.background.imagePath &&
     sameLyricTextStyle(left.lyrics, right.lyrics) &&
-    sameVisibleTextStyle(left.titleCard.eyebrow, right.titleCard.eyebrow) &&
-    sameVisibleTextStyle(left.titleCard.title, right.titleCard.title) &&
-    sameVisibleTextStyle(left.titleCard.artist, right.titleCard.artist) &&
+    samePositionedVisibleTextStyle(left.titleCard.eyebrow, right.titleCard.eyebrow) &&
+    samePositionedVisibleTextStyle(left.titleCard.title, right.titleCard.title) &&
+    samePositionedVisibleTextStyle(left.titleCard.artist, right.titleCard.artist) &&
     left.stageFrame.enabled === right.stageFrame.enabled &&
     sameColor(left.stageFrame.lineColor, right.stageFrame.lineColor) &&
     left.stageFrame.lineWidthPx === right.stageFrame.lineWidthPx &&
@@ -147,6 +159,7 @@ export function sameVocalStyle(left: VocalStyle, right: VocalStyle): boolean {
     sameNullableColor(left.sungColor, right.sungColor) &&
     sameNullableColor(left.unsungColor, right.unsungColor) &&
     left.alignment === right.alignment &&
+    samePosition(left.position, right.position) &&
     left.previewMs === right.previewMs &&
     left.syncAid.enabled === right.syncAid.enabled &&
     left.syncAid.minLeadMs === right.syncAid.minLeadMs &&

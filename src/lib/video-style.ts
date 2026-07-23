@@ -1,3 +1,5 @@
+import stageLayout from '../../electron/stage-layout.json'
+
 export const LOGICAL_STAGE_WIDTH = 1920
 export const LOGICAL_STAGE_HEIGHT = 1080
 export const DEFAULT_PREVIEW_MS = 3_000
@@ -69,6 +71,16 @@ export interface VisibleTextStyle extends TextStyle {
   visible: boolean
 }
 
+/** Integer center coordinates in logical 1920 × 1080 stage pixels. */
+export interface DisplayPosition {
+  x: number
+  y: number
+}
+
+export interface PositionedVisibleTextStyle extends VisibleTextStyle {
+  position: DisplayPosition
+}
+
 export interface BackgroundStyle {
   mode: BackgroundMode
   solidColor: string
@@ -95,9 +107,9 @@ export interface StageStyle {
   background: BackgroundStyle
   lyrics: LyricTextStyle
   titleCard: {
-    eyebrow: VisibleTextStyle
-    title: VisibleTextStyle
-    artist: VisibleTextStyle
+    eyebrow: PositionedVisibleTextStyle
+    title: PositionedVisibleTextStyle
+    artist: PositionedVisibleTextStyle
   }
   stageFrame: StageFrameStyle
 }
@@ -110,6 +122,7 @@ export interface VocalStyle {
   unsungColor: string | null
   sungColor: string | null
   alignment: VocalAlignment
+  position: DisplayPosition
   previewMs: number
   syncAid: {
     enabled: boolean
@@ -125,6 +138,7 @@ export interface ResolvedVocalStyle {
   unsungColor: string
   sungColor: string
   alignment: VocalAlignment
+  position: DisplayPosition
   previewMs: number
   syncAid: VocalStyle['syncAid']
 }
@@ -219,14 +233,17 @@ export const DEFAULT_STAGE_STYLE: StageStyle = Object.freeze({
     eyebrow: Object.freeze({
       ...textStyle(SYSTEM_UI_TYPEFACE, 'Extra Bold', 25, DEFAULT_STAGE_COLORS.titleEyebrow),
       visible: true,
+      position: Object.freeze({ ...stageLayout.placement.defaults.titleCard.eyebrow }),
     }),
     title: Object.freeze({
       ...textStyle(SYSTEM_UI_TYPEFACE, 'Extra Bold', 104, DEFAULT_STAGE_COLORS.title),
       visible: true,
+      position: Object.freeze({ ...stageLayout.placement.defaults.titleCard.title }),
     }),
     artist: Object.freeze({
       ...textStyle(SYSTEM_UI_TYPEFACE, 'Semi Bold', 42, DEFAULT_STAGE_COLORS.titleArtist),
       visible: true,
+      position: Object.freeze({ ...stageLayout.placement.defaults.titleCard.artist }),
     }),
   }),
   stageFrame: Object.freeze({
@@ -255,6 +272,7 @@ export const DEFAULT_VOCAL_STYLE: VocalStyle = Object.freeze({
   unsungColor: null,
   sungColor: null,
   alignment: 'center',
+  position: Object.freeze({ ...stageLayout.placement.defaults.vocal }),
   previewMs: DEFAULT_PREVIEW_MS,
   syncAid: Object.freeze({
     enabled: false,
@@ -284,9 +302,18 @@ export function cloneStageStyle(style: StageStyle = DEFAULT_STAGE_STYLE): StageS
     background: { ...style.background },
     lyrics: cloneFontSizeStyle(style.lyrics),
     titleCard: {
-      eyebrow: cloneFontSizeStyle(style.titleCard.eyebrow),
-      title: cloneFontSizeStyle(style.titleCard.title),
-      artist: cloneFontSizeStyle(style.titleCard.artist),
+      eyebrow: {
+        ...cloneFontSizeStyle(style.titleCard.eyebrow),
+        position: { ...style.titleCard.eyebrow.position },
+      },
+      title: {
+        ...cloneFontSizeStyle(style.titleCard.title),
+        position: { ...style.titleCard.title.position },
+      },
+      artist: {
+        ...cloneFontSizeStyle(style.titleCard.artist),
+        position: { ...style.titleCard.artist.position },
+      },
     },
     stageFrame: {
       ...style.stageFrame,
@@ -302,6 +329,7 @@ export function cloneVocalStyle(style: VocalStyle = DEFAULT_VOCAL_STYLE): VocalS
     ...style,
     typeface: style.typeface ? cloneTypeface(style.typeface) : null,
     fontStyle: style.fontStyle ? cloneFontFace(style.fontStyle) : null,
+    position: { ...style.position },
     syncAid: { ...style.syncAid },
   }
 }
@@ -319,6 +347,7 @@ export function resolveVocalStyle(
     unsungColor: vocal.unsungColor ?? projectLyrics.unsungColor,
     sungColor: vocal.sungColor ?? projectLyrics.sungColor,
     alignment: vocal.alignment,
+    position: { ...vocal.position },
     previewMs: vocal.previewMs,
     syncAid: { ...vocal.syncAid },
   }

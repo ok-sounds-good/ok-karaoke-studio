@@ -216,6 +216,18 @@ Karaoke Studio identity.
   and typography instead of receiving one project font indiscriminately. Their
   typeface, style, size, and color are configurable without changing the
   semantic project title, artist, or playback time they display.
+- Each vocal track owns one lyric-block position, and the title-card eyebrow,
+  song title, and artist each own an independent position. Positions are saved
+  as integer center coordinates on the logical 1920 × 1080 stage; Preview and
+  MP4 clamp the rendered object bounds to that stage with a tolerance of one
+  logical pixel.
+- In Design Preview, the active vocal block or selected title-card role has one
+  visible bounding box and can be moved by pointer or arrow keys. Shift+Arrow
+  moves by 10 logical pixels instead of one. Position and the vocal block's
+  internal Left, Center, or Right alignment remain independent.
+- Positioned display objects may overlap intentionally. The Studio does not
+  warn about, reject, reflow, or automatically separate overlapping lyric or
+  title objects. The background and Stage frame do not own placement state.
 - Project lyric defaults include typeface, style, size, unsung color, and sung
   color. The sung color is the progressive fill applied to words as they are
   performed; it is independent of Clear or Scroll line advance mode.
@@ -429,6 +441,10 @@ Karaoke Studio identity.
 - [x] Project lyric defaults and vocal overrides produce matching typeface,
       style, size, unsung color, sung color, and horizontal alignment in Live
       Preview and MP4 output.
+- [x] Active-vocal and title-card display objects move transactionally in Design
+      Preview, persist through projects and Style templates, remain within the
+      logical stage, and retain matching positions in Live Preview and MP4
+      without collision handling.
 - [x] Preview time controls line eligibility, and the built-in sync aid appears
       only on the first line of a blank-row-separated section when at least its
       configured minimum lead time is available.

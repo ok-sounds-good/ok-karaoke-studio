@@ -142,8 +142,12 @@ function backgroundState(mode: 'gradient' | 'solid', applied = false) {
   }
 }
 
-function titleCardState(role: 'eyebrow' | 'artist', applied = false) {
-  return { applied, resourcesReady: true, role }
+function titleCardState(
+  role: 'eyebrow' | 'artist',
+  applied = false,
+  position = `${role} position 960, 550`,
+) {
+  return { applied, position, resourcesReady: true, role }
 }
 
 function stageFrameState(
@@ -295,7 +299,9 @@ function fakeStyleSessionWindow(
       .mockResolvedValueOnce(titleCardState('eyebrow'))
       .mockResolvedValueOnce(styleActionTarget('artist'))
       .mockResolvedValueOnce(styleActionTarget('artist-visibility'))
-      .mockResolvedValueOnce(titleCardState('artist'))
+      .mockResolvedValueOnce(titleCardState('artist', false, 'artist position 960, 650'))
+      .mockResolvedValueOnce(styleActionTarget('move-selected'))
+      .mockResolvedValueOnce(titleCardState('artist', false, 'artist position 961, 650'))
       .mockResolvedValueOnce(styleActionTarget('apply-title'))
       .mockResolvedValueOnce(titleCardState('artist', true))
       .mockResolvedValueOnce(styleTarget())
@@ -583,8 +589,8 @@ describe('production-window visual smoke', () => {
       ),
     ).resolves.toEqual({ ok: true })
     const inputEvents = window.webContents.sendInputEvent.mock.calls.map(([event]) => event)
-    expect(inputEvents).toHaveLength(159)
-    expect(inputEvents.filter(({ type }) => type === 'mouseDown')).toHaveLength(28)
+    expect(inputEvents).toHaveLength(164)
+    expect(inputEvents.filter(({ type }) => type === 'mouseDown')).toHaveLength(29)
     const expectedKeys = [
       'Tab',
       'Tab',
@@ -610,6 +616,7 @@ describe('production-window visual smoke', () => {
       'Tab',
       'Tab',
       'Tab',
+      'Right',
     ]
     const expectedKeyboardEvents = expectedKeys.flatMap((key) => [
       `keyDown:${key}`,
@@ -648,6 +655,7 @@ describe('production-window visual smoke', () => {
       'eyebrow-visibility',
       'artist',
       'artist-visibility',
+      'move-selected',
       'apply-title',
       'stage',
       'stage-off',
@@ -714,7 +722,7 @@ describe('production-window visual smoke', () => {
       ),
     ).resolves.toEqual({ ok: true })
 
-    expect(window.webContents.sendInputEvent).toHaveBeenCalledTimes(159)
+    expect(window.webContents.sendInputEvent).toHaveBeenCalledTimes(164)
     expect(window.webContents.sendInputEvent.mock.calls[0][0]).toEqual({
       type: 'mouseMove',
       x: 61,
@@ -940,7 +948,7 @@ describe('production-window visual smoke', () => {
     ).toEqual(expect.arrayContaining(['templates']))
     expect(scripts).not.toContainEqual(expect.stringContaining('const action = "template-name"'))
     expect(window.webContents.capturePage).toHaveBeenCalledTimes(30)
-    expect(window.webContents.sendInputEvent).toHaveBeenCalledTimes(126)
+    expect(window.webContents.sendInputEvent).toHaveBeenCalledTimes(131)
     expect(publish).not.toHaveBeenCalled()
     expect(writeFailure).toHaveBeenCalledOnce()
   })

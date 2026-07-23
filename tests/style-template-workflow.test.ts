@@ -20,12 +20,15 @@ function draft() {
 describe('style template workflow helpers', () => {
   it('captures all template-owned groups as isolated values', () => {
     const source = draft()
+    source.stageStyle.titleCard.title.position = { x: 1_500, y: 240 }
+    source.vocalStyle.position = { x: 480, y: 760 }
     source.vocalTiming = { previewMs: '4321', minLeadMs: '2100', maxLeadMs: '3200' }
     const preferences = captureStyleTemplatePreferences(source)
 
     expect(preferences).toMatchObject({
       lyricDisplay: { lineCount: 3, advanceMode: 'scroll' },
       vocalStyle: {
+        position: { x: 480, y: 760 },
         previewMs: 4_321,
         syncAid: { minLeadMs: 2_100, maxLeadMs: 3_200 },
       },
@@ -37,6 +40,7 @@ describe('style template workflow helpers', () => {
     preferences.videoExportDefaults.fps = 30
 
     expect(source.stageStyle.background.solidColor).not.toBe('#010203')
+    expect(preferences.stageStyle.titleCard.title.position).toEqual({ x: 1_500, y: 240 })
     expect(source.lyricDisplay.lineCount).toBe(3)
     expect(source.vocalStyle.syncAid.enabled).toBe(false)
     expect(source.videoExportDefaults.fps).toBe(60)
@@ -46,12 +50,17 @@ describe('style template workflow helpers', () => {
     const source = draft()
     source.vocalTiming.previewMs = '4321'
     const vocalStyle = cloneVocalStyle()
+    vocalStyle.position = { x: 340, y: 820 }
     vocalStyle.previewMs = 5_500
     vocalStyle.syncAid.minLeadMs = 2_500
     vocalStyle.syncAid.maxLeadMs = 4_500
     const loaded = loadStyleTemplateIntoDraft(source, {
       preferences: {
-        stageStyle: cloneStageStyle(),
+        stageStyle: (() => {
+          const stageStyle = cloneStageStyle()
+          stageStyle.titleCard.artist.position = { x: 1_620, y: 930 }
+          return stageStyle
+        })(),
         lyricDisplay: { lineCount: 1, advanceMode: 'clear' },
         vocalStyle,
         videoExportDefaults: { ...DEFAULT_VIDEO_EXPORT_SETTINGS },
@@ -65,6 +74,8 @@ describe('style template workflow helpers', () => {
       minLeadMs: '2500',
       maxLeadMs: '4500',
     })
+    expect(loaded.vocalStyle.position).toEqual({ x: 340, y: 820 })
+    expect(loaded.stageStyle.titleCard.artist.position).toEqual({ x: 1_620, y: 930 })
     expect(loaded.stageStyle).not.toBe(source.stageStyle)
     expect(loaded.vocalStyle).not.toBe(source.vocalStyle)
   })
