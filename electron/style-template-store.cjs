@@ -10,7 +10,6 @@ const {
 const { readUtf8FileWithinLimit, writeUtf8FileAtomically } = require('./project-files.cjs')
 
 const MAX_STYLE_TEMPLATE_FILE_BYTES = 1024 * 1024
-const STYLE_TEMPLATE_STORE_SCHEMA_VERSION = 1
 
 function isErrnoException(error, code) {
   return error !== null && typeof error === 'object' && error.code === code
@@ -70,8 +69,8 @@ function decodeStoredFile(json) {
     ['schemaVersion', 'templates', 'backgroundAuthorizations'],
     'styleTemplates',
   )
-  if (root.schemaVersion !== STYLE_TEMPLATE_STORE_SCHEMA_VERSION) {
-    throw new Error('Unsupported style template store format. Expected schemaVersion 1.')
+  if (root.schemaVersion !== STYLE_TEMPLATE_SCHEMA_VERSION) {
+    throw new Error('Unsupported style template store format. Expected schemaVersion 0.')
   }
   const decoded = decodeStyleTemplateFile({
     schemaVersion: STYLE_TEMPLATE_SCHEMA_VERSION,
@@ -132,7 +131,7 @@ function serializeStoredFile(value) {
     return [{ id: decoded.templates[index].id, path: template.backgroundImagePath }]
   })
   return JSON.stringify({
-    schemaVersion: STYLE_TEMPLATE_STORE_SCHEMA_VERSION,
+    schemaVersion: STYLE_TEMPLATE_SCHEMA_VERSION,
     templates: decoded.templates,
     backgroundAuthorizations,
   })

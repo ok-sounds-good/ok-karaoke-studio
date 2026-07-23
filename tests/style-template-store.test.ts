@@ -147,6 +147,7 @@ describe('main-process style template store', () => {
       '/linked/trusted.png',
     )
     const persisted = JSON.parse(await readFile(filePath, 'utf8'))
+    expect(persisted.schemaVersion).toBe(0)
     persisted.backgroundAuthorizations = []
     await writeFile(filePath, JSON.stringify(persisted))
     await expect(
@@ -206,7 +207,8 @@ describe('main-process style template store', () => {
   it('preserves and rejects corrupt, unsupported, oversized, and unreadable stores', async () => {
     for (const [name, contents] of [
       ['corrupt', '{not-json'],
-      ['unsupported', '{"schemaVersion":1,"templates":[]}'],
+      ['incomplete-current', '{"schemaVersion":0,"templates":[]}'],
+      ['unsupported', '{"schemaVersion":1,"templates":[],"backgroundAuthorizations":[]}'],
       ['oversized', 'x'.repeat(MAX_STYLE_TEMPLATE_FILE_BYTES + 1)],
     ] as const) {
       const { filePath } = await storePath()
@@ -252,7 +254,7 @@ describe('main-process style template store', () => {
     'preserves the destination and cleans its temporary file after %s failure',
     async (failure) => {
       const { directory, filePath } = await storePath()
-      const prior = '{"schemaVersion":1,"templates":[],"backgroundAuthorizations":[]}'
+      const prior = '{"schemaVersion":0,"templates":[],"backgroundAuthorizations":[]}'
       await writeFile(filePath, prior)
       const injected = Object.assign(new Error(`${failure} failed`), { code: 'EIO' })
       let temporaryCloseAttempts = 0
