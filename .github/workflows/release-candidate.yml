@@ -412,10 +412,24 @@ jobs:
           CANDIDATE_SHA: ${{ needs.validate-candidate.outputs.candidate_sha }}
           RELEASE_TAG: ${{ needs.validate-candidate.outputs.release_tag }}
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$RELEASE_TAG" "${{ steps.installer.outputs.installer_path }}" --draft --target "$CANDIDATE_SHA" --generate-notes
+        run: |
+          main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          if [ "$main_sha" != "$CANDIDATE_SHA" ]; then
+            echo "main advanced before draft creation; refusing publication" >&2
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" "${{ steps.installer.outputs.installer_path }}" \
+            --draft --target "$CANDIDATE_SHA" --generate-notes
 
       - name: Publish the approved draft release
         env:
+          CANDIDATE_SHA: ${{ needs.validate-candidate.outputs.candidate_sha }}
           RELEASE_TAG: ${{ needs.validate-candidate.outputs.release_tag }}
           GH_TOKEN: ${{ github.token }}
-        run: gh release edit "$RELEASE_TAG" --draft=false
+        run: |
+          main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          if [ "$main_sha" != "$CANDIDATE_SHA" ]; then
+            echo "main advanced before release publication; leaving the draft unpublished" >&2
+            exit 1
+          fi
+          gh release edit "$RELEASE_TAG" --draft=false
