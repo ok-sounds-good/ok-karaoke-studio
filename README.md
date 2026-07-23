@@ -75,17 +75,18 @@ in-app first-project guide.
    and choose **Clear** or **Scroll** under **Advance**. Blank lyric rows keep
    sections separate.
 
-   Choose **Style** to set the project lyric appearance, customize the active
-   Lead Vocal, choose a solid, gradient, or linked-image background, edit the
-   title card, and control the Stage frame's Brand, Clock, and Footer. Choose,
+   Choose **Style** to set lyric typography for every singer, select a singer by
+   track name to customize their colors, placement, alignment, and cue settings,
+   choose a solid, gradient, or linked-image background, edit the title card,
+   and control the Stage frame's Brand, Clock, and Footer. Choose,
    replace, or clear one PNG or JPEG linked to its original file. A newly
    selected image appears in Design Preview only after its immutable snapshot
    loads; Apply promotes it with the complete Style edit, while Cancel or a
    failed Apply discards it. Live and Design Preview use a gradient fallback and
    offer retry after failures. Image-backed MP4 export requires the linked image
    to be current and successfully displayed in Live Preview. Use
-   **Lead Vocal** to set the line **Preview Time** and configure the section-start
-   **Sync Aid**. A literal blank lyric row starts a section; the cue requires
+   **Lyrics** to set the selected singer's line **Preview Time** and configure
+   the section-start **Sync Aid**. A literal blank lyric row starts a section; the cue requires
    that section's literal first line and its literal first word to have valid
    timing. It is skipped when the minimum useful lead is unavailable and ends
    at that first word. Use the 16:9 Design preview to compare changes, then

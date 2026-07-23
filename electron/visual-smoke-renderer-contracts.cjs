@@ -252,8 +252,8 @@ function projectLyricsReadinessScript(viewport, contract = { kind: 'project-lyri
     fitFixture.className = 'style-destination-tabs'
     fitFixture.setAttribute('aria-hidden', 'true')
     fitFixture.style.cssText = 'position:fixed;left:0;top:0;width:330px;visibility:hidden;pointer-events:none'
-    fitFixture.style.setProperty('--style-destination-count', '6')
-    for (const label of ['Project lyrics', 'Lead Vocal', 'Background', 'Title card', 'Stage frame', 'Templates']) {
+    fitFixture.style.setProperty('--style-destination-count', '5')
+    for (const label of ['Lyrics', 'Background', 'Title card', 'Stage frame', 'Templates']) {
       const button = document.createElement('button')
       button.textContent = label
       fitFixture.append(button)
@@ -266,7 +266,7 @@ function projectLyricsReadinessScript(viewport, contract = { kind: 'project-lyri
       const bounds = buttons.map((button) => button.getBoundingClientRect())
       const rowTops = new Set(bounds.map((box) => box.top))
       return fixtureBounds.width === 330 && fitFixture.scrollWidth <= fitFixture.clientWidth &&
-        bounds.length === 6 && rowTops.size === 2 && bounds.every((box) =>
+        bounds.length === 5 && rowTops.size === 2 && bounds.every((box) =>
           box.left >= fixtureBounds.left && box.right <= fixtureBounds.right) &&
         buttons.every((button) => button.scrollWidth <= button.clientWidth)
     }
@@ -277,7 +277,7 @@ function projectLyricsReadinessScript(viewport, contract = { kind: 'project-lyri
       const panel = document.querySelector('[role="tabpanel"][aria-labelledby$="-background-tab"]')
       const tab = document.querySelector('[role="tab"][data-style-destination="background"]')
       const preview = document.querySelector(
-        applied ? '[aria-label="Karaoke preview"]' : '[aria-label="Project lyrics design preview"]',
+        applied ? '[aria-label="Karaoke preview"]' : '[aria-label="Lyrics design preview"]',
       )
       const stage = preview?.querySelector('.karaoke-stage')
       const mode = stage?.getAttribute('data-background-mode')
@@ -487,12 +487,13 @@ function projectLyricsReadinessScript(viewport, contract = { kind: 'project-lyri
       if (contract.kind === 'stage-frame') return sampleStageFrame()
       if (contract.kind === 'lead-vocal') {
         const workspace = document.querySelector('.style-workspace[role="dialog"]')
-        const panel = document.querySelector('[role="tabpanel"][aria-labelledby$="-lead-vocal-tab"]')
-        const tab = document.querySelector('[role="tab"][data-style-destination="lead-vocal"]')
-        const preview = document.querySelector('[aria-label="Lead Vocal design preview"]')
+        const panel = document.querySelector('[role="tabpanel"][aria-labelledby$="-lyrics-tab"]')
+        const tab = document.querySelector('[role="tab"][data-style-destination="lyrics"]')
+        const preview = document.querySelector('[aria-label="Lyrics design preview"]')
         const stage = preview?.querySelector('[data-logical-stage="1920x1080"]')
         const line = stage?.querySelector('[data-design-preview="lead-vocal"] .stage-line')
-        const cue = stage?.querySelector('.sync-aid')
+        const wordProgress = [...(line?.querySelectorAll('.stage-word') ?? [])]
+          .map((word) => word.style.getPropertyValue('--word-progress'))
         const enabled = panel?.querySelector('[aria-label="Enable Lead Vocal Sync Aid"]')
         const timing = [...(panel?.querySelectorAll('.vocal-timing-field input[type="number"]') ?? [])]
         const bounds = stage?.getBoundingClientRect()
@@ -502,7 +503,7 @@ function projectLyricsReadinessScript(viewport, contract = { kind: 'project-lyri
           !(preview instanceof HTMLElement) || !(stage instanceof HTMLElement) ||
           !(line instanceof HTMLElement) || !bounds || bounds.width <= 0 || bounds.height <= 0 ||
           Math.abs(bounds.width / bounds.height - 16 / 9) > .01 ||
-          panel.querySelectorAll('input[aria-label^="Override Lead Vocal"]').length !== 5 ||
+          panel.querySelectorAll('.style-override-toggle').length !== 0 ||
           panel.querySelectorAll('input[type="color"]').length !== 2 ||
           !(enabled instanceof HTMLInputElement) || !enabled.checked || timing.length !== 3 ||
           timing.some((input) => !(input instanceof HTMLInputElement) || input.step !== 'any' ||
@@ -512,8 +513,9 @@ function projectLyricsReadinessScript(viewport, contract = { kind: 'project-lyri
           !text.includes('Sung') || !text.includes('Unsung') || !text.includes('Preview Time') ||
           !text.includes('Sync Aid') || !text.includes('Minimum lead') || !text.includes('Maximum lead') ||
           !text.includes('Arrow Up or Arrow Down adjusts by 100 ms') ||
-          !(cue instanceof HTMLElement) || cue.style.getPropertyValue('--sync-progress') !== '0.5' ||
-          stage.querySelectorAll('.stage-line').length !== 2 ||
+          JSON.stringify(wordProgress) !==
+            JSON.stringify(['100%', '50%', '0%', '0%', '0%', '0%', '0%', '0%']) ||
+          stage.querySelectorAll('.stage-line').length !== 1 || stage.querySelector('.sync-aid') ||
           !/^stage-line stage-line--(?:left|center|right)$/u.test(line.className) ||
           !line.getAttribute('data-stage-font-size') || document.readyState !== 'complete' ||
           fontSet?.status !== 'loaded' || document.documentElement.clientWidth !== expected.width ||
@@ -521,15 +523,15 @@ function projectLyricsReadinessScript(viewport, contract = { kind: 'project-lyri
           document.documentElement.scrollWidth > expected.width || document.body.scrollWidth > expected.width ||
           window.location.href !== '${PACKAGED_APP_URL}' || document.querySelector('.stage-resource-warning') ||
           !sixDestinationsFit()) return null
-        return { controls: timing.length + 1, cueProgress: .5, height: expected.height,
+        return { controls: timing.length + 1, height: expected.height,
           resourcesReady: true, stageHeight: bounds.height, stageWidth: bounds.width,
-          width: expected.width }
+          width: expected.width, wordProgress }
       }
       const workspace = document.querySelector('.style-workspace[role="dialog"]')
-      const typeface = document.querySelector('[role="combobox"][aria-label="Project lyric typeface"]')
-      const preview = document.querySelector('[aria-label="Project lyrics design preview"]')
+      const typeface = document.querySelector('[role="combobox"][aria-label="Global lyric typeface"]')
+      const preview = document.querySelector('[aria-label="Lyrics design preview"]')
       const stage = preview?.querySelector('[data-logical-stage="1920x1080"]')
-      const designLine = stage?.querySelector('[data-design-preview="project-lyrics"] .stage-line')
+      const designLine = stage?.querySelector('[data-design-preview="lead-vocal"] .stage-line')
       const blockers = workspace?.querySelector('.font-access-message, .stage-resource-warning')
       if (
         !(workspace instanceof HTMLElement) ||
@@ -640,8 +642,8 @@ function styleSessionActionScript(action) {
   return `(() => {
     const action = ${JSON.stringify(action)}
     const workspace = document.querySelector('.style-workspace[role="dialog"]')
-    const projectTab = document.querySelector('[role="tab"][data-style-destination="project-lyrics"]')
-    const leadVocalTab = document.querySelector('[role="tab"][data-style-destination="lead-vocal"]')
+    const projectTab = document.querySelector('[role="tab"][data-style-destination="lyrics"]')
+    const leadVocalTab = projectTab
     const backgroundTab = document.querySelector('[role="tab"][data-style-destination="background"]')
     const titleTab = document.querySelector('[role="tab"][data-style-destination="title-card"]')
     const stageTab = document.querySelector('[role="tab"][data-style-destination="stage-frame"]')
@@ -751,9 +753,9 @@ function styleTemplateReadinessScript(viewport, name = STYLE_TEMPLATE_NAME) {
       const remove = [...(panel?.querySelectorAll('button') ?? [])].find(
         (button) => button.textContent?.trim() === 'Delete',
       )
-      const preview = document.querySelector('[aria-label="Project lyrics design preview"]')
+      const preview = document.querySelector('[aria-label="Lyrics design preview"]')
       const stage = preview?.querySelector('[data-logical-stage="1920x1080"]')
-      const line = stage?.querySelector('[data-design-preview="project-lyrics"] .stage-line')
+      const line = stage?.querySelector('[data-design-preview="lead-vocal"] .stage-line')
       const bounds = stage?.getBoundingClientRect()
       selected?.scrollIntoView({ block: 'nearest' })
       const body = workspace?.querySelector('.style-editor__body')
@@ -862,9 +864,9 @@ function styleTemplateFormReadinessScript(viewport) {
       const save = [...(panel?.querySelectorAll('button') ?? [])].find(
         (button) => button.textContent?.trim() === 'Save as new',
       )
-      const preview = document.querySelector('[aria-label="Project lyrics design preview"]')
+      const preview = document.querySelector('[aria-label="Lyrics design preview"]')
       const stage = preview?.querySelector('[data-logical-stage="1920x1080"]')
-      const line = stage?.querySelector('[data-design-preview="project-lyrics"] .stage-line')
+      const line = stage?.querySelector('[data-design-preview="lead-vocal"] .stage-line')
       newName?.scrollIntoView({ block: 'center' })
       const bodyBounds = body?.getBoundingClientRect()
       const nameBounds = newName?.getBoundingClientRect()
@@ -1041,15 +1043,16 @@ function validLeadVocalState(value, viewport) {
     JSON.stringify(Object.keys(value).sort()) ===
       JSON.stringify([
         'controls',
-        'cueProgress',
         'height',
         'resourcesReady',
         'stageHeight',
         'stageWidth',
         'width',
+        'wordProgress',
       ]) &&
     value.controls === 4 &&
-    value.cueProgress === 0.5 &&
+    JSON.stringify(value.wordProgress) ===
+      JSON.stringify(['100%', '50%', '0%', '0%', '0%', '0%', '0%', '0%']) &&
     value.height === viewport.height &&
     value.width === viewport.width &&
     value.resourcesReady === true &&

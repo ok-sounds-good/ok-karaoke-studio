@@ -114,15 +114,12 @@ describe('video style value contracts', () => {
     expect(() => decodeStageStyle(fractional)).toThrow(/supported sizes/u)
   })
 
-  it('allows a vocal size to inherit or use a catalog value, but nothing else', () => {
-    expect(decodeVocalStyle(cloneVocalStyle(), 'vocal').sizePx).toBeNull()
-    const listed = cloneVocalStyle()
-    listed.sizePx = 400
-    expect(decodeVocalStyle(listed, 'vocal').sizePx).toBe(400)
-    for (const invalid of [15, 82.4]) {
+  it('keeps vocal typography out of the singer-owned schema', () => {
+    expect(decodeVocalStyle(cloneVocalStyle(), 'vocal')).toEqual(DEFAULT_VOCAL_STYLE)
+    for (const key of ['typeface', 'fontStyle', 'sizePx']) {
       const vocal = cloneVocalStyle() as unknown as Record<string, unknown>
-      vocal.sizePx = invalid
-      expect(() => decodeVocalStyle(vocal, 'vocal')).toThrow(/supported font size/u)
+      vocal[key] = null
+      expect(() => decodeVocalStyle(vocal, 'vocal')).toThrow(/not supported/u)
     }
   })
 
@@ -209,28 +206,26 @@ describe('video style value contracts', () => {
     stage.lyrics.typeface.faces[0].style = 'Changed'
     expect(DEFAULT_STAGE_STYLE.background.solidColor).not.toBe(stage.background.solidColor)
     expect(DEFAULT_STAGE_STYLE.lyrics.typeface.faces[0].style).toBe('Regular')
-    const vocal = cloneVocalStyle({
-      ...DEFAULT_VOCAL_STYLE,
-      typeface: LOCAL_TYPEFACE,
-      fontStyle: LOCAL_TYPEFACE.faces[0],
-    })
-    vocal.typeface!.faces[0].fullName = 'Changed'
-    vocal.fontStyle!.style = 'Changed'
-    expect(LOCAL_TYPEFACE.faces[0]).toMatchObject({
-      fullName: 'Demo Sans Regular',
-      style: 'Regular',
-    })
+    const vocal = cloneVocalStyle()
+    vocal.position.x = 7
+    vocal.syncAid.minLeadMs = 8
+    expect(DEFAULT_VOCAL_STYLE.position.x).not.toBe(7)
+    expect(DEFAULT_VOCAL_STYLE.syncAid.minLeadMs).not.toBe(8)
   })
 
-  it('inherits vocal fields independently and resolves font fallback deterministically', () => {
+  it('combines global typography with singer-owned colors deterministically', () => {
     const vocal = cloneVocalStyle()
-    vocal.typeface = jsonClone(LOCAL_TYPEFACE)
-    vocal.sizePx = 96
     vocal.sungColor = '#aBcDeF'
-    const resolved = resolveVocalStyle(DEFAULT_STAGE_STYLE.lyrics, vocal)
+    const lyrics = {
+      ...DEFAULT_STAGE_STYLE.lyrics,
+      typeface: jsonClone(LOCAL_TYPEFACE),
+      fontStyle: jsonClone(LOCAL_TYPEFACE.faces[1]),
+      sizePx: 96 as const,
+    }
+    const resolved = resolveVocalStyle(lyrics, vocal)
     expect(resolved).toMatchObject({
       sizePx: 96,
-      unsungColor: DEFAULT_STAGE_STYLE.lyrics.unsungColor,
+      unsungColor: DEFAULT_VOCAL_STYLE.unsungColor,
       sungColor: '#aBcDeF',
     })
     expect(resolved.fontStyle.postscriptName).toBe('DemoSans-Bold')
@@ -301,10 +296,11 @@ describe('video style value contracts', () => {
   it('preserves valid color spelling and validates linked image readiness', () => {
     const stage = cloneStageStyle()
     stage.background.solidColor = '#aBcDeF'
-    stage.lyrics.sungColor = '#Ab12eF'
     const decoded = decodeStageStyle(stage)
     expect(decoded.background.solidColor).toBe('#aBcDeF')
-    expect(decoded.lyrics.sungColor).toBe('#Ab12eF')
+    const vocal = cloneVocalStyle()
+    vocal.sungColor = '#Ab12eF'
+    expect(decodeVocalStyle(vocal, 'vocal').sungColor).toBe('#Ab12eF')
     stage.stageFrame.lineColor = 'abcdef'
     expect(() => decodeStageStyle(stage)).toThrow(/six-digit hex color/u)
     const image = cloneStageStyle().background

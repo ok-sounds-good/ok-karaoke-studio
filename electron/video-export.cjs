@@ -194,8 +194,8 @@ function wordProgress(word, lyricMs) {
   return Math.max(0, Math.min(1, (lyricMs - word.startMs) / Math.max(1, word.endMs - word.startMs)))
 }
 
-function vocalSungColor(project, track) {
-  return track.vocalStyle.sungColor ?? project.stageStyle.lyrics.sungColor
+function vocalSungColor(_project, track) {
+  return track.vocalStyle.sungColor
 }
 
 function createFrameCursor(index) {

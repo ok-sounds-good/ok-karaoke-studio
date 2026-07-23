@@ -488,6 +488,10 @@ describe('karaoke video frame planning', () => {
       { x: 800, y: 500 },
       { x: 800, y: 500 },
     ])
+    expect(new Set(state.lines.map(({ style }) => style.sizePx))).toEqual(new Set([82]))
+    expect(new Set(state.lines.map(({ style }) => style.sungColor))).toEqual(
+      new Set([base.tracks[0].vocalStyle.sungColor, '#58d6de']),
+    )
   })
 
   it('rejects malformed and semantically invalid current projects', () => {
@@ -566,8 +570,7 @@ describe('karaoke video frame planning', () => {
       stageStyle: { background: { solidColor: '#123456' } },
       lines: [{ style: { sungColor: '#A1b2C3' } }],
     })
-    project.tracks[0].vocalStyle.sungColor = null
-    project.stageStyle.lyrics.sungColor = '#C3b2A1'
+    project.tracks[0].vocalStyle.sungColor = '#C3b2A1'
     expect(videoExport.frameStateAt(project, 2_000).lines[0].style.sungColor).toBe('#C3b2A1')
   })
 
@@ -685,12 +688,13 @@ describe('karaoke video frame planning', () => {
     project.offsetMs = 0
     project.lyricDisplay = { lineCount: 2, advanceMode: 'clear' }
     vocal.previewMs = 2_000
-    vocal.sizePx = 96
+    project.stageStyle.lyrics.sizePx = 96
     vocal.unsungColor = '#123456'
-    vocal.sungColor = null
+    vocal.sungColor = '#C3b2A1'
     vocal.alignment = 'right'
-    vocal.fontStyle =
-      project.stageStyle.lyrics.typeface.faces.find(({ style }) => style === 'Bold') ?? null
+    project.stageStyle.lyrics.fontStyle =
+      project.stageStyle.lyrics.typeface.faces.find(({ style }) => style === 'Bold') ??
+      project.stageStyle.lyrics.fontStyle
     vocal.syncAid = { enabled: true, minLeadMs: 1_000, maxLeadMs: 2_000 }
     project.tracks[0].lines = [
       timedVideoLine('A', 3_000, 4_000),
@@ -712,7 +716,7 @@ describe('karaoke video frame planning', () => {
         alignment: 'right',
         sizePx: 96,
         unsungColor: '#123456',
-        sungColor: project.stageStyle.lyrics.sungColor,
+        sungColor: '#C3b2A1',
       },
     })
     expect(first.syncAids[0]).toMatchObject({ lineId: project.tracks[0].lines[0].id, progress: 0 })

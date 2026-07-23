@@ -66,9 +66,7 @@
         "weight": 800,
         "slant": "normal"
       },
-      "sizePx": 82,
-      "unsungColor": "#72687D",
-      "sungColor": "#A1B2C3"
+      "sizePx": 82
     },
     "titleCard": {
       "eyebrow": {
@@ -404,11 +402,8 @@
       "id": "golden-lead",
       "name": "Lead Vocal",
       "vocalStyle": {
-        "typeface": null,
-        "fontStyle": null,
-        "sizePx": null,
         "unsungColor": "#102030",
-        "sungColor": null,
+        "sungColor": "#A1B2C3",
         "alignment": "center",
         "position": { "x": 960, "y": 550 },
         "previewMs": 3000,

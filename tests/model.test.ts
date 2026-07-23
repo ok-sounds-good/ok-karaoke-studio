@@ -9,6 +9,7 @@ import {
   createVocalTrack,
   formatTime,
   MAX_PROJECT_DURATION_MS,
+  MAX_PROJECT_TRACKS,
   parseLyrics,
   parseProject,
   planLyricDisplayLines,
@@ -22,6 +23,24 @@ import { DEFAULT_STAGE_STYLE, DEFAULT_VOCAL_STYLE } from '../src/lib/video-style
 import { effectiveDuration, motionAwareScrollBehavior, recalculateLine } from '../src/utils'
 
 describe('karaoke project model', () => {
+  it('assigns deterministic distinct colors to new singers by track order', () => {
+    const singers = Array.from({ length: MAX_PROJECT_TRACKS }, (_, index) =>
+      createVocalTrack({ id: `singer-${index}`, defaultStyleIndex: index }),
+    )
+    const repeatedHarmony = createVocalTrack({ id: 'harmony-again', defaultStyleIndex: 1 })
+
+    expect(new Set(singers.map(({ vocalStyle }) => vocalStyle.sungColor)).size).toBe(
+      MAX_PROJECT_TRACKS,
+    )
+    expect(new Set(singers.map(({ vocalStyle }) => vocalStyle.unsungColor)).size).toBe(
+      MAX_PROJECT_TRACKS,
+    )
+    expect(repeatedHarmony.vocalStyle).toMatchObject({
+      sungColor: singers[1]!.vocalStyle.sungColor,
+      unsungColor: singers[1]!.vocalStyle.unsungColor,
+    })
+  })
+
   it('creates a valid seeded project with integer word timings', () => {
     const project = createDemoProject()
 

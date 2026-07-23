@@ -16,6 +16,7 @@ import {
   type ProjectStyleSession,
 } from '../src/hooks/useProjectStyleSession'
 import { DEFAULT_VOCAL_STYLE, cloneStageStyle } from '../src/lib/video-style'
+import { createVocalTrack } from '../src/lib/model'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
@@ -46,7 +47,9 @@ function styleDraft(
     mode,
     solidColor: '#654321',
   }
-  return createProjectStyleDraft(stage, DEFAULT_VOCAL_STYLE)
+  return createProjectStyleDraft(stage, [
+    createVocalTrack({ id: 'lead-vocal', vocalStyle: DEFAULT_VOCAL_STYLE }),
+  ])
 }
 
 function chosen(path: string, url: string): StudioBackgroundImageResult {

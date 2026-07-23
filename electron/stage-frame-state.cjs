@@ -35,13 +35,13 @@ function compareFontFaces(left, right) {
   )
 }
 function resolveVocalStyle(projectLyrics, vocal) {
-  const typeface = vocal.typeface ?? projectLyrics.typeface
+  const typeface = projectLyrics.typeface
   return {
     typeface,
-    fontStyle: resolveFontFace(typeface, vocal.fontStyle ?? projectLyrics.fontStyle),
-    sizePx: vocal.sizePx ?? projectLyrics.sizePx,
-    unsungColor: vocal.unsungColor ?? projectLyrics.unsungColor,
-    sungColor: vocal.sungColor ?? projectLyrics.sungColor,
+    fontStyle: resolveFontFace(typeface, projectLyrics.fontStyle),
+    sizePx: projectLyrics.sizePx,
+    unsungColor: vocal.unsungColor,
+    sungColor: vocal.sungColor,
     alignment: vocal.alignment,
     position: { ...vocal.position },
     previewMs: vocal.previewMs,

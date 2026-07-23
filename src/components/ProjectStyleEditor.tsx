@@ -10,7 +10,7 @@ import type {
   ProjectStyleSession,
   StageStyleDraftChange,
 } from '../hooks/useProjectStyleSession'
-import { canonicalVocalStyle } from '../hooks/useProjectStyleSession'
+import { canonicalSingerStyle } from '../hooks/useProjectStyleSession'
 import type { KaraokeProject } from '../lib/model'
 import {
   FONT_SIZE_OPTIONS,
@@ -38,7 +38,7 @@ export interface ProjectStyleEditorProps {
   project: KaraokeProject
   playbackMs: number
   draft: ProjectStyleDraft
-  leadVocalAvailable: boolean
+  initialSingerTrackId: string | null
   fonts: InstalledFontState
   backgroundPreview?: BackgroundImagePreviewSource
   backgroundControls?: BackgroundImageStyleControls
@@ -63,8 +63,7 @@ function isEditableTarget(target: EventTarget | null) {
 }
 
 const STYLE_DESTINATIONS = [
-  { id: 'project-lyrics', label: 'Project lyrics' },
-  { id: 'lead-vocal', label: 'Lead Vocal' },
+  { id: 'lyrics', label: 'Lyrics' },
   { id: 'background', label: 'Background' },
   { id: 'title-card', label: 'Title card' },
   { id: 'stage-frame', label: 'Stage frame' },
@@ -104,7 +103,7 @@ export function ProjectStyleEditor({
   project,
   playbackMs,
   draft,
-  leadVocalAvailable,
+  initialSingerTrackId,
   fonts,
   backgroundPreview,
   backgroundControls,
@@ -119,12 +118,27 @@ export function ProjectStyleEditor({
 }: ProjectStyleEditorProps) {
   const titleId = useId()
   const headingRef = useRef<HTMLHeadingElement>(null)
-  const [destination, setDestination] = useState<StyleDestination>('project-lyrics')
+  const [destination, setDestination] = useState<StyleDestination>('lyrics')
+  const [selectedSingerTrackId, setSelectedSingerTrackId] = useState(
+    initialSingerTrackId ?? draft.singers[0]?.trackId ?? null,
+  )
   const [titleCardPreviewRole, setTitleCardPreviewRole] = useState<TitleCardRole>('eyebrow')
   const [stageFramePreviewRole, setStageFramePreviewRole] = useState<StageFrameRole>('brand')
   const stageStyle = draft.stageStyle
-  const previewProject = { ...project, lyricDisplay: { ...draft.lyricDisplay } }
-  const canonicalVocal = canonicalVocalStyle(draft)
+  const previewProject = {
+    ...project,
+    lyricDisplay: { ...draft.lyricDisplay },
+    stageStyle,
+    tracks: project.tracks.map((track) => {
+      const singer = draft.singers.find(({ trackId }) => trackId === track.id)
+      return singer ? { ...track, vocalStyle: singer.vocalStyle } : track
+    }),
+  }
+  const selectedSinger =
+    draft.singers.find(({ trackId }) => trackId === selectedSingerTrackId) ??
+    draft.singers[0] ??
+    null
+  const canonicalVocal = selectedSinger ? canonicalSingerStyle(selectedSinger) : null
   const lyrics = stageStyle.lyrics
   const background = stageStyle.background
   const changeStageStyle = (change: StageStyleDraftChange) =>
@@ -204,15 +218,17 @@ export function ProjectStyleEditor({
 
         <div className="style-editor__body">
           <section
-            id={`${titleId}-project-lyrics-panel`}
+            id={`${titleId}-lyrics-panel`}
             role="tabpanel"
-            aria-labelledby={`${titleId}-project-lyrics-tab`}
-            hidden={destination !== 'project-lyrics'}
+            aria-labelledby={`${titleId}-lyrics-tab`}
+            hidden={destination !== 'lyrics'}
           >
+            <p className="style-field-help">Typeface, face, and size apply to every singer.</p>
             <section className="style-control-group" aria-labelledby={`${titleId}-typeface`}>
               <h3 id={`${titleId}-typeface`}>Typeface</h3>
               <TypefaceCombobox
                 {...fonts}
+                ariaLabel="Global lyric typeface"
                 value={lyrics.typeface}
                 selectedFace={lyrics.fontStyle}
                 onChange={chooseTypeface}
@@ -251,7 +267,7 @@ export function ProjectStyleEditor({
               <label className="style-field">
                 <span>Size</span>
                 <select
-                  aria-label="Project lyric font size"
+                  aria-label="Global lyric font size"
                   value={lyrics.sizePx}
                   onChange={(event) => {
                     const sizePx = Number(event.currentTarget.value)
@@ -267,32 +283,30 @@ export function ProjectStyleEditor({
               </label>
             </section>
 
-            <section className="style-color-grid" aria-label="Project lyric colors">
-              <StyleColorField
-                label="Sung"
-                inputLabel="Project lyric sung color"
-                value={lyrics.sungColor}
-                onChange={(sungColor) => update({ sungColor })}
-              />
-              <StyleColorField
-                label="Unsung"
-                inputLabel="Project lyric unsung color"
-                value={lyrics.unsungColor}
-                onChange={(unsungColor) => update({ unsungColor })}
-              />
-            </section>
+            {draft.singers.length > 1 && (
+              <label className="style-field">
+                <span>Singer</span>
+                <select
+                  aria-label="Singer to style"
+                  value={selectedSinger?.trackId ?? ''}
+                  onChange={(event) => setSelectedSingerTrackId(event.currentTarget.value)}
+                >
+                  {draft.singers.map((singer) => (
+                    <option key={singer.trackId} value={singer.trackId}>
+                      {singer.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <LeadVocalStylePanel
+              draft={draft}
+              id={`${titleId}-singer-style`}
+              labelledBy={`${titleId}-lyrics-tab`}
+              singerTrackId={selectedSinger?.trackId ?? null}
+              onDraftChange={onDraftChange}
+            />
           </section>
-
-          <LeadVocalStylePanel
-            active={destination === 'lead-vocal'}
-            available={leadVocalAvailable}
-            draft={draft}
-            fonts={fonts}
-            id={`${titleId}-lead-vocal-panel`}
-            labelledBy={`${titleId}-lead-vocal-tab`}
-            onDraftChange={onDraftChange}
-            onRetryFonts={onRetryFonts}
-          />
 
           <section
             id={`${titleId}-background-panel`}
@@ -421,6 +435,7 @@ export function ProjectStyleEditor({
             id={`${titleId}-templates-panel`}
             labelledBy={`${titleId}-templates-tab`}
             draft={draft}
+            selectedSingerTrackId={selectedSinger?.trackId ?? null}
             onDraftChange={onDraftChange}
             onPrepareTemplateBackground={onPrepareTemplateBackground}
           />
@@ -473,17 +488,27 @@ export function ProjectStyleEditor({
               }
             : destination === 'stage-frame'
               ? { target: 'stage-frame', role: stageFramePreviewRole, stageStyle }
-              : destination === 'lead-vocal'
+              : selectedSinger
                 ? {
                     target: 'lead-vocal',
                     stageStyle,
-                    vocalStyle: canonicalVocal ?? draft.vocalStyle,
+                    vocalStyle: canonicalVocal ?? selectedSinger.vocalStyle,
                     timingValid: Boolean(canonicalVocal),
-                    onPositionChange: (position) =>
-                      onDraftChange((current) => ({
-                        ...current,
-                        vocalStyle: { ...current.vocalStyle, position },
-                      })),
+                    onPositionChange:
+                      destination === 'lyrics'
+                        ? (position) =>
+                            onDraftChange((current) => ({
+                              ...current,
+                              singers: current.singers.map((singer) =>
+                                singer.trackId === selectedSinger.trackId
+                                  ? {
+                                      ...singer,
+                                      vocalStyle: { ...singer.vocalStyle, position },
+                                    }
+                                  : singer,
+                              ),
+                            }))
+                        : undefined,
                   }
                 : { target: 'project-lyrics', stageStyle }
         }

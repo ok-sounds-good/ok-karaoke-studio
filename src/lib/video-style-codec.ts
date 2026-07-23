@@ -309,11 +309,7 @@ export function decodeStageStyle(value: unknown): StageStyle {
   const lyrics = record(source.lyrics, 'project.stageStyle.lyrics')
   const title = record(source.titleCard, 'project.stageStyle.titleCard')
   const frame = record(source.stageFrame, 'project.stageStyle.stageFrame')
-  exactKeys(
-    lyrics,
-    ['typeface', 'fontStyle', 'sizePx', 'unsungColor', 'sungColor'],
-    'project.stageStyle.lyrics',
-  )
+  exactKeys(lyrics, ['typeface', 'fontStyle', 'sizePx'], 'project.stageStyle.lyrics')
   exactKeys(title, ['eyebrow', 'title', 'artist'], 'project.stageStyle.titleCard')
   exactKeys(
     frame,
@@ -333,8 +329,6 @@ export function decodeStageStyle(value: unknown): StageStyle {
       typeface: decodeTypeface(lyrics.typeface, 'project.stageStyle.lyrics.typeface'),
       fontStyle: decodeFontFace(lyrics.fontStyle, 'project.stageStyle.lyrics.fontStyle'),
       sizePx: fontSize(lyrics, 'sizePx', 'project.stageStyle.lyrics'),
-      unsungColor: color(lyrics, 'unsungColor', 'project.stageStyle.lyrics'),
-      sungColor: color(lyrics, 'sungColor', 'project.stageStyle.lyrics'),
     },
     titleCard: {
       eyebrow: decodeTextStyle(
@@ -384,9 +378,6 @@ export function decodeVocalStyle(value: unknown, path: string): VocalStyle {
   exactKeys(
     source,
     [
-      'typeface',
-      'fontStyle',
-      'sizePx',
       'unsungColor',
       'sungColor',
       'alignment',
@@ -396,18 +387,6 @@ export function decodeVocalStyle(value: unknown, path: string): VocalStyle {
     ],
     path,
   )
-  const nullableColor = (key: 'unsungColor' | 'sungColor') => {
-    if (source[key] !== null && typeof source[key] !== 'string') {
-      throw new TypeError(`${path}.${key} must be a string or null.`)
-    }
-    if (typeof source[key] === 'string' && !isHexColor(source[key])) {
-      throw new TypeError(`${path}.${key} must be a six-digit hex color or null.`)
-    }
-    return source[key] as string | null
-  }
-  if (source.sizePx !== null && !isFontSizePx(source.sizePx)) {
-    throw new RangeError(`${path}.sizePx must be a supported font size or null.`)
-  }
   const alignment = string(source, 'alignment', path)
   if (alignment !== 'left' && alignment !== 'center' && alignment !== 'right') {
     throw new TypeError(`${path}.alignment must be left, center, or right.`)
@@ -415,12 +394,8 @@ export function decodeVocalStyle(value: unknown, path: string): VocalStyle {
   const syncAid = record(source.syncAid, `${path}.syncAid`)
   exactKeys(syncAid, ['enabled', 'minLeadMs', 'maxLeadMs'], `${path}.syncAid`)
   const style: VocalStyle = {
-    typeface: source.typeface === null ? null : decodeTypeface(source.typeface, `${path}.typeface`),
-    fontStyle:
-      source.fontStyle === null ? null : decodeFontFace(source.fontStyle, `${path}.fontStyle`),
-    sizePx: source.sizePx as FontSizePx | null,
-    unsungColor: nullableColor('unsungColor'),
-    sungColor: nullableColor('sungColor'),
+    unsungColor: color(source, 'unsungColor', path),
+    sungColor: color(source, 'sungColor', path),
     alignment,
     position: decodeDisplayPosition(source.position, `${path}.position`),
     previewMs: integer(source, 'previewMs', path),

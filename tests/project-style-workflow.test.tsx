@@ -246,8 +246,8 @@ async function click(element: HTMLElement) {
 }
 
 async function chooseSize(value: string) {
-  const select = document.querySelector<HTMLSelectElement>('[aria-label="Project lyric font size"]')
-  if (!select) throw new Error('Project lyric font size was not mounted')
+  const select = document.querySelector<HTMLSelectElement>('[aria-label="Global lyric font size"]')
+  if (!select) throw new Error('Global lyric font size was not mounted')
   await act(async () => {
     select.value = value
     select.dispatchEvent(new Event('change', { bubbles: true }))
@@ -416,7 +416,7 @@ describe('project Style App integration', () => {
     expect(document.querySelector('.style-workspace')).not.toBeNull()
     expect(document.querySelector('[aria-label="Project inspector"]')).toBeNull()
     expect(document.querySelector('[aria-label="Lyric Timing"]')).toBeNull()
-    expect(document.querySelector('[aria-label="Project lyrics design preview"]')).not.toBeNull()
+    expect(document.querySelector('[aria-label="Lyrics design preview"]')).not.toBeNull()
     expect(document.body.textContent).toContain('Sing the first words and see the rest')
     expect(document.body.textContent).not.toContain('This is')
     expect(document.querySelector<HTMLButtonElement>('.sync-button')?.disabled).toBe(true)
@@ -428,11 +428,11 @@ describe('project Style App integration', () => {
     expect(document.querySelector<HTMLInputElement>('[aria-label="Volume"]')?.disabled).toBe(false)
 
     const timeBeforeTabs = document.querySelector('.time-readout strong')?.textContent
-    const projectLyricsTab = buttonByText('Project lyrics')
+    const projectLyricsTab = buttonByText('Lyrics')
     projectLyricsTab.focus()
     dispatchKey(projectLyricsTab, { code: 'ArrowRight', key: 'ArrowRight' })
     await settle()
-    expect(document.activeElement).toBe(buttonByText('Lead Vocal'))
+    expect(document.activeElement).toBe(buttonByText('Background'))
     expect(document.querySelector('.time-readout strong')?.textContent).toBe(timeBeforeTabs)
 
     await click(buttonByLabel('Play'))
@@ -481,11 +481,8 @@ describe('project Style App integration', () => {
 
     await click(style)
     await chooseSize('96')
-    await click(buttonByText('Lead Vocal'))
-    await act(async () =>
-      document.querySelector<HTMLInputElement>('[aria-label="Override Lead Vocal Sung"]')!.click(),
-    )
-    await chooseColor('Lead Vocal sung color', '#123456')
+    await click(buttonByText('Lyrics'))
+    await chooseColor('Selected singer sung color', '#123456')
     await click(buttonByText('Apply & close'))
     expect(buttonByLabel('Undo').disabled).toBe(false)
     expect(document.querySelector('[title="Unsaved changes"]')).not.toBeNull()
@@ -499,7 +496,7 @@ describe('project Style App integration', () => {
     await click(buttonByLabel('Save project'))
     const undone = parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents)
     expect(undone.stageStyle.lyrics.sizePx).toBe(82)
-    expect(undone.tracks[0].vocalStyle.sungColor).toBeNull()
+    expect(undone.tracks[0].vocalStyle.sungColor).toBe('#FF8A2B')
     expect(buttonByLabel('Redo').disabled).toBe(false)
     await click(buttonByLabel('Redo'))
     await click(buttonByLabel('Save project'))
@@ -736,7 +733,12 @@ describe('project Style App integration', () => {
 
   it('targets the selected preserved vocal by stable ID through Apply and reopen', async () => {
     const opened = createDemoProject()
-    const harmony = createVocalTrack({ id: 'harmony-track', name: 'Harmony' })
+    const harmony = createVocalTrack({
+      id: 'harmony-track',
+      name: 'Harmony',
+      defaultStyleIndex: 1,
+    })
+    expect(harmony.vocalStyle.sungColor).not.toBe(opened.tracks[0]!.vocalStyle.sungColor)
     opened.tracks.push(harmony)
     harness.openProject.mockResolvedValueOnce({
       requestId: 'multi-vocal-open',
@@ -752,17 +754,28 @@ describe('project Style App integration', () => {
     expect(selectHarmony.getAttribute('aria-pressed')).toBe('true')
 
     await click(buttonByText('Style'))
-    await click(buttonByText('Lead Vocal'))
-    await act(async () =>
-      document.querySelector<HTMLInputElement>('[aria-label="Override Lead Vocal Sung"]')!.click(),
+    await click(buttonByText('Lyrics'))
+    expect(document.querySelector<HTMLSelectElement>('[aria-label="Singer to style"]')?.value).toBe(
+      harmony.id,
     )
-    await chooseColor('Lead Vocal sung color', '#234567')
+    await chooseColor('Selected singer sung color', '#234567')
+    const singerSelector = document.querySelector<HTMLSelectElement>(
+      '[aria-label="Singer to style"]',
+    )!
+    await act(async () => {
+      singerSelector.value = opened.tracks[0]!.id
+      singerSelector.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    await chooseColor('Selected singer unsung color', '#345678')
     await click(buttonByText('Apply & close'))
     await click(buttonByLabel('Save project'))
 
     const savedContents = harness.saveProject.mock.calls.at(-1)?.[0].contents
     const saved = parseProject(savedContents)
-    expect(saved.tracks[0]).toEqual(opened.tracks[0])
+    expect(saved.tracks[0]).toEqual({
+      ...opened.tracks[0],
+      vocalStyle: { ...opened.tracks[0]!.vocalStyle, unsungColor: '#345678' },
+    })
     expect(saved.tracks[1]).toEqual({
       ...harmony,
       vocalStyle: { ...harmony.vocalStyle, sungColor: '#234567' },
@@ -941,7 +954,7 @@ describe('project Style App integration', () => {
 
   it('blocks invalid timing Apply, then applies, undoes, redoes, saves, and reopens once', async () => {
     await click(buttonByText('Style'))
-    await click(buttonByText('Lead Vocal'))
+    await click(buttonByText('Lyrics'))
     await act(async () =>
       document
         .querySelector<HTMLInputElement>('[aria-label="Enable Lead Vocal Sync Aid"]')!
@@ -951,11 +964,11 @@ describe('project Style App integration', () => {
     await enterInput('Lead Vocal Sync Aid Minimum lead', '2001')
     await enterInput('Lead Vocal Sync Aid Maximum lead', '4001')
     await click(buttonByText('Background'))
-    await click(buttonByText('Lead Vocal'))
+    await click(buttonByText('Lyrics'))
 
     const directApply = buttonByText('Apply & close')
     expect(directApply.disabled).toBe(true)
-    expect(document.body.textContent).toContain('Fix the Lead Vocal Preview Time')
+    expect(document.body.textContent).toContain('timing errors for Lead Vocal')
     await click(directApply)
     expect(document.querySelector('.style-workspace')).not.toBeNull()
     expect(buttonByLabel('Undo').disabled).toBe(true)
@@ -963,7 +976,7 @@ describe('project Style App integration', () => {
     await click(buttonByLabel('Save project'))
     const guardedApply = buttonByText('Apply changes')
     expect(guardedApply.disabled).toBe(true)
-    expect(document.body.textContent).toContain('Fix the Lead Vocal Preview Time')
+    expect(document.body.textContent).toContain('timing errors for Lead Vocal')
     await click(guardedApply)
     expect(harness.saveProject).not.toHaveBeenCalled()
     expect(buttonByLabel('Undo').disabled).toBe(true)
@@ -1009,7 +1022,7 @@ describe('project Style App integration', () => {
     })
     await click(buttonByLabel('Open project'))
     await click(buttonByText('Style'))
-    await click(buttonByText('Lead Vocal'))
+    await click(buttonByText('Lyrics'))
     expect(
       document.querySelector<HTMLInputElement>('[aria-label="Enable Lead Vocal Sync Aid"]')
         ?.checked,

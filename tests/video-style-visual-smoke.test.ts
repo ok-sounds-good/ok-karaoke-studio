@@ -324,12 +324,12 @@ function fakeStyleSessionWindow(
       .mockResolvedValueOnce(
         options.leadState ?? {
           controls: 4,
-          cueProgress: 0.5,
           height: 720,
           resourcesReady: true,
           stageHeight: 540,
           stageWidth: 960,
           width: 1280,
+          wordProgress: ['100%', '50%', '0%', '0%', '0%', '0%', '0%', '0%'],
         },
       )
       .mockResolvedValueOnce(styleActionTarget('templates'))
@@ -680,8 +680,8 @@ describe('production-window visual smoke', () => {
     const readinessScript = smoke.projectLyricsReadinessScript({ height: 720, width: 1280 })
     for (const contract of [
       '.style-workspace[role="dialog"]',
-      'Project lyric typeface',
-      'Project lyrics design preview',
+      'Global lyric typeface',
+      'Lyrics design preview',
       'data-logical-stage',
       'document.fonts',
       'document.images',

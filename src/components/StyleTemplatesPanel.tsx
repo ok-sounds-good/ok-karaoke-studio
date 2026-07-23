@@ -13,6 +13,7 @@ interface StyleTemplatesPanelProps {
   id: string
   labelledBy: string
   draft: ProjectStyleDraft
+  selectedSingerTrackId: string | null
   onDraftChange: ProjectStyleSession['change']
   onPrepareTemplateBackground?: (
     templateId: string | null,
@@ -30,6 +31,7 @@ export function StyleTemplatesPanel({
   id,
   labelledBy,
   draft,
+  selectedSingerTrackId,
   onDraftChange,
   onPrepareTemplateBackground,
 }: StyleTemplatesPanelProps) {
@@ -110,7 +112,7 @@ export function StyleTemplatesPanel({
     try {
       const created = await window.studio.createStyleTemplate({
         name: newName,
-        preferences: captureStyleTemplatePreferences(draft),
+        preferences: captureStyleTemplatePreferences(draft, selectedSingerTrackId ?? ''),
       })
       setTemplates((current) => [...(current ?? []), created])
       setSelectedId(created.id)
@@ -180,7 +182,11 @@ export function StyleTemplatesPanel({
         return
       }
       onDraftChange((current) => {
-        const loaded = loadStyleTemplateIntoDraft(current, selectedTemplate)
+        const loaded = loadStyleTemplateIntoDraft(
+          current,
+          selectedTemplate,
+          selectedSingerTrackId ?? '',
+        )
         if (!background || background.status === 'cleared' || linkedBackground.mode !== 'image')
           return loaded
         return {
@@ -212,7 +218,9 @@ export function StyleTemplatesPanel({
       className="style-templates"
     >
       <p className="style-field-help">
-        Templates change this Style draft only. Apply &amp; close makes the project edit.
+        Templates capture and apply global stage settings plus the selected singer&apos;s color,
+        placement, and cue settings. They change this Style draft only; Apply &amp; close makes the
+        project edit.
       </p>
       <label className="style-field">
         <span>Search templates</span>
@@ -250,7 +258,10 @@ export function StyleTemplatesPanel({
       {selected && (
         <section className="style-template-detail" aria-label="Selected template">
           <h3>{selected.name}</h3>
-          <p>Includes stage, lyric display, Lead Vocal, and export defaults.</p>
+          <p>
+            Includes global stage and lyric settings, the selected singer&apos;s appearance and cue
+            settings, and export defaults.
+          </p>
           {selected.preferences.stageStyle.background.mode === 'image' && (
             <p>
               Includes a linked background image. Its availability is checked in Preview after
@@ -261,7 +272,11 @@ export function StyleTemplatesPanel({
             If a local font is unavailable, it remains selected and uses the Preview and MP4
             fallback.
           </p>
-          <Button variant="primary" disabled={busy} onClick={() => void load()}>
+          <Button
+            variant="primary"
+            disabled={busy || !selectedSingerTrackId}
+            onClick={() => void load()}
+          >
             Load into Style
           </Button>
         </section>
@@ -278,7 +293,7 @@ export function StyleTemplatesPanel({
         <div>
           <Button
             variant="secondary"
-            disabled={busy || !newName.trim()}
+            disabled={busy || !newName.trim() || !selectedSingerTrackId}
             onClick={() => void create()}
           >
             Save as new

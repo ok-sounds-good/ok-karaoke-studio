@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import { Captions, Check, Edit3, Mic2, TimerReset } from 'lucide-react'
 import type { LyricWord, VocalTrack } from '../lib/model'
 import { formatTime } from '../lib/model'
-import { resolveVocalSungColor, type StageStyle } from '../lib/video-style'
+import { DEFAULT_SINGER_COLORS, resolveVocalSungColor, type StageStyle } from '../lib/video-style'
 import { flattenTrack, getActiveLine, motionAwareScrollBehavior } from '../utils'
 import { Button } from './ui'
 
@@ -36,7 +36,7 @@ export function LyricsPanel({
   const timedCount = words.filter(({ word }) => word.startMs !== null).length
   const activeColor = activeTrack
     ? resolveVocalSungColor(stageStyle, activeTrack.vocalStyle)
-    : stageStyle.lyrics.sungColor
+    : DEFAULT_SINGER_COLORS.sungColor
 
   useEffect(() => {
     if (!activeLine || !listRef.current) return

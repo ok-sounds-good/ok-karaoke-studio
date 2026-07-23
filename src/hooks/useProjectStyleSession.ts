@@ -12,11 +12,10 @@ import {
   type VisibleTextStyle,
   type VocalStyle,
 } from '../lib/video-style'
-import type { LyricDisplaySettings } from '../lib/model'
+import type { LyricDisplaySettings, VocalTrack } from '../lib/model'
 import type { VideoExportDefaults } from '../lib/video-export-settings'
 import { DEFAULT_VIDEO_EXPORT_SETTINGS } from '../lib/video-export-settings'
 import {
-  VOCAL_STYLE_TIMING_ERROR,
   vocalStyleTimingDraft,
   vocalStyleWithTiming,
   type VocalStyleTimingDraft,
@@ -34,9 +33,15 @@ export type ProjectStyleCommitResult = 'applied' | 'noop' | 'blocked' | 'stale'
 export interface ProjectStyleDraft {
   stageStyle: StageStyle
   lyricDisplay: LyricDisplaySettings
+  singers: ProjectStyleSingerDraft[]
+  videoExportDefaults: VideoExportDefaults
+}
+
+export interface ProjectStyleSingerDraft {
+  trackId: string
+  name: string
   vocalStyle: VocalStyle
   vocalTiming: VocalStyleTimingDraft
-  videoExportDefaults: VideoExportDefaults
 }
 
 export type ProjectStyleDraftChange =
@@ -107,11 +112,7 @@ function samePositionedVisibleTextStyle(
 }
 
 function sameLyricTextStyle(left: LyricTextStyle, right: LyricTextStyle): boolean {
-  return (
-    sameFontSizeStyle(left, right) &&
-    sameColor(left.unsungColor, right.unsungColor) &&
-    sameColor(left.sungColor, right.sungColor)
-  )
+  return sameFontSizeStyle(left, right)
 }
 
 export function sameStageStyle(left: StageStyle, right: StageStyle): boolean {
@@ -134,30 +135,10 @@ export function sameStageStyle(left: StageStyle, right: StageStyle): boolean {
   )
 }
 
-function sameNullableTypeface(
-  left: VocalStyle['typeface'],
-  right: VocalStyle['typeface'],
-): boolean {
-  return left === null || right === null
-    ? left === right
-    : fontTypefaceKey(left) === fontTypefaceKey(right)
-}
-
-function sameNullableFace(left: VocalStyle['fontStyle'], right: VocalStyle['fontStyle']): boolean {
-  return left === null || right === null ? left === right : fontFaceKey(left) === fontFaceKey(right)
-}
-
-function sameNullableColor(left: string | null, right: string | null): boolean {
-  return left === null || right === null ? left === right : sameColor(left, right)
-}
-
 export function sameVocalStyle(left: VocalStyle, right: VocalStyle): boolean {
   return (
-    sameNullableTypeface(left.typeface, right.typeface) &&
-    sameNullableFace(left.fontStyle, right.fontStyle) &&
-    left.sizePx === right.sizePx &&
-    sameNullableColor(left.sungColor, right.sungColor) &&
-    sameNullableColor(left.unsungColor, right.unsungColor) &&
+    sameColor(left.sungColor, right.sungColor) &&
+    sameColor(left.unsungColor, right.unsungColor) &&
     left.alignment === right.alignment &&
     samePosition(left.position, right.position) &&
     left.previewMs === right.previewMs &&
@@ -171,29 +152,56 @@ export function cloneProjectStyleDraft(draft: ProjectStyleDraft): ProjectStyleDr
   return {
     stageStyle: cloneStageStyle(draft.stageStyle),
     lyricDisplay: { ...draft.lyricDisplay },
-    vocalStyle: cloneVocalStyle(draft.vocalStyle),
-    vocalTiming: { ...draft.vocalTiming },
+    singers: draft.singers.map((singer) => ({
+      ...singer,
+      vocalStyle: cloneVocalStyle(singer.vocalStyle),
+      vocalTiming: { ...singer.vocalTiming },
+    })),
     videoExportDefaults: { ...draft.videoExportDefaults },
   }
 }
 
 export function createProjectStyleDraft(
   stageStyle: StageStyle,
-  vocalStyle: VocalStyle,
+  tracks: readonly VocalTrack[],
   lyricDisplay: LyricDisplaySettings = { lineCount: 2, advanceMode: 'clear' },
   videoExportDefaults: VideoExportDefaults = DEFAULT_VIDEO_EXPORT_SETTINGS,
 ): ProjectStyleDraft {
   return {
     stageStyle,
     lyricDisplay,
-    vocalStyle,
-    vocalTiming: vocalStyleTimingDraft(vocalStyle),
+    singers: tracks.map((track) => {
+      const vocalStyle = cloneVocalStyle(track.vocalStyle)
+      return {
+        trackId: track.id,
+        name: track.name,
+        vocalStyle,
+        vocalTiming: vocalStyleTimingDraft(vocalStyle),
+      }
+    }),
     videoExportDefaults,
   }
 }
 
-export function canonicalVocalStyle(draft: ProjectStyleDraft): VocalStyle | null {
-  return vocalStyleWithTiming(draft.vocalStyle, draft.vocalTiming)
+export function canonicalSingerStyle(singer: ProjectStyleSingerDraft): VocalStyle | null {
+  return vocalStyleWithTiming(singer.vocalStyle, singer.vocalTiming)
+}
+
+export function canonicalSingerStyles(draft: ProjectStyleDraft): ProjectStyleSingerDraft[] | null {
+  const singers = draft.singers.map((singer) => {
+    const vocalStyle = canonicalSingerStyle(singer)
+    return vocalStyle ? { ...singer, vocalStyle } : null
+  })
+  return singers.every((singer) => singer !== null) ? (singers as ProjectStyleSingerDraft[]) : null
+}
+
+function singerTimingError(draft: ProjectStyleDraft): string | null {
+  const names = draft.singers
+    .filter((singer) => canonicalSingerStyle(singer) === null)
+    .map((singer) => singer.name)
+  return names.length === 0
+    ? null
+    : `Fix Preview Time and Sync Aid timing errors for ${names.join(', ')} before applying Style changes.`
 }
 
 export function sameProjectStyleDraft(left: ProjectStyleDraft, right: ProjectStyleDraft): boolean {
@@ -201,10 +209,19 @@ export function sameProjectStyleDraft(left: ProjectStyleDraft, right: ProjectSty
     sameStageStyle(left.stageStyle, right.stageStyle) &&
     left.lyricDisplay.lineCount === right.lyricDisplay.lineCount &&
     left.lyricDisplay.advanceMode === right.lyricDisplay.advanceMode &&
-    sameVocalStyle(left.vocalStyle, right.vocalStyle) &&
-    left.vocalTiming.previewMs === right.vocalTiming.previewMs &&
-    left.vocalTiming.minLeadMs === right.vocalTiming.minLeadMs &&
-    left.vocalTiming.maxLeadMs === right.vocalTiming.maxLeadMs &&
+    left.singers.length === right.singers.length &&
+    left.singers.every((singer, index) => {
+      const other = right.singers[index]
+      return (
+        other !== undefined &&
+        singer.trackId === other.trackId &&
+        singer.name === other.name &&
+        sameVocalStyle(singer.vocalStyle, other.vocalStyle) &&
+        singer.vocalTiming.previewMs === other.vocalTiming.previewMs &&
+        singer.vocalTiming.minLeadMs === other.vocalTiming.minLeadMs &&
+        singer.vocalTiming.maxLeadMs === other.vocalTiming.maxLeadMs
+      )
+    }) &&
     left.videoExportDefaults.resolution === right.videoExportDefaults.resolution &&
     left.videoExportDefaults.fps === right.videoExportDefaults.fps
   )
@@ -330,9 +347,9 @@ export function useProjectStyleSession({
     if (!active || applyingRef.current === active || !canInteractRef.current()) {
       return false
     }
-    const canonicalVocal = canonicalVocalStyle(active.draft)
-    if (!canonicalVocal) return false
-    const canonicalDraft = { ...active.draft, vocalStyle: canonicalVocal }
+    const canonicalSingers = canonicalSingerStyles(active.draft)
+    if (!canonicalSingers) return false
+    const canonicalDraft = { ...active.draft, singers: canonicalSingers }
 
     applyingRef.current = active
     let result: ProjectStyleCommitResult
@@ -369,7 +386,8 @@ export function useProjectStyleSession({
 
   const active =
     storedSession && sameOwnerKey(storedSession.ownerKey, ownerKey) ? storedSession : null
-  const canApply = Boolean(active && canonicalVocalStyle(active.draft))
+  const applyBlockedReason = active ? singerTimingError(active.draft) : null
+  const canApply = Boolean(active && !applyBlockedReason)
 
   return {
     draft: active ? cloneProjectStyleDraft(active.draft) : null,
@@ -377,7 +395,7 @@ export function useProjectStyleSession({
     blocksProjectActions: active !== null,
     isDirty: active ? !sameProjectStyleDraft(active.baseline, active.draft) : false,
     canApply,
-    applyBlockedReason: active && !canApply ? VOCAL_STYLE_TIMING_ERROR : null,
+    applyBlockedReason,
     start,
     change,
     apply,
