@@ -680,14 +680,11 @@
 }
 
 .karaoke-stage.is-designing-title-card [data-title-card-design-role] {
-  position: relative;
-  outline: max(1px, 0.12cqw) solid var(--accent);
-  outline-offset: 0.45cqw;
   anchor-name: --title-card-design-target;
 }
 
 .karaoke-stage.is-designing-title-card .title-card {
-  position: relative;
+  position: absolute;
 }
 
 .title-card-design-status {

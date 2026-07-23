@@ -122,7 +122,8 @@
         },
         "sizePx": 25,
         "color": "#FFAD69",
-        "visible": true
+        "visible": true,
+        "position": { "x": 960, "y": 447 }
       },
       "title": {
         "typeface": {
@@ -175,7 +176,8 @@
         },
         "sizePx": 104,
         "color": "#FBF9FD",
-        "visible": true
+        "visible": true,
+        "position": { "x": 960, "y": 550 }
       },
       "artist": {
         "typeface": {
@@ -228,7 +230,8 @@
         },
         "sizePx": 42,
         "color": "#B4ACBD",
-        "visible": true
+        "visible": true,
+        "position": { "x": 960, "y": 650 }
       }
     },
     "stageFrame": {
@@ -407,6 +410,7 @@
         "unsungColor": "#102030",
         "sungColor": null,
         "alignment": "center",
+        "position": { "x": 960, "y": 550 },
         "previewMs": 3000,
         "syncAid": { "enabled": false, "minLeadMs": 2000, "maxLeadMs": 3000 }
       },

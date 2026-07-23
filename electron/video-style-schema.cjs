@@ -91,6 +91,15 @@ function boundedInteger(value, key, path, minimum, maximum) {
   return result
 }
 
+function decodeDisplayPosition(value, path) {
+  const source = record(value, path)
+  exactKeys(source, ['x', 'y'], path)
+  return {
+    x: boundedInteger(source, 'x', path, 0, 1920),
+    y: boundedInteger(source, 'y', path, 0, 1080),
+  }
+}
+
 function isFontSizePx(value) {
   return typeof value === 'number' && FONT_SIZE_SET.has(value)
 }
@@ -185,18 +194,34 @@ function validTypefaceDescriptor(value) {
   )
 }
 
-function validTextStyle(value, withVisibility = false) {
+function validTextStyle(value, withVisibility = false, withPosition = false) {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
-  const keys = withVisibility
-    ? ['typeface', 'fontStyle', 'sizePx', 'color', 'visible']
-    : ['typeface', 'fontStyle', 'sizePx', 'color']
+  const keys = [
+    'typeface',
+    'fontStyle',
+    'sizePx',
+    'color',
+    ...(withVisibility ? ['visible'] : []),
+    ...(withPosition ? ['position'] : []),
+  ]
   return (
     hasExactKeys(value, keys) &&
     validTypefaceDescriptor(value.typeface) &&
     validFontFaceDescriptor(value.fontStyle) &&
     isFontSizePx(value.sizePx) &&
     isHexColor(value.color) &&
-    (!withVisibility || typeof value.visible === 'boolean')
+    (!withVisibility || typeof value.visible === 'boolean') &&
+    (!withPosition ||
+      (typeof value.position === 'object' &&
+        value.position !== null &&
+        !Array.isArray(value.position) &&
+        hasExactKeys(value.position, ['x', 'y']) &&
+        Number.isSafeInteger(value.position.x) &&
+        value.position.x >= 0 &&
+        value.position.x <= 1920 &&
+        Number.isSafeInteger(value.position.y) &&
+        value.position.y >= 0 &&
+        value.position.y <= 1080))
   )
 }
 
@@ -230,13 +255,18 @@ function decodeTypeface(value, path) {
   return typeface
 }
 
-function decodeTextStyle(value, path, withVisibility = false) {
+function decodeTextStyle(value, path, withVisibility = false, withPosition = false) {
   const source = record(value, path)
   exactKeys(
     source,
-    withVisibility
-      ? ['typeface', 'fontStyle', 'sizePx', 'color', 'visible']
-      : ['typeface', 'fontStyle', 'sizePx', 'color'],
+    [
+      'typeface',
+      'fontStyle',
+      'sizePx',
+      'color',
+      ...(withVisibility ? ['visible'] : []),
+      ...(withPosition ? ['position'] : []),
+    ],
     path,
   )
   const decoded = {
@@ -245,8 +275,11 @@ function decodeTextStyle(value, path, withVisibility = false) {
     sizePx: fontSize(source, 'sizePx', path),
     color: color(source, 'color', path),
     ...(withVisibility ? { visible: boolean(source, 'visible', path) } : {}),
+    ...(withPosition
+      ? { position: decodeDisplayPosition(source.position, `${path}.position`) }
+      : {}),
   }
-  if (!validTextStyle(decoded, withVisibility)) {
+  if (!validTextStyle(decoded, withVisibility, withPosition)) {
     throw new TypeError(`${path} is not a valid text style.`)
   }
   return decoded
@@ -312,9 +345,9 @@ function decodeStageStyle(value) {
       sungColor: color(lyrics, 'sungColor', 'project.stageStyle.lyrics'),
     },
     titleCard: {
-      eyebrow: decodeTextStyle(title.eyebrow, 'project.stageStyle.titleCard.eyebrow', true),
-      title: decodeTextStyle(title.title, 'project.stageStyle.titleCard.title', true),
-      artist: decodeTextStyle(title.artist, 'project.stageStyle.titleCard.artist', true),
+      eyebrow: decodeTextStyle(title.eyebrow, 'project.stageStyle.titleCard.eyebrow', true, true),
+      title: decodeTextStyle(title.title, 'project.stageStyle.titleCard.title', true, true),
+      artist: decodeTextStyle(title.artist, 'project.stageStyle.titleCard.artist', true, true),
     },
     stageFrame: {
       enabled: boolean(frame, 'enabled', 'project.stageStyle.stageFrame'),
@@ -353,6 +386,7 @@ function decodeVocalStyle(value, path) {
       'unsungColor',
       'sungColor',
       'alignment',
+      'position',
       'previewMs',
       'syncAid',
     ],
@@ -384,6 +418,7 @@ function decodeVocalStyle(value, path) {
     unsungColor: nullableColor('unsungColor'),
     sungColor: nullableColor('sungColor'),
     alignment,
+    position: decodeDisplayPosition(source.position, `${path}.position`),
     previewMs: integer(source, 'previewMs', path),
     syncAid: {
       enabled: boolean(syncAid, 'enabled', `${path}.syncAid`),

@@ -60,42 +60,75 @@
 }
 
 .karaoke-stage .karaoke-stage__content {
-  inset: var(--stage-content-top) var(--stage-content-right) var(--stage-content-bottom)
-    var(--stage-content-left);
+  inset: 0;
+  display: block;
 }
 
-.karaoke-stage .title-card h3,
-.karaoke-stage .title-card p,
-.karaoke-stage .title-card > span,
+.karaoke-stage .title-card__title h3,
+.karaoke-stage .title-card__artist p,
+.karaoke-stage .title-card__eyebrow > span,
 .karaoke-stage .stage-line p {
   font: inherit;
   color: inherit;
 }
 
-.karaoke-stage .title-card > span {
-  letter-spacing: var(--stage-title-eyebrow-spacing);
+.karaoke-stage .title-card {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 }
 
-.karaoke-stage .title-card h3 {
+.karaoke-stage .title-card__object,
+.karaoke-stage .active-lines {
+  position: absolute;
+  transform: translate(-50%, -50%);
+}
+
+.karaoke-stage .title-card__object {
+  width: max-content;
+  max-width: 100%;
+  text-align: center;
+}
+
+.karaoke-stage .title-card__eyebrow > span {
+  letter-spacing: var(--stage-title-eyebrow-spacing);
+  text-transform: uppercase;
+}
+
+.karaoke-stage .title-card__title h3 {
   max-width: var(--stage-title-max-width);
-  margin: var(--stage-title-margin-top) var(--stage-title-margin-right)
-    var(--stage-title-margin-bottom) var(--stage-title-margin-left);
+  margin: 0;
   line-height: var(--stage-title-line-height);
   letter-spacing: var(--stage-title-spacing);
   text-shadow: var(--stage-title-shadow);
 }
-.karaoke-stage .title-card p {
+.karaoke-stage .title-card__artist p {
   margin: 0;
 }
 
 .karaoke-stage .active-lines,
 .karaoke-stage .active-lines--duet {
+  width: max-content;
+  min-width: var(--stage-minimum-lyric-width);
+  max-width: 100%;
   gap: var(--stage-lyric-gap);
 }
 
-.karaoke-stage.is-designing .active-lines {
-  align-content: center;
-  height: 100%;
+.karaoke-stage [data-display-object-selected='true'] {
+  z-index: 4;
+  outline: max(1px, 0.12cqw) solid var(--accent);
+  outline-offset: 0.45cqw;
+  pointer-events: auto;
+  touch-action: none;
+  cursor: grab;
+}
+
+.karaoke-stage [data-display-object-selected='true']:active {
+  cursor: grabbing;
+}
+
+.karaoke-stage [data-display-object-selected='true']:focus-visible {
+  outline-width: max(2px, 0.18cqw);
 }
 
 .karaoke-stage .stage-line p,

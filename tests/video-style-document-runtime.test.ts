@@ -21,6 +21,9 @@ const documentApi = require('../electron/video-style-document.cjs') as {
 const { installKaraokeRuntime } = require('../electron/video-style-render-runtime.cjs') as {
   installKaraokeRuntime(): void
 }
+const { installDisplayPlacement } = require('../electron/display-placement.cjs') as {
+  installDisplayPlacement(target?: typeof globalThis): void
+}
 
 function decodedInvocationValue(invocation: string): unknown {
   const payload = invocation.match(/atob\("([^"]+)"\)/u)?.[1]
@@ -74,6 +77,50 @@ describe('isolated video-style document boundary', () => {
 })
 
 describe('browser render runtime', () => {
+  it('places title roles independently at the same logical coordinates used by Preview', async () => {
+    stageDom()
+    installDisplayPlacement(window)
+    window.eval(`(${installKaraokeRuntime.toString()})()`)
+    const runtime = window as unknown as {
+      prepareKaraokeAssets(value: object): Promise<unknown>
+      renderKaraokeFrame(state: object, sequence: number): boolean
+    }
+    const stageStyle = cloneStageStyle()
+    stageStyle.titleCard.eyebrow.position = { x: 200, y: 160 }
+    stageStyle.titleCard.title.position = { x: 960, y: 520 }
+    stageStyle.titleCard.artist.position = { x: 1_640, y: 920 }
+    await runtime.prepareKaraokeAssets({
+      backgroundDataUrl: '',
+      fonts: [],
+      stageLayout: structuredClone(STAGE_LAYOUT),
+      syncAidGeometry: structuredClone(SYNC_AID_GEOMETRY),
+    })
+    expect(
+      runtime.renderKaraokeFrame(
+        {
+          artist: 'Artist',
+          title: 'Title',
+          playbackMs: 0,
+          showTitle: true,
+          stageStyle,
+          lines: [],
+          syncAids: [],
+        },
+        1,
+      ),
+    ).toBe(true)
+    expect(
+      ['.title-eyebrow', '.title-main', '.title-artist'].map((selector) => {
+        const { left, top } = document.querySelector<HTMLElement>(selector)!.style
+        return [left, top]
+      }),
+    ).toEqual([
+      ['200px', '160px'],
+      ['960px', '520px'],
+      ['1640px', '920px'],
+    ])
+  })
+
   it('matches fonts, text safety, tuple line identities, progress, and asset reloads', async () => {
     stageDom()
     const loadedFaces: Array<{ family: string; source: string }> = []
@@ -135,6 +182,7 @@ describe('browser render runtime', () => {
       unsungColor: '#72687D',
       sungColor: '#FF8A2B',
       alignment: 'left',
+      position: { x: 320, y: 420 },
     }
     const equivalentFaces: FontFaceDescriptor[] = [
       {
@@ -162,6 +210,7 @@ describe('browser render runtime', () => {
       ...exactStyle,
       typeface: { ...exactStyle.typeface, faces: [...equivalentFaces].reverse() },
     }
+    installDisplayPlacement(window)
     window.eval(`(${installKaraokeRuntime.toString()})()`)
     const runtime = window as unknown as {
       prepareKaraokeAssets(value: object): Promise<{ fontFallbacks: unknown[] }>
@@ -212,6 +261,15 @@ describe('browser render runtime', () => {
       syncAids,
     }
     expect(runtime.renderKaraokeFrame(frameState, 9)).toBe(true)
+    expect(
+      [...document.querySelectorAll<HTMLElement>('.lines')].map(({ style: lineStyle }) => [
+        lineStyle.left,
+        lineStyle.top,
+      ]),
+    ).toEqual([
+      ['320px', '420px'],
+      ['320px', '420px'],
+    ])
     const sceneRect = vi.fn(() => DOMRect.fromRect({ x: 0, width: 960, height: 540 }))
     Object.defineProperty(document.querySelector('#scene'), 'getBoundingClientRect', {
       value: sceneRect,

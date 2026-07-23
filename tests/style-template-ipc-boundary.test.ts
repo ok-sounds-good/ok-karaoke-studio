@@ -156,6 +156,17 @@ describe('style template Electron boundary', () => {
     ).rejects.toThrow('valid name and preferences')
     expect(hostileRequest.invocations).toHaveLength(0)
 
+    const invalidPosition = preferences()
+    invalidPosition.vocalStyle.position.x = Number.NaN
+    const hostilePositionRequest = loadStudio(canonical)
+    await expect(
+      hostilePositionRequest.studio.createStyleTemplate({
+        name: 'Bad position',
+        preferences: invalidPosition,
+      }),
+    ).rejects.toThrow('valid name and preferences')
+    expect(hostilePositionRequest.invocations).toHaveLength(0)
+
     const hostileResult = { id: 'stable-id', name: 'Bad', preferences: invalidPreferences }
     await expect(loadStudio([hostileResult]).studio.listStyleTemplates()).rejects.toThrow(
       'invalid style template',

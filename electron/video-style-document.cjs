@@ -1,6 +1,7 @@
 'use strict'
 
 const { installKaraokeRuntime } = require('./video-style-render-runtime.cjs')
+const { installDisplayPlacement } = require('./display-placement.cjs')
 
 function deepFreeze(value) {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -109,18 +110,24 @@ body {
 
 .content {
   position: absolute;
-  inset:
-    ${STAGE_LAYOUT.content.topPx}px
-    ${STAGE_LAYOUT.content.rightPx}px
-    ${STAGE_LAYOUT.content.bottomPx}px
-    ${STAGE_LAYOUT.content.leftPx}px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  inset: 0;
 }
 
 .title-card {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.title-card > *,
+.lines {
+  position: absolute;
+  transform: translate(-50%, -50%);
+}
+
+.title-card > * {
+  width: max-content;
+  max-width: 100%;
   text-align: center;
 }
 
@@ -131,11 +138,7 @@ body {
 
 .title-main {
   max-width: ${STAGE_LAYOUT.title.maxWidthPx}px;
-  margin:
-    ${STAGE_LAYOUT.title.marginTopPx}px
-    ${STAGE_LAYOUT.title.marginRightPx}px
-    ${STAGE_LAYOUT.title.marginBottomPx}px
-    ${STAGE_LAYOUT.title.marginLeftPx}px;
+  margin: 0;
   line-height: ${STAGE_LAYOUT.title.lineHeight};
   letter-spacing: ${STAGE_LAYOUT.title.letterSpacingEm}em;
   text-shadow: ${STAGE_LAYOUT.title.shadow};
@@ -147,7 +150,9 @@ body {
 
 .lines {
   display: flex;
-  width: 100%;
+  width: max-content;
+  min-width: ${STAGE_LAYOUT.placement.minimumLyricWidthPx}px;
+  max-width: 100%;
   flex-direction: column;
   gap: ${STAGE_LAYOUT.lyric.gapsPx[1]}px;
 }
@@ -233,6 +238,10 @@ function renderDocument(options) {
     /<\/script/giu,
     '<\\/script',
   )
+  const displayPlacementSource = `(${installDisplayPlacement.toString()})(window)`.replace(
+    /<\/script/giu,
+    '<\\/script',
+  )
   const markerCells = '<i></i>'.repeat(FRAME_MARKER_BITS)
   return `<!doctype html>
 <html>
@@ -251,7 +260,7 @@ function renderDocument(options) {
       <footer id="footer" class="footer"></footer>
     </div>
     <div id="frame-marker" class="frame-marker" style="left: ${width}px">${markerCells}</div>
-    <script>${runtimeSource}</script>
+    <script>${displayPlacementSource};${runtimeSource}</script>
   </body>
 </html>`
 }

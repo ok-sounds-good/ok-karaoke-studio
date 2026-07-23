@@ -44,10 +44,15 @@ function completeProjectFixture(): KaraokeProject {
     mode: 'image',
     imagePath: '/linked/background image.png',
   }
+  stageStyle.titleCard.eyebrow.position = { x: 240, y: 180 }
+  stageStyle.titleCard.title.position = { x: 960, y: 360 }
+  stageStyle.titleCard.artist.position = { x: 1_580, y: 910 }
   const leadStyle = cloneVocalStyle()
   leadStyle.sungColor = '#12aBcD'
+  leadStyle.position = { x: 520, y: 420 }
   const guideStyle = cloneVocalStyle()
   guideStyle.sungColor = '#fedcba'
+  guideStyle.position = { x: 1_380, y: 720 }
   const leadLine = createLyricLine('Café lights', {
     id: 'line-lead-1',
     startMs: 1_001,
@@ -118,6 +123,15 @@ describe('Electron project file persistence', () => {
     expect(reopened.lyricDisplay).toEqual({ lineCount: 5, advanceMode: 'scroll' })
     expect(reopened.lyricDisplay).not.toBe(original.lyricDisplay)
     expect(reopened.stageStyle.background.imagePath).toBe('/linked/background image.png')
+    expect(reopened.stageStyle.titleCard).toMatchObject({
+      eyebrow: { position: { x: 240, y: 180 } },
+      title: { position: { x: 960, y: 360 } },
+      artist: { position: { x: 1_580, y: 910 } },
+    })
+    expect(reopened.tracks.map(({ vocalStyle }) => vocalStyle.position)).toEqual([
+      { x: 520, y: 420 },
+      { x: 1_380, y: 720 },
+    ])
     expect(reopened.stageStyle).not.toBe(original.stageStyle)
     expect(reopened.tracks[0].vocalStyle).not.toBe(original.tracks[0].vocalStyle)
     expect(await readdir(directory)).toEqual(['round-trip.oks'])

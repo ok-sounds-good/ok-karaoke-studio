@@ -32,7 +32,8 @@ export function lyricGapPx(actualLineCount: number): number {
 export function previewStageLayoutVariables(
   actualLineCount: number,
 ): Record<string, string | number> {
-  const { brand, clock, content, footer, frame, grain, lyric, sync, title } = STAGE_LAYOUT
+  const { brand, clock, content, footer, frame, grain, lyric, placement, sync, title } =
+    STAGE_LAYOUT
   return {
     '--stage-frame-top': logicalStagePx(frame.topPx),
     '--stage-frame-right': logicalStagePx(frame.rightPx),
@@ -53,6 +54,7 @@ export function previewStageLayoutVariables(
     '--stage-content-right': logicalStagePx(content.rightPx),
     '--stage-content-bottom': logicalStagePx(content.bottomPx),
     '--stage-content-left': logicalStagePx(content.leftPx),
+    '--stage-minimum-lyric-width': logicalStagePx(placement.minimumLyricWidthPx),
     '--stage-title-eyebrow-spacing': `${title.eyebrowLetterSpacingEm}em`,
     '--stage-title-margin-top': logicalStagePx(title.marginTopPx),
     '--stage-title-margin-right': logicalStagePx(title.marginRightPx),

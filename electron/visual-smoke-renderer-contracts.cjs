@@ -384,8 +384,10 @@ function projectLyricsReadinessScript(viewport, contract = { kind: 'project-lyri
           (contract.artistHidden && contract.role !== 'artist' ? Boolean(artist) : !artist) ||
           workspace.querySelectorAll('.style-editor__body').length !== 1 || !sixDestinationsFit()) return null
       }
-      return { applied, height: expected.height, resourcesReady: true, role: contract.role,
-        stageHeight: bounds.height, stageWidth: bounds.width, width: expected.width }
+      return { applied, height: expected.height,
+        position: role instanceof HTMLElement ? role.getAttribute('aria-label') : null,
+        resourcesReady: true, role: contract.role, stageHeight: bounds.height,
+        stageWidth: bounds.width, width: expected.width }
     }
 
     const sampleStageFrame = () => {
@@ -662,6 +664,7 @@ function styleSessionActionScript(action) {
     const saveTemplate = [...(workspace?.querySelectorAll('button') ?? [])].find(
       (button) => button.textContent?.trim() === 'Save as new',
     )
+    const selectedDisplayObject = document.querySelector('[data-display-object-selected="true"]')
     const apply = workspace?.querySelector('[data-style-action="apply"]')
     const targets = { background: backgroundTab, cancel, lead: leadVocalTab, solid, apply,
       title: titleTab, 'eyebrow-visibility': eyebrowVisibility, artist,
@@ -669,6 +672,7 @@ function styleSessionActionScript(action) {
       'stage-off': stageMaster, 'stage-on': stageMaster, clock, 'clock-face': clockFace,
       footer, 'footer-visibility': footerVisibility, 'apply-stage': apply, 'sync-aid': syncAid,
       templates: templatesTab, 'template-name': templateName, 'save-template': saveTemplate }
+    targets['move-selected'] = selectedDisplayObject
     const target = targets[action]
     if (['sync-aid', 'template-name', 'save-template'].includes(action) && target instanceof HTMLElement) {
       target.scrollIntoView({ block: 'center' })
@@ -703,6 +707,8 @@ function styleSessionActionScript(action) {
       'save-template': templatesTab?.getAttribute('aria-selected') === 'true' &&
         templateName instanceof HTMLInputElement && templateName.value === ${JSON.stringify(STYLE_TEMPLATE_NAME)} &&
         saveTemplate instanceof HTMLButtonElement && !saveTemplate.disabled,
+      'move-selected': titleTab?.getAttribute('aria-selected') === 'true' && artist?.checked &&
+        selectedDisplayObject?.getAttribute('data-title-card-role') === 'artist',
     })[action] === true
     if (!(target instanceof HTMLElement) || !semantic || target.disabled) return null
     const bounds = target.getBoundingClientRect()

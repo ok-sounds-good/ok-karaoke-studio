@@ -455,7 +455,22 @@ export function ProjectStyleEditor({
         backgroundImage={backgroundPreview}
         designMode={
           destination === 'title-card'
-            ? { target: 'title-card', role: titleCardPreviewRole, stageStyle }
+            ? {
+                target: 'title-card',
+                role: titleCardPreviewRole,
+                stageStyle,
+                onPositionChange: (position) =>
+                  changeStageStyle((current) => ({
+                    ...current,
+                    titleCard: {
+                      ...current.titleCard,
+                      [titleCardPreviewRole]: {
+                        ...current.titleCard[titleCardPreviewRole],
+                        position,
+                      },
+                    },
+                  })),
+              }
             : destination === 'stage-frame'
               ? { target: 'stage-frame', role: stageFramePreviewRole, stageStyle }
               : destination === 'lead-vocal'
@@ -464,6 +479,11 @@ export function ProjectStyleEditor({
                     stageStyle,
                     vocalStyle: canonicalVocal ?? draft.vocalStyle,
                     timingValid: Boolean(canonicalVocal),
+                    onPositionChange: (position) =>
+                      onDraftChange((current) => ({
+                        ...current,
+                        vocalStyle: { ...current.vocalStyle, position },
+                      })),
                   }
                 : { target: 'project-lyrics', stageStyle }
         }

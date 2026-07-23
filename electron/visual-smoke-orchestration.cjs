@@ -368,6 +368,7 @@ async function captureStyleSession(window, app, options) {
       state.applied !== (contract.applied === true)
     )
       throw smokeError('VISUAL_SMOKE_READINESS_INVALID')
+    return state
   }
   await activate('reopen')
   await activate('title')
@@ -378,7 +379,24 @@ async function captureStyleSession(window, app, options) {
   pngs.push(await capture(viewport))
   await activate('artist')
   await activate('artist-visibility')
-  await titleCardState({ role: 'artist', eyebrowHidden: true, artistHidden: true })
+  const artistBeforeMove = await titleCardState({
+    role: 'artist',
+    eyebrowHidden: true,
+    artistHidden: true,
+  })
+  await activate('move-selected')
+  sendTrustedStyleKey(window.webContents, 'Right')
+  const artistAfterMove = await titleCardState({
+    role: 'artist',
+    eyebrowHidden: true,
+    artistHidden: true,
+  })
+  if (
+    typeof artistBeforeMove.position !== 'string' ||
+    typeof artistAfterMove.position !== 'string' ||
+    artistBeforeMove.position === artistAfterMove.position
+  )
+    throw smokeError('VISUAL_SMOKE_READINESS_INVALID')
   pngs.push(await capture(viewport))
   await activate('apply-title')
   await titleCardState({ applied: true, role: 'artist', eyebrowHidden: true, artistHidden: true })

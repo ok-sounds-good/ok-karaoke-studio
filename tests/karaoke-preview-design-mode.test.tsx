@@ -226,6 +226,72 @@ describe('Karaoke Preview project-lyrics design mode', () => {
     },
   )
 
+  it('moves only the selected vocal object with pointer and keyboard input in logical pixels', async () => {
+    const project = createProject()
+    const vocalStyle = cloneVocalStyle()
+    const onPositionChange = vi.fn()
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    await act(async () =>
+      root.render(
+        <KaraokePreview
+          project={project}
+          playbackMs={0}
+          lyricMs={0}
+          selectedWordIds={new Set()}
+          designMode={{
+            target: 'lead-vocal',
+            stageStyle: project.stageStyle,
+            vocalStyle,
+            timingValid: true,
+            onPositionChange,
+          }}
+        />,
+      ),
+    )
+    const stage = host.querySelector<HTMLElement>('[data-stage-canvas]')!
+    const object = host.querySelector<HTMLElement>('[data-display-object-selected="true"]')!
+    Object.defineProperty(stage, 'getBoundingClientRect', {
+      value: () => DOMRect.fromRect({ width: 960, height: 540 }),
+    })
+    Object.defineProperty(object, 'getBoundingClientRect', {
+      value: () => DOMRect.fromRect({ width: 480, height: 100 }),
+    })
+    Object.defineProperty(object, 'setPointerCapture', { value: vi.fn() })
+    Object.defineProperty(object, 'releasePointerCapture', { value: vi.fn() })
+
+    await act(async () => {
+      object.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          button: 0,
+          clientX: 100,
+          clientY: 100,
+          pointerId: 7,
+        }),
+      )
+      object.dispatchEvent(
+        new PointerEvent('pointermove', {
+          bubbles: true,
+          clientX: 200,
+          clientY: 150,
+          pointerId: 7,
+        }),
+      )
+      object.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 7 }))
+    })
+    expect(onPositionChange).toHaveBeenLastCalledWith({ x: 1_160, y: 650 })
+
+    onPositionChange.mockClear()
+    await act(async () => {
+      object.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ArrowLeft' }))
+    })
+    expect(onPositionChange).toHaveBeenCalledWith({ x: 959, y: 550 })
+    expect(object.getAttribute('aria-label')).toContain('Drag or use arrow keys')
+    await act(async () => root.unmount())
+  })
+
   it('renders canonical content through the complete Background draft with exact CSS evidence', () => {
     const project = createProject({ title: 'Canonical title', artist: 'Canonical artist' })
     const snapshot = structuredClone(project)

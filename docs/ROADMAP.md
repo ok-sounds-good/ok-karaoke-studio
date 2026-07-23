@@ -151,8 +151,9 @@ at a time, and the project retains one authoritative clock.
 - Creator-authored placement of optional stage elements, including the retained
   dormant instrumental-break graphic source. The source remains available for
   future exploration, but no arbitrary stage-element authoring workflow is
-  planned. Styling the built-in MVP title card, footer, and Stage frame does not
-  create such a workflow.
+  planned. Positioning the built-in MVP lyric blocks and title-card roles, or
+  styling the built-in title card, footer, and Stage frame, does not create such
+  a workflow.
 
 ## Decision gates
 

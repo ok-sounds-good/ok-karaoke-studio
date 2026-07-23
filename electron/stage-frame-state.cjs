@@ -43,6 +43,7 @@ function resolveVocalStyle(projectLyrics, vocal) {
     unsungColor: vocal.unsungColor ?? projectLyrics.unsungColor,
     sungColor: vocal.sungColor ?? projectLyrics.sungColor,
     alignment: vocal.alignment,
+    position: { ...vocal.position },
     previewMs: vocal.previewMs,
     syncAid: { ...vocal.syncAid },
   }

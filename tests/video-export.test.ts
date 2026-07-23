@@ -449,12 +449,21 @@ describe('karaoke video frame planning', () => {
       offsetMs: 0,
       lyricDisplay: { lineCount: 3, advanceMode: 'clear' },
       tracks: [
-        { ...base.tracks[0], name: 'Lead', lines },
+        {
+          ...base.tracks[0],
+          name: 'Lead',
+          vocalStyle: { ...base.tracks[0].vocalStyle, position: { x: 800, y: 500 } },
+          lines,
+        },
         {
           ...base.tracks[0],
           id: 'video-harmony',
           name: 'Harmony',
-          vocalStyle: { ...base.tracks[0].vocalStyle, sungColor: '#58d6de' },
+          vocalStyle: {
+            ...base.tracks[0].vocalStyle,
+            sungColor: '#58d6de',
+            position: { x: 800, y: 500 },
+          },
           lines: lines.map((line) => ({
             ...line,
             id: `harmony-${line.id}`,
@@ -474,6 +483,11 @@ describe('karaoke video frame planning', () => {
     expect(new Set(state.lines.map((line) => line.text.split(' ')[0]))).toEqual(
       new Set(['Lead', 'Harmony']),
     )
+    expect(state.lines.map(({ style }) => style.position)).toEqual([
+      { x: 800, y: 500 },
+      { x: 800, y: 500 },
+      { x: 800, y: 500 },
+    ])
   })
 
   it('rejects malformed and semantically invalid current projects', () => {

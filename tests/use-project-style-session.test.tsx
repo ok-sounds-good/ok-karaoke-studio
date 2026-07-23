@@ -581,6 +581,61 @@ describe('project Style session', () => {
     expect(commitDraft).not.toHaveBeenCalled()
   })
 
+  it('keeps placement edits transactional across Cancel and Apply', async () => {
+    const baseline = structuredClone(source)
+    await start()
+    await act(async () =>
+      currentSession.change((draft) => ({
+        ...draft,
+        stageStyle: {
+          ...draft.stageStyle,
+          titleCard: {
+            ...draft.stageStyle.titleCard,
+            title: {
+              ...draft.stageStyle.titleCard.title,
+              position: { x: 1_500, y: 220 },
+            },
+          },
+        },
+        vocalStyle: { ...draft.vocalStyle, position: { x: 420, y: 810 } },
+      })),
+    )
+    expect(currentSession.isDirty).toBe(true)
+    expect(currentSession.cancel()).toBe(true)
+    expect(source).toStrictEqual(baseline)
+    expect(commitDraft).not.toHaveBeenCalled()
+
+    await start()
+    await act(async () =>
+      currentSession.change((draft) => ({
+        ...draft,
+        stageStyle: {
+          ...draft.stageStyle,
+          titleCard: {
+            ...draft.stageStyle.titleCard,
+            title: {
+              ...draft.stageStyle.titleCard.title,
+              position: { x: 1_500, y: 220 },
+            },
+          },
+        },
+        vocalStyle: { ...draft.vocalStyle, position: { x: 420, y: 810 } },
+      })),
+    )
+    expect(currentSession.apply()).toBe(true)
+    expect(commitDraft).toHaveBeenCalledWith(
+      ownerKey,
+      expect.objectContaining({
+        stageStyle: expect.objectContaining({
+          titleCard: expect.objectContaining({
+            title: expect.objectContaining({ position: { x: 1_500, y: 220 } }),
+          }),
+        }),
+        vocalStyle: expect.objectContaining({ position: { x: 420, y: 810 } }),
+      }),
+    )
+  })
+
   it('compares every active and latent StageStyle field semantically', () => {
     const mutations: Record<string, (style: StageStyle) => void> = {
       'background mode': (style) => {
@@ -648,6 +703,15 @@ describe('project Style session', () => {
         role(style).visible = !role(style).visible
       }
     })
+    mutations['title eyebrow position'] = (style) => {
+      style.titleCard.eyebrow.position.x += 1
+    }
+    mutations['title title position'] = (style) => {
+      style.titleCard.title.position.y += 1
+    }
+    mutations['title artist position'] = (style) => {
+      style.titleCard.artist.position.x += 1
+    }
 
     Object.entries(mutations).forEach(([name, mutate]) => {
       const changed = cloneStageStyle(source.stageStyle)
@@ -687,6 +751,9 @@ describe('project Style session', () => {
       },
       (style) => {
         style.alignment = 'left'
+      },
+      (style) => {
+        style.position.x += 1
       },
       (style) => {
         style.previewMs += 1
