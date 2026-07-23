@@ -176,7 +176,7 @@ function styleKeyboardState() {
       checkedCount: 1,
       role,
     })),
-    closed: true,
+    closed: false,
     clean: true,
     focus: [
       'master',
@@ -202,12 +202,25 @@ function styleKeyboardState() {
       'face:Extra Bold',
       'size',
       'color',
-      'cancel',
-      'apply',
     ],
     redoDisabled: true,
     undoDisabled: true,
   }
+}
+
+function styleTarget(target: unknown = undefined) {
+  return target === undefined
+    ? {
+        boundsHeight: 24,
+        boundsWidth: 60,
+        height: 720,
+        href: smoke.PACKAGED_APP_URL,
+        readyState: 'complete',
+        width: 1280,
+        x: 120,
+        y: 20,
+      }
+    : target
 }
 
 function fakeStyleSessionWindow(
@@ -255,20 +268,7 @@ function fakeStyleSessionWindow(
   window.webContents.executeJavaScript
     .mockReset()
     .mockResolvedValueOnce(options.displayScale ?? 1)
-    .mockResolvedValueOnce(
-      options.target === undefined
-        ? {
-            boundsHeight: 24,
-            boundsWidth: 60,
-            height: 720,
-            href: smoke.PACKAGED_APP_URL,
-            readyState: 'complete',
-            width: 1280,
-            x: 120,
-            y: 20,
-          }
-        : options.target,
-    )
+    .mockResolvedValueOnce(styleTarget(options.target))
   if (options.readiness) {
     window.webContents.executeJavaScript.mockReturnValueOnce(options.readiness)
   } else {
@@ -280,14 +280,15 @@ function fakeStyleSessionWindow(
       .mockResolvedValueOnce(stageFrameState('brand'))
       .mockResolvedValueOnce(true)
       .mockResolvedValueOnce(styleKeyboardState())
-      .mockResolvedValueOnce(styleActionTarget('reopen'))
+      .mockResolvedValueOnce(styleActionTarget('cancel'))
+      .mockResolvedValueOnce(styleTarget())
       .mockResolvedValueOnce(styleActionTarget('background'))
       .mockResolvedValueOnce(backgroundState('gradient'))
       .mockResolvedValueOnce(styleActionTarget('solid'))
       .mockResolvedValueOnce(backgroundState('solid'))
       .mockResolvedValueOnce(styleActionTarget('apply'))
       .mockResolvedValueOnce(backgroundState('solid', true))
-      .mockResolvedValueOnce(styleActionTarget('reopen'))
+      .mockResolvedValueOnce(styleTarget())
       .mockResolvedValueOnce(styleActionTarget('title'))
       .mockResolvedValueOnce(titleCardState('eyebrow'))
       .mockResolvedValueOnce(styleActionTarget('eyebrow-visibility'))
@@ -297,7 +298,7 @@ function fakeStyleSessionWindow(
       .mockResolvedValueOnce(titleCardState('artist'))
       .mockResolvedValueOnce(styleActionTarget('apply-title'))
       .mockResolvedValueOnce(titleCardState('artist', true))
-      .mockResolvedValueOnce(styleActionTarget('reopen'))
+      .mockResolvedValueOnce(styleTarget())
       .mockResolvedValueOnce(styleActionTarget('stage'))
       .mockResolvedValueOnce(stageFrameState('brand'))
       .mockResolvedValueOnce(styleActionTarget('stage-off'))
@@ -311,7 +312,7 @@ function fakeStyleSessionWindow(
       .mockResolvedValueOnce(stageFrameState('footer', { changedClock: true }))
       .mockResolvedValueOnce(styleActionTarget('apply-stage'))
       .mockResolvedValueOnce(stageFrameState('footer', { applied: true, changedClock: true }))
-      .mockResolvedValueOnce(styleActionTarget('reopen'))
+      .mockResolvedValueOnce(styleTarget())
       .mockResolvedValueOnce(styleActionTarget('lead'))
       .mockResolvedValueOnce(styleActionTarget('sync-aid'))
       .mockResolvedValueOnce(
@@ -582,8 +583,8 @@ describe('production-window visual smoke', () => {
       ),
     ).resolves.toEqual({ ok: true })
     const inputEvents = window.webContents.sendInputEvent.mock.calls.map(([event]) => event)
-    expect(inputEvents).toHaveLength(163)
-    expect(inputEvents.filter(({ type }) => type === 'mouseDown')).toHaveLength(27)
+    expect(inputEvents).toHaveLength(159)
+    expect(inputEvents.filter(({ type }) => type === 'mouseDown')).toHaveLength(28)
     const expectedKeys = [
       'Tab',
       'Tab',
@@ -609,9 +610,6 @@ describe('production-window visual smoke', () => {
       'Tab',
       'Tab',
       'Tab',
-      'Tab',
-      'Tab',
-      'Enter',
     ]
     const expectedKeyboardEvents = expectedKeys.flatMap((key) => [
       `keyDown:${key}`,
@@ -642,17 +640,15 @@ describe('production-window visual smoke', () => {
       scripts.flatMap((script) => script.match(/const action = "([^"]+)"/u)?.[1] ?? []),
     ).toEqual([
       'stage',
-      'reopen',
+      'cancel',
       'background',
       'solid',
       'apply',
-      'reopen',
       'title',
       'eyebrow-visibility',
       'artist',
       'artist-visibility',
       'apply-title',
-      'reopen',
       'stage',
       'stage-off',
       'stage-on',
@@ -661,13 +657,13 @@ describe('production-window visual smoke', () => {
       'footer',
       'footer-visibility',
       'apply-stage',
-      'reopen',
       'lead',
       'sync-aid',
       'templates',
       'template-name',
       'save-template',
     ])
+    expect(scripts.filter((script) => script === smoke.STYLE_TARGET_SCRIPT)).toHaveLength(5)
     expect(window.setContentSize.mock.calls).toContainEqual([1280, 720, false])
     expect(window.setContentSize.mock.calls).toContainEqual([1440, 900, false])
     expect(window.webContents.capturePage).toHaveBeenCalledTimes(32)
@@ -718,7 +714,7 @@ describe('production-window visual smoke', () => {
       ),
     ).resolves.toEqual({ ok: true })
 
-    expect(window.webContents.sendInputEvent).toHaveBeenCalledTimes(163)
+    expect(window.webContents.sendInputEvent).toHaveBeenCalledTimes(159)
     expect(window.webContents.sendInputEvent.mock.calls[0][0]).toEqual({
       type: 'mouseMove',
       x: 61,
@@ -944,7 +940,7 @@ describe('production-window visual smoke', () => {
     ).toEqual(expect.arrayContaining(['templates']))
     expect(scripts).not.toContainEqual(expect.stringContaining('const action = "template-name"'))
     expect(window.webContents.capturePage).toHaveBeenCalledTimes(30)
-    expect(window.webContents.sendInputEvent).toHaveBeenCalledTimes(130)
+    expect(window.webContents.sendInputEvent).toHaveBeenCalledTimes(126)
     expect(publish).not.toHaveBeenCalled()
     expect(writeFailure).toHaveBeenCalledOnce()
   })

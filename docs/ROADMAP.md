@@ -98,13 +98,14 @@ definition of done.
 - Optional Tauri shell evaluation after the editor contracts stabilize.
 - Performance telemetry that is opt-in, local-first, and privacy-preserving.
 
-Okay Karaoke Studio currently invokes a system-installed FFmpeg as a separate
-command-line process and does not redistribute that encoder executable. Bundling
-it remains possible, but is not required for Windows MVP acceptance and the
-selected build determines the obligations. The repository is licensed under GNU
-GPL v3.0 or later (`GPL-3.0-or-later`); FFmpeg redistribution remains a separate
-user-held MVP decision, and implementation work must not silently choose or close
-it.
+Okay Karaoke Studio v0.1 invokes externally installed FFmpeg and FFprobe as
+separate command-line processes and does not redistribute those executables.
+Package-manager installation in hosted CI is test provisioning, not application
+redistribution. Bundling remains a later, separate decision only if fresh-machine,
+nontechnical guided-install testing shows a material adoption barrier; any such
+proposal needs explicit provenance, compatible-build, source-notice, patent, and
+security-update decisions. The repository is licensed under GNU GPL v3.0 or later
+(`GPL-3.0-or-later`).
 FFmpeg is LGPL 2.1-or-later by default, while GPL components and external libraries
 can make the resulting build GPL. The current exporter uses `libx264`, which the
 [FFmpeg license documentation](https://ffmpeg.org/doxygen/trunk/md_LICENSE.html)

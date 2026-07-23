@@ -198,16 +198,38 @@ describe('visual smoke renderer contracts', () => {
         role,
       })),
       clean: true,
-      closed: true,
+      closed: false,
       focus: contracts.STYLE_KEY_FOCUS,
       redoDisabled: true,
       undoDisabled: true,
     }
     expect(contracts.validStyleKeyboardState(keyboard)).toBe(true)
+    expect(contracts.validStyleKeyboardState({ ...keyboard, closed: true })).toBe(false)
     expect(contracts.validStyleKeyboardState({ ...keyboard, focus: [] })).toBe(false)
     expect(
       contracts.validStyleKeyboardState({ ...keyboard, changes: keyboard.changes.slice(1) }),
     ).toBe(false)
+  })
+
+  it('waits for a cancelled Style dialog to unmount before targeting the header button again', () => {
+    expect(contracts.STYLE_TARGET_SCRIPT).toContain(
+      'document.querySelector(\'.style-workspace[role="dialog"]\')',
+    )
+    expect(contracts.STYLE_TARGET_SCRIPT).toContain(
+      'if (workspace || !(target instanceof HTMLButtonElement)',
+    )
+  })
+
+  it('uses the editor’s project-lyrics design preview while editing background style', () => {
+    expect(
+      contracts.projectLyricsReadinessScript(
+        { height: 720, width: 1280 },
+        {
+          kind: 'background',
+          mode: 'gradient',
+        },
+      ),
+    ).toContain('[aria-label="Project lyrics design preview"]')
   })
 
   it('uses a bounded deadline and exposes neither Node authority nor action interpolation', async () => {

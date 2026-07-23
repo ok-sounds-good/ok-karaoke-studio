@@ -55,6 +55,7 @@ blocker clears.
 
 ## Releases
 
-Create releases from green `main`. Product acceptance and distribution decisions
-remain governed by `MVP.md`; release-specific mechanics belong in the release
-checklist rather than this development policy.
+Create releases only from an exact, green `main` commit. Product acceptance and
+distribution decisions remain governed by `MVP.md`; use
+[`RELEASE_CANDIDATE.md`](./RELEASE_CANDIDATE.md) for the exact-candidate
+mechanical gate and publication mechanics.

@@ -1,0 +1,435 @@
+name: Release candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: 'Exact 40-character SHA currently at main'
+        required: true
+        type: string
+      release_tag:
+        description: 'New release tag; must match v plus package.json version'
+        required: true
+        type: string
+      publish_release:
+        description: 'Publish after every mechanical candidate gate passes'
+        required: true
+        default: false
+        type: boolean
+
+permissions: {}
+
+concurrency:
+  group: release-candidate-${{ inputs.candidate_sha }}
+  cancel-in-progress: false
+
+jobs:
+  validate-candidate:
+    name: bind exact main candidate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      candidate_sha: ${{ steps.bind.outputs.candidate_sha }}
+      release_tag: ${{ steps.bind.outputs.release_tag }}
+
+    steps:
+      - name: Check out supplied candidate
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.candidate_sha }}
+
+      - name: Reject malformed or stale candidate inputs
+        id: bind
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "release candidates must be dispatched from the protected main branch" >&2
+            exit 1
+          fi
+          if [ "${#CANDIDATE_SHA}" -ne 40 ] || ! printf '%s' "$CANDIDATE_SHA" | grep -Eq '^[0-9a-fA-F]{40}$'; then
+            echo "candidate_sha must be exactly 40 hexadecimal characters" >&2
+            exit 1
+          fi
+          if ! printf '%s' "$RELEASE_TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z][0-9A-Za-z.-]*)?$'; then
+            echo "release_tag must be a version-like tag beginning with v" >&2
+            exit 1
+          fi
+          candidate_sha="$(printf '%s' "$CANDIDATE_SHA" | tr '[:upper:]' '[:lower:]')"
+          checkout_sha="$(git rev-parse HEAD)"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          main_sha="$(git rev-parse origin/main)"
+          package_tag="v$(node -p \"require('./package.json').version\")"
+          if [ "$candidate_sha" != "$checkout_sha" ] || [ "$candidate_sha" != "$main_sha" ]; then
+            echo "candidate_sha must exactly match both checkout and current origin/main" >&2
+            exit 1
+          fi
+          if [ "$RELEASE_TAG" != "$package_tag" ]; then
+            echo "release_tag must equal package version tag $package_tag" >&2
+            exit 1
+          fi
+          {
+            echo "candidate_sha=$candidate_sha"
+            echo "release_tag=$RELEASE_TAG"
+          } >> "$GITHUB_OUTPUT"
+
+  linux:
+    name: Linux portable candidate checks
+    needs: validate-candidate
+    runs-on: ubuntu-slim
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+          ref: ${{ needs.validate-candidate.outputs.candidate_sha }}
+
+      - name: Configure Node.js 24.0.2
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.0.2
+
+      - name: Configure Bun 1.3.14
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Validate toolchain
+        run: |
+          test "$(node --version)" = "v24.0.2"
+          test "$(bun --version)" = "1.3.14"
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Check formatting
+        run: |
+          export FORMAT_BASE_SHA="$(git rev-parse HEAD^)"
+          export FORMAT_BRANCH=main
+          export FORMAT_DEFAULT_BRANCH=main
+          bun run format:check
+
+      - name: Run portable test suite
+        run: bun run test -- --exclude tests/visual-smoke-renderer-fatal-live.test.ts
+
+      - name: Build renderer
+        run: bun run build
+
+  macos:
+    name: macOS native candidate checks
+    needs: validate-candidate
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.validate-candidate.outputs.candidate_sha }}
+
+      - name: Configure Node.js 24.0.2
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.0.2
+
+      - name: Configure Bun 1.3.14
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Validate toolchain
+        run: |
+          test "$(node --version)" = "v24.0.2"
+          test "$(bun --version)" = "1.3.14"
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run complete unit suite
+        run: bun run test
+
+      - name: Build renderer for native smoke
+        run: bun run build
+
+      - name: Install and verify external H.264/AAC tools
+        run: |
+          brew install ffmpeg
+          ffprobe -version
+          ffmpeg -hide_banner -encoders > /tmp/oks-ffmpeg-encoders.txt 2>&1
+          grep -E '^[[:space:]]*V[^[:space:]]*[[:space:]]+libx264[[:space:]]' /tmp/oks-ffmpeg-encoders.txt
+          grep -E '^[[:space:]]*A[^[:space:]]*[[:space:]]+aac[[:space:]]' /tmp/oks-ffmpeg-encoders.txt
+
+      - name: Smoke Electron native image decoding
+        run: bun run test:image
+
+      - name: Capture baseline visual evidence at 1280 by 720
+        env:
+          OKS_VISUAL_EVIDENCE_DIR: ${{ runner.temp }}/oks-macos-visual-baseline
+        run: bun run test:visual
+
+      - name: Capture style-session visual evidence at 1280 by 720
+        run: bun run test:visual -- --scenario=style-session ${{ runner.temp }}/oks-macos-visual-style-session
+
+      - name: Require complete macOS visual evidence
+        env:
+          BASELINE_DIR: ${{ runner.temp }}/oks-macos-visual-baseline
+          STYLE_SESSION_DIR: ${{ runner.temp }}/oks-macos-visual-style-session
+        run: |
+          node -e '
+            const {
+              BASELINE_SCENARIO,
+              STYLE_SESSION_SCENARIO,
+              validateVisualResultDirectory,
+            } = require("./scripts/visual-result-validation.cjs")
+            Promise.all([
+              validateVisualResultDirectory(process.argv[1], { scenario: BASELINE_SCENARIO }),
+              validateVisualResultDirectory(process.argv[2], { scenario: STYLE_SESSION_SCENARIO }),
+            ])
+              .then(() => process.stdout.write("macOS visual evidence validated\n"))
+              .catch((error) => {
+                process.stderr.write(`${error.stack || error}\n`)
+                process.exitCode = 1
+              })
+          ' "$BASELINE_DIR" "$STYLE_SESSION_DIR"
+
+      - name: Smoke production-path H.264/AAC export matrix
+        run: bun run test:video
+
+      - name: Build unsigned macOS unpacked package
+        run: bun run dist:dir
+
+      - name: Upload macOS visual evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-visual-evidence-${{ needs.validate-candidate.outputs.candidate_sha }}
+          path: ${{ runner.temp }}/oks-macos-visual-*
+          if-no-files-found: error
+          retention-days: 14
+
+  windows:
+    name: Windows native candidate checks
+    needs: validate-candidate
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.validate-candidate.outputs.candidate_sha }}
+
+      - name: Configure Node.js 24.0.2
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.0.2
+
+      - name: Configure Bun 1.3.14
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Validate toolchain
+        shell: pwsh
+        run: |
+          if ((node --version) -ne "v24.0.2") { throw "Unexpected Node.js version" }
+          if ((bun --version) -ne "1.3.14") { throw "Unexpected Bun version" }
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run complete unit suite
+        run: bun run test
+
+      - name: Install and verify external H.264/AAC tools
+        shell: pwsh
+        run: |
+          choco install ffmpeg --yes --no-progress
+          ffprobe -version
+          $encoders = (ffmpeg -hide_banner -encoders 2>&1 | Out-String)
+          if ($encoders -notmatch '(?m)^\s*V\S*\s+libx264\s') { throw "libx264 unavailable" }
+          if ($encoders -notmatch '(?m)^\s*A\S*\s+aac\s') { throw "AAC unavailable" }
+
+      - name: Smoke Electron native image decoding
+        run: bun run test:image
+
+      - name: Smoke production-path H.264/AAC export matrix
+        run: bun run test:video
+
+      - name: Build unsigned Windows x64 package
+        shell: pwsh
+        run: |
+          $signingVariables = @("CSC_LINK", "CSC_KEY_PASSWORD", "WIN_CSC_LINK", "WIN_CSC_KEY_PASSWORD")
+          foreach ($name in $signingVariables) {
+            if (Test-Path "Env:$name") { Remove-Item "Env:$name" }
+          }
+          bun run dist:win
+
+      - name: Validate Windows x64 package inventory and no bundled FFmpeg
+        shell: pwsh
+        run: |
+          choco install 7zip --yes --no-progress
+          node scripts/windows-package-evidence.cjs
+
+      - name: Run Windows unpacked package launch-smoke and visual evidence
+        run: |
+          bun run test:package:win
+          node scripts/windows-package-smoke.cjs --validate
+
+      - name: Require complete Windows package evidence
+        shell: pwsh
+        run: |
+          $manifest = Get-Content -Raw release/windows-package-evidence.json | ConvertFrom-Json
+          $expectedInstaller = "Okay-Karaoke-Studio-$($manifest.productVersion)-x64-setup.exe"
+          $installer = Join-Path release/windows-x64-installer $expectedInstaller
+          $unpackedExecutable = Join-Path 'release/win-unpacked' 'Okay Karaoke Studio.exe'
+          $packageSmokeResult = 'release/windows-package-smoke/result.json'
+          foreach ($path in @('release/windows-package-evidence.json', $installer, $unpackedExecutable, $packageSmokeResult)) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "Required Windows candidate evidence is missing: $path"
+            }
+          }
+          if ($manifest.installer.name -ne $expectedInstaller) {
+            throw "Windows evidence installer name does not match product version"
+          }
+          $actualSha256 = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($manifest.installer.sha256 -ne $actualSha256) {
+            throw "Copied Windows installer does not match inventory SHA-256"
+          }
+
+      - name: Upload Windows package and visual evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-candidate-evidence-${{ needs.validate-candidate.outputs.candidate_sha }}
+          path: |
+            release/windows-package-evidence.json
+            release/win-unpacked
+            release/windows-x64-installer
+            release/windows-package-smoke
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: publish gated release
+    if: ${{ inputs.publish_release && needs.validate-candidate.result == 'success' && needs.linux.result == 'success' && needs.macos.result == 'success' && needs.windows.result == 'success' }}
+    needs:
+      - validate-candidate
+      - linux
+      - macos
+      - windows
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+
+    steps:
+      - name: Rebind final publication to current main
+        env:
+          CANDIDATE_SHA: ${{ needs.validate-candidate.outputs.candidate_sha }}
+          RELEASE_TAG: ${{ needs.validate-candidate.outputs.release_tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${#CANDIDATE_SHA}" -ne 40 ] || ! printf '%s' "$CANDIDATE_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "candidate SHA from validation is malformed" >&2
+            exit 1
+          fi
+          if ! printf '%s' "$RELEASE_TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z][0-9A-Za-z.-]*)?$'; then
+            echo "release tag from validation is malformed" >&2
+            exit 1
+          fi
+          main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          if [ "$main_sha" != "$CANDIDATE_SHA" ]; then
+            echo "main advanced after candidate validation; refusing publication" >&2
+            exit 1
+          fi
+          if tag_response="$(gh api --include "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" 2>&1)"; then
+            echo "release tag already exists; refusing to reuse an unverified ref" >&2
+            exit 1
+          fi
+          if ! printf '%s\n' "$tag_response" | grep -Eq 'HTTP/[0-9.]+ 404'; then
+            echo "could not prove that the release tag is absent" >&2
+            exit 1
+          fi
+
+      - name: Download validated Windows installer evidence
+        uses: actions/download-artifact@v8
+        with:
+          name: windows-candidate-evidence-${{ needs.validate-candidate.outputs.candidate_sha }}
+          path: ${{ runner.temp }}/windows-candidate-evidence
+
+      - name: Verify downloaded unsigned installer
+        id: installer
+        env:
+          EVIDENCE_DIR: ${{ runner.temp }}/windows-candidate-evidence
+          RELEASE_TAG: ${{ needs.validate-candidate.outputs.release_tag }}
+        run: |
+          node - "$EVIDENCE_DIR/windows-package-evidence.json" "$EVIDENCE_DIR/windows-x64-installer" "$RELEASE_TAG" <<'NODE'
+          const { createHash } = require('node:crypto')
+          const { appendFileSync, readFileSync, statSync } = require('node:fs')
+          const path = require('node:path')
+
+          const [inventoryPath, installerDirectory, releaseTag] = process.argv.slice(2)
+          const inventory = JSON.parse(readFileSync(inventoryPath, 'utf8'))
+          const version = releaseTag.startsWith('v') ? releaseTag.slice(1) : ''
+          const expectedName = `Okay-Karaoke-Studio-${version}-x64-setup.exe`
+          const installerPath = path.join(installerDirectory, expectedName)
+          if (
+            !version ||
+            inventory.productVersion !== version ||
+            inventory.installer?.name !== expectedName ||
+            !statSync(installerPath).isFile()
+          ) {
+            throw new Error('Downloaded installer does not match release version inventory')
+          }
+          const actualSha256 = createHash('sha256').update(readFileSync(installerPath)).digest('hex')
+          if (inventory.installer.sha256 !== actualSha256) {
+            throw new Error('Downloaded installer does not match inventory SHA-256')
+          }
+          if (
+            inventory.signatures?.application !== 'NotSigned' ||
+            inventory.signatures?.installer !== 'NotSigned' ||
+            !Array.isArray(inventory.externalMediaBinaries) ||
+            inventory.externalMediaBinaries.length !== 0
+          ) {
+            throw new Error('Downloaded installer inventory is not the validated unsigned external-FFmpeg package')
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `installer_path=${installerPath}\n`)
+          NODE
+
+      - name: Create a draft release for the exact approved commit
+        env:
+          CANDIDATE_SHA: ${{ needs.validate-candidate.outputs.candidate_sha }}
+          RELEASE_TAG: ${{ needs.validate-candidate.outputs.release_tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          if [ "$main_sha" != "$CANDIDATE_SHA" ]; then
+            echo "main advanced before draft creation; refusing publication" >&2
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" "${{ steps.installer.outputs.installer_path }}" \
+            --draft --target "$CANDIDATE_SHA" --generate-notes
+
+      - name: Publish the approved draft release
+        env:
+          CANDIDATE_SHA: ${{ needs.validate-candidate.outputs.candidate_sha }}
+          RELEASE_TAG: ${{ needs.validate-candidate.outputs.release_tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          if [ "$main_sha" != "$CANDIDATE_SHA" ]; then
+            echo "main advanced before release publication; leaving the draft unpublished" >&2
+            exit 1
+          fi
+          gh release edit "$RELEASE_TAG" --draft=false

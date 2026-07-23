@@ -284,6 +284,15 @@ async function captureStyleSession(window, app, options) {
   if (!validProjectLyricsState(resized, viewport))
     throw smokeError('VISUAL_SMOKE_READINESS_INVALID')
   const activate = async (action) => {
+    if (action === 'reopen') {
+      const actionTarget = await executeBeforeDeadline(
+        () => window.webContents.executeJavaScript(STYLE_TARGET_SCRIPT, false),
+        options.readinessTimeoutMs,
+      )
+      if (!validStyleTarget(actionTarget)) throw smokeError('VISUAL_SMOKE_ACTIVATION_INVALID')
+      sendTrustedStyleActivation(window.webContents, actionTarget, displayScale)
+      return
+    }
     const actionTarget = await window.webContents.executeJavaScript(
       styleSessionActionScript(action),
       false,
@@ -315,6 +324,7 @@ async function captureStyleSession(window, app, options) {
     options.readinessTimeoutMs,
   )
   if (!validStyleKeyboardState(keyboardState)) throw smokeError('VISUAL_SMOKE_READINESS_INVALID')
+  await activate('cancel')
   await activate('reopen')
   const backgroundState = async (mode, colors = null, applied = false) => {
     const state = await executeBeforeDeadline(
