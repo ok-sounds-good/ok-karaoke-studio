@@ -59,7 +59,9 @@ jobs:
             --path src \
             --path electron \
             --path tests \
-            --path scripts
+            --path scripts \
+            --path site \
+            --path .github/workflows/pages.yml
 
       - name: Run portable test suite
         run: bun run test -- --exclude tests/visual-smoke-renderer-fatal-live.test.ts
