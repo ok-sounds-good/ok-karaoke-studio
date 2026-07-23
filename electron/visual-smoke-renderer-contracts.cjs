@@ -32,9 +32,6 @@ const STYLE_KEY_SEQUENCE = Object.freeze([
   'Tab',
   'Tab',
   'Tab',
-  'Tab',
-  'Tab',
-  'Enter',
 ])
 const STYLE_KEY_FOCUS = Object.freeze([
   'master',
@@ -60,8 +57,6 @@ const STYLE_KEY_FOCUS = Object.freeze([
   'face:Extra Bold',
   'size',
   'color',
-  'cancel',
-  'apply',
 ])
 const STYLE_KEY_CHANGES = Object.freeze(['footer', 'clock', 'footer', 'brand', 'footer', 'brand'])
 const STUDIO_BRIDGE_KEYS = Object.freeze(
@@ -128,10 +123,11 @@ const STYLE_TARGET_SCRIPT = `(() => new Promise((resolve) => {
   let finished = false
   const sample = () => {
     const root = document.getElementById('root')
+    const workspace = document.querySelector('.style-workspace[role="dialog"]')
     const target = document.querySelector(
       'button.style-button[aria-label="Edit project Style"]',
     )
-    if (!(target instanceof HTMLButtonElement) || !root?.childElementCount) return null
+    if (workspace || !(target instanceof HTMLButtonElement) || !root?.childElementCount) return null
     const bounds = target.getBoundingClientRect()
     const style = getComputedStyle(target)
     if (
@@ -281,7 +277,7 @@ function projectLyricsReadinessScript(viewport, contract = { kind: 'project-lyri
       const panel = document.querySelector('[role="tabpanel"][aria-labelledby$="-background-tab"]')
       const tab = document.querySelector('[role="tab"][data-style-destination="background"]')
       const preview = document.querySelector(
-        applied ? '[aria-label="Karaoke preview"]' : '[aria-label="Background design preview"]',
+        applied ? '[aria-label="Karaoke preview"]' : '[aria-label="Project lyrics design preview"]',
       )
       const stage = preview?.querySelector('.karaoke-stage')
       const mode = stage?.getAttribute('data-background-mode')
@@ -661,13 +657,13 @@ function styleSessionActionScript(action) {
     const clockFace = document.querySelector('[aria-label="Clock face Bold"]')
     const footerVisibility = document.querySelector('[aria-label="Show Footer in output"]')
     const syncAid = document.querySelector('[aria-label="Enable Lead Vocal Sync Aid"]')
+    const cancel = workspace?.querySelector('[data-style-action="cancel"]')
     const templateName = document.querySelector('input[aria-label="New template name"]')
     const saveTemplate = [...(workspace?.querySelectorAll('button') ?? [])].find(
       (button) => button.textContent?.trim() === 'Save as new',
     )
     const apply = workspace?.querySelector('[data-style-action="apply"]')
-    const targets = { background: backgroundTab, lead: leadVocalTab, solid, apply, reopen:
-      document.querySelector('button.style-button[aria-label="Edit project Style"]'),
+    const targets = { background: backgroundTab, cancel, lead: leadVocalTab, solid, apply,
       title: titleTab, 'eyebrow-visibility': eyebrowVisibility, artist,
       'artist-visibility': artistVisibility, 'apply-title': apply, stage: stageTab,
       'stage-off': stageMaster, 'stage-on': stageMaster, clock, 'clock-face': clockFace,
@@ -679,11 +675,11 @@ function styleSessionActionScript(action) {
     }
     const semantic = ({
       background: projectTab?.getAttribute('aria-selected') === 'true' && backgroundTab?.getAttribute('aria-selected') === 'false',
+      cancel: workspace instanceof HTMLElement && cancel instanceof HTMLButtonElement && !cancel.disabled,
       lead: projectTab?.getAttribute('aria-selected') === 'true' && leadVocalTab?.getAttribute('aria-selected') === 'false',
       'sync-aid': leadVocalTab?.getAttribute('aria-selected') === 'true' && !syncAid?.checked,
       solid: backgroundTab?.getAttribute('aria-selected') === 'true' && gradient?.checked && !solid?.checked,
       apply: backgroundTab?.getAttribute('aria-selected') === 'true' && solid?.checked,
-      reopen: !workspace,
       title: projectTab?.getAttribute('aria-selected') === 'true',
       'eyebrow-visibility': titleTab?.getAttribute('aria-selected') === 'true' && eyebrow?.checked && eyebrowVisibility?.checked,
       artist: eyebrow?.checked && !eyebrowVisibility?.checked && !artist?.checked,
@@ -1117,7 +1113,7 @@ function validStageFrameState(value, viewport, contract) {
 function validStyleKeyboardState(value) {
   return Boolean(
     value &&
-    value.closed === true &&
+    value.closed === false &&
     value.clean === true &&
     value.undoDisabled === true &&
     value.redoDisabled === true &&

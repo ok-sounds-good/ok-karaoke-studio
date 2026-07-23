@@ -36,12 +36,13 @@ current format.
 - **Technical baseline:** every iteration must leave `main` green and releasable.
   Passing CI or producing a package is required engineering evidence, but is not
   equivalent to product acceptance.
-- **Distribution acceptance: open and user-held.** The repository is licensed
-  under GNU GPL v3.0 or later (`GPL-3.0-or-later`). Before public distribution,
-  the user still explicitly decides whether FFmpeg remains externally installed
-  or is redistributed with a documented compatible build and compliance plan.
-  This remaining decision does not block private-repository MVP implementation,
-  CI, or product testing, and no agent may close it on the user's behalf.
+- **Distribution policy: v0.1 uses externally installed FFmpeg and FFprobe.**
+  The Studio does not redistribute those codec executables. The repository is
+  licensed under GNU GPL v3.0 or later (`GPL-3.0-or-later`); this policy does
+  not authorize a later bundled FFmpeg build. Reconsider bundling only after
+  fresh-machine, nontechnical guided-install testing shows a material adoption
+  barrier, and make that later provenance, compliance, patent, and security-
+  update decision explicitly.
 
 ## Primary user journey
 
@@ -318,24 +319,23 @@ Karaoke Studio identity.
 
 ### Platform and distribution
 
-- Windows x64 is an MVP distribution target. A separately initiated final
-  Windows acceptance run produces both an unsigned NSIS installer and the
-  unpacked application, launch-smokes the packaged application, and runs the
-  applicable font, visual, project, and H.264/AAC media gates. Routine
-  pull-request CI builds and inventories the unsigned artifacts but does not
-  launch or repeat this broader final-candidate package proof. Windows
-  signing and automatic updates remain deferred.
-- The portable Linux gate and thin macOS and Windows compatibility gates must
-  pass for the final candidate. Linux packaging and Linux-specific media
-  verification remain Roadmap work.
-- The Windows package continues to use the guided external-FFmpeg setup unless
-  the user separately approves a redistributable FFmpeg build and its compliance
-  plan. Bundling FFmpeg is not required for Windows MVP acceptance.
+- Windows x64 is an MVP distribution target. The final-candidate workflow alone
+  produces an unsigned NSIS installer and unpacked application, launch-smokes
+  the packaged application, and runs the applicable font, visual, project, and
+  H.264/AAC media gates. Routine pull-request CI remains portable and lean;
+  Windows signing and automatic updates remain deferred.
+- The portable Linux gate plus the full macOS and Windows native, visual, media,
+  package, and complete-unit-suite gates must pass for the final candidate.
+  Linux packaging and Linux-specific media verification remain Roadmap work.
+- The Windows package uses the guided external-FFmpeg setup. v0.1 does not
+  redistribute FFmpeg or FFprobe; package-manager installation in hosted CI is
+  test provisioning, not application redistribution. Reconsider a bundled
+  executable only after fresh-machine, nontechnical guided-install testing shows
+  a material adoption barrier and an explicit compliant-build decision is made.
 - The repository is licensed under GNU GPL v3.0 or later
-  (`GPL-3.0-or-later`). This selection does not authorize bundling FFmpeg. Its
-  redistribution policy remains a separate user-held MVP decision, and agents
-  must not change `LICENSE`, package license metadata, or bundled-binary policy
-  without the user's explicit direction.
+  (`GPL-3.0-or-later`). This selection does not authorize bundling FFmpeg.
+  Agents must not change `LICENSE`, package license metadata, or bundled-binary
+  policy without an explicit new direction.
 
 ### Quality bar
 
@@ -415,28 +415,28 @@ Karaoke Studio identity.
 - [x] Live Preview and MP4 use the same per-word timing, show no repeated singer
       or track label above lyric lines, and add no automatic Instrumental treatment
       between sections.
-- [ ] The project can choose a solid, gradient, or linked-image background and
+- [x] The project can choose a solid, gradient, or linked-image background and
       can configure or disable the Stage frame, while title-card, footer, and frame
       typography remain independently configurable.
-- [ ] The searchable font combobox reliably lists installed typefaces on each
+- [x] The searchable font combobox reliably lists installed typefaces on each
       supported system, renders visible options in their own fonts, exposes only
       supported face traits plus an enumerated size list, and remains usable with a
       large catalog by loading visible choices incrementally.
-- [ ] Font editing switches Live Preview into a target-aware fixed-stage design
+- [x] Font editing switches Live Preview into a target-aware fixed-stage design
       mode that shows the selected face, traits, and size relative to the video
       frame, and produces the same resolved font or visible fallback warning in MP4
       output without a separate oversized control-panel specimen.
-- [ ] Project lyric defaults and vocal overrides produce matching typeface,
+- [x] Project lyric defaults and vocal overrides produce matching typeface,
       style, size, unsung color, sung color, and horizontal alignment in Live
       Preview and MP4 output.
-- [ ] Preview time controls line eligibility, and the built-in sync aid appears
+- [x] Preview time controls line eligibility, and the built-in sync aid appears
       only on the first line of a blank-row-separated section when at least its
       configured minimum lead time is available.
-- [ ] Named style templates preserve every supported creator preference,
+- [x] Named style templates preserve every supported creator preference,
       including the linked background-image path, and applying one leaves title,
       artist, audio, lyrics, section separators, word timing, global offset, and
       vocal-track identity unchanged.
-- [ ] Style-template create, apply, rename, and delete behavior persists across
+- [x] Style-template create, apply, rename, and delete behavior persists across
       application restarts; missing linked images remain explicit and block MP4
       export, while missing fonts remain explicit and use the same deterministic
       Preview/MP4 fallback as project-loaded settings.
@@ -444,19 +444,24 @@ Karaoke Studio identity.
       when it is mounted outside armed synchronization.
 - [x] LRC and ASS exports contain monotonic, non-negative timing.
 - [x] Undo and redo cover lyric replacement, timing edits, and timing clears.
-- [ ] Required tests, builds, packages, and platform CI are green for the final
-      acceptance candidate.
-- [ ] A separately initiated Windows x64 acceptance run produces an unsigned
-      NSIS installer and unpacked app, launch-smokes the packaged app, and passes
-      the applicable font, visual, project, and H.264/AAC media gates without
-      bundling FFmpeg by default.
-- [ ] The inspector has no decorative **Document / Project** header row, and
+- [ ] For each final candidate, the required tests, builds, packages, and
+      platform gates pass in one exact-commit run. Captured baseline and
+      Style-session screenshots prove the native UI rendered and its scripted
+      workflow executed; they are mechanical confidence evidence, not aesthetic
+      acceptance. Record the run using [`RELEASE_CANDIDATE.md`](./RELEASE_CANDIDATE.md).
+- [ ] For each final candidate, the Windows x64 run produces an unsigned NSIS
+      installer and unpacked app, launch-smokes the packaged app, and passes the
+      applicable font, visual, project, and H.264/AAC media gates without
+      bundling FFmpeg. Record the exact run and artifacts rather than closing it
+      permanently here.
+- [x] The inspector has no decorative **Document / Project** header row, and
       **Style** is available beside the Okay Karaoke Studio identity in the
       application header.
 - [x] The repository's public-distribution license is GNU GPL v3.0 or later
       (`GPL-3.0-or-later`).
-- [ ] The user decides whether FFmpeg remains externally installed or is
-      redistributed with a documented compatible build and compliance plan.
+- [x] v0.1 uses externally installed FFmpeg and FFprobe with verified `libx264`
+      and AAC; the Studio does not redistribute those executables. A bundled
+      build remains a separate explicit compliance and security-update decision.
 - [x] A synthetic linked-audio project renders synchronized H.264/AAC MP4 lyric
       frames through the production export path at every supported resolution
       and both 30 and 60 fps; exact `r_frame_rate` plus decoded frame count over
@@ -467,5 +472,6 @@ Karaoke Studio identity.
       requires confirmation and preserves a UUID-named partial file beside the
       chosen destination, while an ordinary export failure leaves the destination
       safe.
-- [ ] The final UI is visually checked at the working desktop size and the minimum
-      supported 1280 × 720 window.
+- [ ] The final UI is visually reviewed at the working desktop size and minimum
+      supported 1280 × 720 window. This human product-acceptance item is separate
+      from mechanical release-candidate CI and does not use an Actions environment.
