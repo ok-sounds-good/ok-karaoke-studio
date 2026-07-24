@@ -2,9 +2,11 @@ import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import { describe, expect, it } from 'vitest'
 import {
+  CENTER_SNAP_THRESHOLD_PX,
   clampDisplayPosition,
   logicalObjectSize,
   moveDisplayPosition,
+  snapDisplayPositionToStageCenter,
 } from '../src/lib/display-placement'
 
 describe('shared display placement geometry', () => {
@@ -38,6 +40,34 @@ describe('shared display placement geometry', () => {
     expect(moveDisplayPosition({ x: 800, y: 600 }, 10.4, -20.6)).toEqual({
       x: 810,
       y: 579,
+    })
+  })
+
+  it('softly snaps each center axis and releases immediately beyond the logical threshold', () => {
+    expect(
+      snapDisplayPositionToStageCenter({
+        x: 960 + CENTER_SNAP_THRESHOLD_PX,
+        y: 540 + CENTER_SNAP_THRESHOLD_PX + 1,
+      }),
+    ).toEqual({
+      axes: { x: true, y: false },
+      position: { x: 960, y: 561 },
+    })
+    expect(
+      snapDisplayPositionToStageCenter({
+        x: 960 + CENTER_SNAP_THRESHOLD_PX + 1,
+        y: 540 - CENTER_SNAP_THRESHOLD_PX,
+      }),
+    ).toEqual({
+      axes: { x: false, y: true },
+      position: { x: 981, y: 540 },
+    })
+  })
+
+  it('bypasses center snapping for precise nearby pointer placement', () => {
+    expect(snapDisplayPositionToStageCenter({ x: 970, y: 530 }, true)).toEqual({
+      axes: { x: false, y: false },
+      position: { x: 970, y: 530 },
     })
   })
 

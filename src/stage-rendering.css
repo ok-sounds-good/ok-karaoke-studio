@@ -144,6 +144,36 @@
   outline-offset: 0.45cqw;
 }
 
+.karaoke-stage .karaoke-stage__center-guides {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  pointer-events: none;
+}
+
+.karaoke-stage .karaoke-stage__center-guide {
+  position: absolute;
+  display: block;
+  background: var(--accent);
+  opacity: 0.58;
+}
+
+.karaoke-stage .karaoke-stage__center-guide--x {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: max(1px, 0.08cqw);
+  transform: translateX(-50%);
+}
+
+.karaoke-stage .karaoke-stage__center-guide--y {
+  top: 50%;
+  right: 0;
+  left: 0;
+  height: max(1px, 0.08cqw);
+  transform: translateY(-50%);
+}
+
 .karaoke-stage [data-display-object-interactive='true']:active {
   cursor: grabbing;
 }

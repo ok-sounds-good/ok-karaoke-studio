@@ -29,6 +29,34 @@ const installedPlacement = placement
 export const clampDisplayPosition = installedPlacement.clampDisplayPosition
 export const moveDisplayPosition = installedPlacement.moveDisplayPosition
 
+export const CENTER_SNAP_THRESHOLD_PX = 20
+
+export interface CenterSnapAxes {
+  x: boolean
+  y: boolean
+}
+
+export function snapDisplayPositionToStageCenter(
+  position: DisplayPosition,
+  bypass = false,
+): { axes: CenterSnapAxes; position: DisplayPosition } {
+  const axes = {
+    x:
+      !bypass &&
+      Math.abs(position.x - installedPlacement.stageWidthPx / 2) <= CENTER_SNAP_THRESHOLD_PX,
+    y:
+      !bypass &&
+      Math.abs(position.y - installedPlacement.stageHeightPx / 2) <= CENTER_SNAP_THRESHOLD_PX,
+  }
+  return {
+    axes,
+    position: {
+      x: axes.x ? installedPlacement.stageWidthPx / 2 : position.x,
+      y: axes.y ? installedPlacement.stageHeightPx / 2 : position.y,
+    },
+  }
+}
+
 export function logicalObjectSize(
   stage: Pick<DOMRect, 'width' | 'height'>,
   object: Pick<DOMRect, 'width' | 'height'>,
