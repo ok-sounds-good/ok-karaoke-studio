@@ -27,9 +27,15 @@ import {
   logicalObjectSize,
   moveDisplayPosition,
 } from '../lib/display-placement'
-import { logicalStagePx, previewStageLayoutVariables, STAGE_LAYOUT } from '../lib/stage-layout'
+import {
+  logicalStagePx,
+  lyricObjectHeightPx,
+  normalizedLyricLineCount,
+  previewStageLayoutVariables,
+  STAGE_LAYOUT,
+} from '../lib/stage-layout'
 import { previewFrameStateAt, type StageFrameLine } from '../lib/stage-frame-state'
-import { DESIGN_LYRIC_WORDS, leadVocalDesignFrame } from '../lib/lead-vocal-design-frame'
+import { designLyricLines, leadVocalDesignFrame } from '../lib/lead-vocal-design-frame'
 import { SYNC_AID_GEOMETRY, syncAidBrightness, syncAidPosition } from '../lib/sync-aid-geometry'
 import {
   DEFAULT_VOCAL_STYLE,
@@ -71,10 +77,12 @@ export type KaraokePreviewDesignMode =
 type StageFrameTextRole = 'brand' | 'clock' | 'footer'
 
 interface KaraokePreviewProps {
+  activeVocalTrackId?: string
   project: KaraokeProject
   playbackMs: number
   lyricMs: number
   selectedWordIds: Set<string>
+  onVocalPositionChange?: (trackId: string, position: DisplayPosition) => void
   onUpdateLyricDisplay?: (patch: Partial<LyricDisplaySettings>) => void
   onEditLyrics?: () => void
   designMode?: KaraokePreviewDesignMode
@@ -107,18 +115,12 @@ function groupLinesByTrack(lines: StageFrameLine[]): StageFrameLine[][] {
   return [...groups.values()]
 }
 
-function projectLyricsDesignLine(style: LyricTextStyle): StageFrameLine {
-  return {
-    id: 'project-lyrics-design-line',
-    trackId: 'project-lyrics-design-track',
-    text: DESIGN_LYRIC_WORDS.join(' '),
-    style: resolveVocalStyle(style, DEFAULT_VOCAL_STYLE),
-    words: DESIGN_LYRIC_WORDS.map((text, index) => ({
-      id: `project-lyrics-design-word-${index}`,
-      text,
-      progress: index === 0 ? 1 : index === 1 ? 0.5 : 0,
-    })),
-  }
+function projectLyricsDesignLines(style: LyricTextStyle, lineCount: number): StageFrameLine[] {
+  return designLyricLines(
+    'project-lyrics-design-track',
+    resolveVocalStyle(style, DEFAULT_VOCAL_STYLE),
+    lineCount,
+  )
 }
 
 function DisplayObject({
@@ -146,6 +148,7 @@ function DisplayObject({
     pointerId: number
     clientX: number
     clientY: number
+    latestPosition: DisplayPosition | null
     position: DisplayPosition
   } | null>(null)
   const [renderedPosition, setRenderedPosition] = useState(position)
@@ -157,6 +160,7 @@ function DisplayObject({
   }
 
   useLayoutEffect(() => {
+    if (dragRef.current) return
     const size = measuredSize()
     const clamped = clampDisplayPosition(position, size.width, size.height)
     setRenderedPosition((current) =>
@@ -165,11 +169,17 @@ function DisplayObject({
   })
 
   const move = (deltaX: number, deltaY: number, origin = position) => {
-    if (!selected || !onPositionChange) return
+    if (!selected || !onPositionChange) return null
     const size = measuredSize()
-    onPositionChange(
-      moveDisplayPosition(origin, deltaX, deltaY, size.width, size.height) as DisplayPosition,
-    )
+    const next = moveDisplayPosition(
+      origin,
+      deltaX,
+      deltaY,
+      size.width,
+      size.height,
+    ) as DisplayPosition
+    setRenderedPosition(next)
+    return next
   }
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
@@ -181,6 +191,7 @@ function DisplayObject({
       pointerId: event.pointerId,
       clientX: event.clientX,
       clientY: event.clientY,
+      latestPosition: null,
       position,
     }
   }
@@ -188,16 +199,24 @@ function DisplayObject({
     const drag = dragRef.current
     const stage = stageRef.current?.getBoundingClientRect()
     if (!drag || drag.pointerId !== event.pointerId || !stage || stage.width <= 0) return
-    move(
+    drag.latestPosition = move(
       ((event.clientX - drag.clientX) / stage.width) * STAGE_LAYOUT.stage.widthPx,
       ((event.clientY - drag.clientY) / stage.height) * STAGE_LAYOUT.stage.heightPx,
       drag.position,
     )
   }
-  const finishPointer = (event: PointerEvent<HTMLDivElement>) => {
-    if (dragRef.current?.pointerId !== event.pointerId) return
+  const finishPointer = (event: PointerEvent<HTMLDivElement>, commit = true) => {
+    const drag = dragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
     dragRef.current = null
     event.currentTarget.releasePointerCapture?.(event.pointerId)
+    if (
+      commit &&
+      drag.latestPosition &&
+      (drag.latestPosition.x !== drag.position.x || drag.latestPosition.y !== drag.position.y)
+    ) {
+      onPositionChange?.(drag.latestPosition)
+    }
   }
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (!selected || !onPositionChange) return
@@ -217,7 +236,8 @@ function DisplayObject({
     if (!delta) return
     event.preventDefault()
     event.stopPropagation()
-    move(delta[0], delta[1])
+    const next = move(delta[0], delta[1])
+    if (next) onPositionChange(next)
   }
 
   return (
@@ -235,7 +255,7 @@ function DisplayObject({
       data-display-object={label}
       data-display-object-selected={selected ? 'true' : undefined}
       onKeyDown={handleKeyDown}
-      onPointerCancel={finishPointer}
+      onPointerCancel={(event) => finishPointer(event, false)}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={finishPointer}
@@ -375,6 +395,77 @@ function PreviewLine({
   )
 }
 
+function LyricDisplayObject({
+  aliases,
+  dataDesignPreview,
+  label,
+  lineCount,
+  lines,
+  onPositionChange,
+  selected,
+  selectedWordIds,
+  stageRef,
+  style,
+  trackId,
+}: {
+  aliases: Record<string, string | null>
+  dataDesignPreview?: string
+  label: string
+  lineCount: number
+  lines: StageFrameLine[]
+  onPositionChange?: (position: DisplayPosition) => void
+  selected: boolean
+  selectedWordIds: Set<string>
+  stageRef: RefObject<HTMLDivElement | null>
+  style: StageFrameLine['style']
+  trackId: string
+}) {
+  const footprintLines = designLyricLines(`${trackId}-footprint`, style, lineCount).map((line) => ({
+    ...line,
+    words: line.words.map((word) => ({ ...word, progress: 0 })),
+  }))
+  return (
+    <DisplayObject
+      className="active-lines"
+      data-design-preview={dataDesignPreview}
+      data-lyric-object-line-count={String(lineCount)}
+      label={label}
+      objectStyle={
+        {
+          '--stage-lyric-object-height': logicalStagePx(
+            lyricObjectHeightPx(lineCount, style.sizePx),
+          ),
+        } as CSSProperties
+      }
+      position={style.position}
+      selected={selected}
+      stageRef={stageRef}
+      onPositionChange={onPositionChange}
+    >
+      <div className="active-lines__footprint" aria-hidden="true">
+        {footprintLines.map((line) => (
+          <PreviewLine
+            key={lineKey(line.trackId, line.id)}
+            line={line}
+            selectedWordIds={new Set()}
+            aliases={aliases}
+          />
+        ))}
+      </div>
+      <div className="active-lines__content" data-lyric-object-content>
+        {lines.map((line) => (
+          <PreviewLine
+            key={lineKey(line.trackId, line.id)}
+            line={line}
+            selectedWordIds={selectedWordIds}
+            aliases={aliases}
+          />
+        ))}
+      </div>
+    </DisplayObject>
+  )
+}
+
 function SyncAidCue({ line, progress }: { line: StageFrameLine; progress: number }) {
   const cueRef = useRef<HTMLDivElement>(null)
   const fallback =
@@ -433,9 +524,11 @@ function SyncAidCue({ line, progress }: { line: StageFrameLine; progress: number
 }
 
 export function KaraokePreview({
+  activeVocalTrackId,
   project,
   playbackMs,
   selectedWordIds,
+  onVocalPositionChange,
   onUpdateLyricDisplay,
   onEditLyrics,
   designMode,
@@ -454,12 +547,13 @@ export function KaraokePreview({
     () => previewFrameStateAt(previewProject, playbackMs),
     [playbackMs, previewProject],
   )
-  const projectDesignLine = useMemo(() => {
+  const lyricLineCount = normalizedLyricLineCount(project.lyricDisplay.lineCount)
+  const projectDesignLines = useMemo(() => {
     if (designMode?.target === 'project-lyrics') {
-      return projectLyricsDesignLine(designMode.stageStyle.lyrics)
+      return projectLyricsDesignLines(designMode.stageStyle.lyrics, lyricLineCount)
     }
     return null
-  }, [designMode])
+  }, [designMode, lyricLineCount])
   const vocalDesignFrame = useMemo(
     () =>
       designMode?.target === 'lead-vocal'
@@ -472,7 +566,7 @@ export function KaraokePreview({
         : null,
     [designMode, project],
   )
-  const designLines = projectDesignLine ? [projectDesignLine] : (vocalDesignFrame?.lines ?? null)
+  const designLines = projectDesignLines ?? vocalDesignFrame?.lines ?? null
   const isTitleCardDesign = designMode?.target === 'title-card'
   const stageFrameDesign = designMode?.target === 'stage-frame' ? designMode : null
   const selectedFonts =
@@ -573,9 +667,7 @@ export function KaraokePreview({
   const stageFrame = stageStyle.stageFrame
   const stageVars = {
     ...backgroundStyle,
-    ...previewStageLayoutVariables(
-      designLines ? designLines.length : isTitleCardDesign ? 1 : frame.lines.length,
-    ),
+    ...previewStageLayoutVariables(lyricLineCount),
     '--stage-frame-color': stageFrame.lineColor,
     '--stage-frame-width': logicalStagePx(stageFrame.lineWidthPx),
   } as CSSProperties
@@ -583,12 +675,12 @@ export function KaraokePreview({
   const lines = new Map(cueFrame.lines.map((line) => [lineKey(line.trackId, line.id), line]))
   const isDesigning = Boolean(designMode)
   const stageClassName = designLines
-    ? `karaoke-stage karaoke-stage--lines-${designLines.length} is-designing`
+    ? `karaoke-stage karaoke-stage--lines-${lyricLineCount} is-designing`
     : isTitleCardDesign
       ? 'karaoke-stage karaoke-stage--lines-1 is-designing is-designing-title-card'
       : stageFrameDesign
-        ? `karaoke-stage karaoke-stage--lines-${project.lyricDisplay.lineCount} is-designing is-designing-stage-frame`
-        : `karaoke-stage karaoke-stage--lines-${project.lyricDisplay.lineCount}${isDesigning ? ' is-designing' : ''}`
+        ? `karaoke-stage karaoke-stage--lines-${lyricLineCount} is-designing is-designing-stage-frame`
+        : `karaoke-stage karaoke-stage--lines-${lyricLineCount}${isDesigning ? ' is-designing' : ''}`
   const designLabel =
     designMode?.target === 'background'
       ? 'Background'
@@ -633,6 +725,19 @@ export function KaraokePreview({
             text: 'Hidden in output',
           }
         : null
+  const activeVocalTrack = project.tracks.find((track) => track.id === activeVocalTrackId) ?? null
+  const liveLyricGroups = groupLinesByTrack(frame.lines).map((group) => ({
+    lines: group,
+    style: group[0]!.style,
+    trackId: group[0]!.trackId,
+  }))
+  if (activeVocalTrack && !liveLyricGroups.some(({ trackId }) => trackId === activeVocalTrack.id)) {
+    liveLyricGroups.push({
+      lines: [],
+      style: resolveVocalStyle(stageStyle.lyrics, activeVocalTrack.vocalStyle),
+      trackId: activeVocalTrack.id,
+    })
+  }
 
   return (
     <section
@@ -791,27 +896,25 @@ export function KaraokePreview({
         )}
         <div className="karaoke-stage__content">
           {designLines ? (
-            <DisplayObject
-              className="active-lines"
-              data-design-preview={designMode?.target}
+            <LyricDisplayObject
+              aliases={fontRuntime.aliases}
+              dataDesignPreview={designMode?.target}
               label="Lyrics"
-              position={designLines[0]?.style.position ?? DEFAULT_VOCAL_STYLE.position}
+              lineCount={lyricLineCount}
+              lines={designLines}
               selected={designMode?.target === 'lead-vocal'}
+              selectedWordIds={selectedWordIds}
               stageRef={stageRef}
+              style={
+                designLines[0]?.style ?? resolveVocalStyle(stageStyle.lyrics, DEFAULT_VOCAL_STYLE)
+              }
+              trackId={designLines[0]?.trackId ?? 'design-lyrics'}
               onPositionChange={
                 designMode?.target === 'lead-vocal' ? designMode.onPositionChange : undefined
               }
-            >
-              {designLines.map((line) => (
-                <PreviewLine
-                  key={lineKey(line.trackId, line.id)}
-                  line={line}
-                  selectedWordIds={selectedWordIds}
-                  aliases={fontRuntime.aliases}
-                />
-              ))}
-            </DisplayObject>
-          ) : isTitleCardDesign || frame.showTitle ? (
+            />
+          ) : null}
+          {!designLines && (isTitleCardDesign || frame.showTitle) && (
             <PreviewTitleCard
               artist={frame.artist}
               aliases={fontRuntime.aliases}
@@ -821,28 +924,30 @@ export function KaraokePreview({
               stageStyle={stageStyle}
               title={frame.title}
             />
-          ) : frame.lines.length ? (
-            groupLinesByTrack(frame.lines).map((group) => (
-              <DisplayObject
-                key={group[0]!.trackId}
-                className="active-lines"
-                label={`${group[0]!.trackId} lyric block`}
-                position={group[0]!.style.position}
+          )}
+          {!designLines &&
+            !isTitleCardDesign &&
+            liveLyricGroups.map(({ lines: trackLines, style, trackId }) => (
+              <LyricDisplayObject
+                key={trackId}
+                aliases={fontRuntime.aliases}
+                label={`${trackId} lyric block`}
+                lineCount={lyricLineCount}
+                lines={trackLines}
+                selected={trackId === activeVocalTrackId && Boolean(onVocalPositionChange)}
+                selectedWordIds={selectedWordIds}
                 stageRef={stageRef}
-              >
-                {group.map((line) => (
-                  <PreviewLine
-                    key={lineKey(line.trackId, line.id)}
-                    line={line}
-                    selectedWordIds={selectedWordIds}
-                    aliases={fontRuntime.aliases}
-                  />
-                ))}
-              </DisplayObject>
-            ))
-          ) : null}
+                style={style}
+                trackId={trackId}
+                onPositionChange={
+                  trackId === activeVocalTrackId && onVocalPositionChange
+                    ? (position) => onVocalPositionChange(trackId, position)
+                    : undefined
+                }
+              />
+            ))}
         </div>
-        {!projectDesignLine &&
+        {!projectDesignLines &&
           !isTitleCardDesign &&
           cueFrame.syncAids.map((aid) => {
             const line = lines.get(lineKey(aid.trackId, aid.lineId))

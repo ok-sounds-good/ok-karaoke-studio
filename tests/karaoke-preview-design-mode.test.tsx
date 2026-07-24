@@ -8,7 +8,7 @@ import { KaraokePreview, type KaraokePreviewDesignMode } from '../src/components
 import { titleCardDesignPreviewFonts } from '../src/hooks/usePreviewFonts'
 import { createProject } from '../src/lib/model'
 import { previewFrameStateAt } from '../src/lib/stage-frame-state'
-import { logicalStagePx } from '../src/lib/stage-layout'
+import { logicalStagePx, lyricObjectHeightPx } from '../src/lib/stage-layout'
 import {
   SYSTEM_MONOSPACE_TYPEFACE,
   cloneStageStyle,
@@ -98,8 +98,9 @@ describe('Karaoke Preview project-lyrics design mode', () => {
     document.body.replaceChildren()
   })
 
-  it('renders the complete draft Style with one representative lyric line and mixed progress', () => {
+  it('renders the complete draft Style with deterministic N-line lyric samples and mixed progress', () => {
     const project = createProject({ title: 'Project title', artist: 'Project artist' })
+    project.lyricDisplay.lineCount = 3
     const style: LyricTextStyle = {
       typeface: SYSTEM_MONOSPACE_TYPEFACE,
       fontStyle: genericFontFace(SYSTEM_MONOSPACE_TYPEFACE, 'Bold'),
@@ -115,8 +116,11 @@ describe('Karaoke Preview project-lyrics design mode', () => {
     const panel = rendered.querySelector<HTMLElement>('[aria-label="Lyrics design preview"]')
     const stage = panel?.querySelector<HTMLElement>('.karaoke-stage')
     const design = stage?.querySelector<HTMLElement>('[data-design-preview="project-lyrics"]')
-    const line = design?.querySelector<HTMLElement>('.stage-line')
-    const words = [...(design?.querySelectorAll<HTMLElement>('.stage-word') ?? [])]
+    const visibleLines = [
+      ...(design?.querySelectorAll<HTMLElement>('.active-lines__content .stage-line') ?? []),
+    ]
+    const line = visibleLines[0]
+    const words = [...(line?.querySelectorAll<HTMLElement>('.stage-word') ?? [])]
 
     expect(stage?.dataset.logicalStage).toBe('1920x1080')
     expect(stage?.classList.contains('is-designing')).toBe(true)
@@ -125,7 +129,16 @@ describe('Karaoke Preview project-lyrics design mode', () => {
     expect(stage?.querySelector('.karaoke-stage__safe-area')).not.toBeNull()
     expect(stage?.textContent).toContain('OKAY / STUDIO')
     expect(stage?.textContent).toContain('Project artist · Project title')
-    expect(design?.textContent).toBe('Sing the first words and see the rest')
+    expect(design?.dataset.lyricObjectLineCount).toBe('3')
+    expect(design?.textContent).toContain('Sing the first words and see the rest')
+    expect(visibleLines.map((visible) => visible.textContent)).toEqual([
+      'Sing the first words and see the rest',
+      'Sung singing waiting',
+      'Example line 3',
+    ])
+    expect(design?.style.getPropertyValue('--stage-lyric-object-height')).toBe(
+      logicalStagePx(lyricObjectHeightPx(3, style.sizePx)),
+    )
     expect(design?.textContent).not.toContain(`This is ${style.typeface.family}`)
     expect(line?.style.fontFamily).toContain('ui-monospace')
     expect(line?.style.fontWeight).toBe('700')
@@ -170,8 +183,15 @@ describe('Karaoke Preview project-lyrics design mode', () => {
     expect(vocalLine.dataset.stageFontSize).toBe('104')
     expect(vocalLine.style.getPropertyValue('--track-color')).toBe('#102030')
     expect(vocalLine.style.getPropertyValue('--unsung-color')).toBe('#405060')
-    const vocalLines = [...vocalPanel.querySelectorAll<HTMLElement>('.stage-line')]
-    expect(vocalLines).toHaveLength(1)
+    const vocalLines = [
+      ...vocalPanel.querySelectorAll<HTMLElement>('.active-lines__content .stage-line'),
+    ]
+    expect(vocalLines).toHaveLength(3)
+    expect(vocalLines.map((visible) => visible.textContent)).toEqual([
+      'Sing the first words and see the rest',
+      'Sung singing waiting',
+      'Example line 3',
+    ])
     expect(
       [...vocalLines[0]!.querySelectorAll<HTMLElement>('.stage-word')].map((word) =>
         word.style.getPropertyValue('--word-progress'),
@@ -271,6 +291,127 @@ describe('Karaoke Preview project-lyrics design mode', () => {
     })
     expect(onPositionChange).toHaveBeenCalledWith({ x: 959, y: 550 })
     expect(object.getAttribute('aria-label')).toContain('Drag or use arrow keys')
+    await act(async () => root.unmount())
+  })
+
+  it('keeps the active Live Preview lyric footprint stable and commits one pointer move', async () => {
+    const project = createProject()
+    const track = project.tracks[0]!
+    project.lyricDisplay.lineCount = 3
+    track.lines = [
+      {
+        id: 'short-live-line',
+        text: 'Short',
+        startMs: 0,
+        endMs: 1_000,
+        words: [{ id: 'short-live-word', text: 'Short', startMs: 0, endMs: 1_000 }],
+      },
+    ]
+    const longProject = structuredClone(project)
+    longProject.tracks[0]!.lines[0]!.text = 'A deliberately much longer visible lyric line'
+    longProject.tracks[0]!.lines[0]!.words[0]!.text =
+      'A deliberately much longer visible lyric line'
+    const emptyProject = structuredClone(project)
+    emptyProject.tracks[0]!.lines = []
+    const fontProject = structuredClone(project)
+    fontProject.stageStyle.lyrics.sizePx = 104
+
+    const liveObject = (value: typeof project) => {
+      const markup = renderToStaticMarkup(
+        <KaraokePreview
+          activeVocalTrackId={track.id}
+          project={value}
+          playbackMs={0}
+          lyricMs={0}
+          selectedWordIds={new Set()}
+          onVocalPositionChange={() => undefined}
+        />,
+      )
+      const rendered = document.createElement('div')
+      rendered.innerHTML = markup
+      return rendered.querySelector<HTMLElement>('[data-display-object-selected="true"]')!
+    }
+
+    const shortObject = liveObject(project)
+    const longObject = liveObject(longProject)
+    const emptyObject = liveObject(emptyProject)
+    const fontObject = liveObject(fontProject)
+    expect(shortObject.dataset.lyricObjectLineCount).toBe('3')
+    expect(shortObject.style.getPropertyValue('--stage-lyric-object-height')).toBe(
+      longObject.style.getPropertyValue('--stage-lyric-object-height'),
+    )
+    expect(shortObject.style.getPropertyValue('--stage-lyric-object-height')).toBe(
+      emptyObject.style.getPropertyValue('--stage-lyric-object-height'),
+    )
+    expect(shortObject.style.left).toBe(longObject.style.left)
+    expect(shortObject.style.top).toBe(emptyObject.style.top)
+    expect(shortObject.style.getPropertyValue('--stage-lyric-object-height')).not.toBe(
+      fontObject.style.getPropertyValue('--stage-lyric-object-height'),
+    )
+    expect(shortObject.querySelector('.active-lines__content')?.textContent).toBe('Short')
+
+    const onVocalPositionChange = vi.fn()
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    await act(async () =>
+      root.render(
+        <KaraokePreview
+          activeVocalTrackId={track.id}
+          project={emptyProject}
+          playbackMs={0}
+          lyricMs={0}
+          selectedWordIds={new Set()}
+          onVocalPositionChange={onVocalPositionChange}
+        />,
+      ),
+    )
+    const stage = host.querySelector<HTMLElement>('[data-stage-canvas]')!
+    const object = host.querySelector<HTMLElement>('[data-display-object-selected="true"]')!
+    Object.defineProperty(stage, 'getBoundingClientRect', {
+      value: () => DOMRect.fromRect({ width: 960, height: 540 }),
+    })
+    Object.defineProperty(object, 'getBoundingClientRect', {
+      value: () => DOMRect.fromRect({ width: 480, height: 100 }),
+    })
+    Object.defineProperty(object, 'setPointerCapture', { value: vi.fn() })
+    Object.defineProperty(object, 'releasePointerCapture', { value: vi.fn() })
+
+    await act(async () => {
+      object.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          button: 0,
+          clientX: 100,
+          clientY: 100,
+          pointerId: 8,
+        }),
+      )
+      object.dispatchEvent(
+        new PointerEvent('pointermove', {
+          bubbles: true,
+          clientX: 150,
+          clientY: 125,
+          pointerId: 8,
+        }),
+      )
+      object.dispatchEvent(
+        new PointerEvent('pointermove', {
+          bubbles: true,
+          clientX: 200,
+          clientY: 150,
+          pointerId: 8,
+        }),
+      )
+      object.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 8 }))
+    })
+    expect(onVocalPositionChange).toHaveBeenCalledTimes(1)
+    expect(onVocalPositionChange).toHaveBeenCalledWith(track.id, { x: 1_160, y: 650 })
+
+    await act(async () => {
+      object.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ArrowLeft' }))
+    })
+    expect(onVocalPositionChange).toHaveBeenLastCalledWith(track.id, { x: 959, y: 550 })
     await act(async () => root.unmount())
   })
 

@@ -231,6 +231,7 @@ function createStageFramePlanner(project) {
       artist: project.artist || 'Unknown artist',
       playbackMs,
       showTitle: playbackMs < titleHandoffMs,
+      lyricLineCount: project.lyricDisplay.lineCount,
       stageStyle: project.stageStyle,
       lines,
       syncAids,

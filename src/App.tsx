@@ -17,7 +17,7 @@ import {
   serializeProject,
   validateProject,
 } from './lib/model'
-import { cloneStageStyle, cloneVocalStyle } from './lib/video-style'
+import { cloneStageStyle, cloneVocalStyle, type DisplayPosition } from './lib/video-style'
 import {
   DEFAULT_VIDEO_EXPORT_SETTINGS,
   type VideoExportDefaults,
@@ -753,6 +753,30 @@ export default function App() {
           track.id === trackId ? { ...track, ...patch } : track,
         ),
       }))
+    },
+    [commit],
+  )
+
+  const updateVocalPosition = useCallback(
+    (trackId: string, position: DisplayPosition) => {
+      commit((current) => {
+        const track = current.tracks.find((candidate) => candidate.id === trackId)
+        if (
+          !track ||
+          (track.vocalStyle.position.x === position.x && track.vocalStyle.position.y === position.y)
+        ) {
+          return current
+        }
+        return {
+          ...current,
+          updatedAt: new Date().toISOString(),
+          tracks: current.tracks.map((candidate) =>
+            candidate.id === trackId
+              ? { ...candidate, vocalStyle: { ...candidate.vocalStyle, position } }
+              : candidate,
+          ),
+        }
+      })
     },
     [commit],
   )
@@ -1866,10 +1890,12 @@ export default function App() {
                 />
               ) : (
                 <KaraokePreview
+                  activeVocalTrackId={activeTrack?.id}
                   project={previewProject}
                   playbackMs={playback.currentMs}
                   lyricMs={lyricTimeMs}
                   selectedWordIds={selectedWordIds}
+                  onVocalPositionChange={updateVocalPosition}
                   backgroundImage={backgroundImages.preview}
                   onUpdateLyricDisplay={updateLyricDisplay}
                   onEditLyrics={() => setLyricsDialogOpen(true)}

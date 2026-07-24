@@ -121,6 +121,61 @@ describe('browser render runtime', () => {
     ])
   })
 
+  it('uses the configured N-line lyric footprint for short and long MP4 content', async () => {
+    stageDom()
+    installDisplayPlacement(window)
+    window.eval(`(${installKaraokeRuntime.toString()})()`)
+    const runtime = window as unknown as {
+      prepareKaraokeAssets(value: object): Promise<unknown>
+      renderKaraokeFrame(state: object, sequence: number): boolean
+    }
+    const stageStyle = cloneStageStyle()
+    stageStyle.lyrics.sizePx = 100
+    const style = {
+      ...stageStyle.lyrics,
+      alignment: 'right',
+      position: { x: 1_200, y: 700 },
+      sungColor: '#FF8A2B',
+      unsungColor: '#72687D',
+    }
+    await runtime.prepareKaraokeAssets({
+      backgroundDataUrl: '',
+      fonts: [],
+      stageLayout: structuredClone(STAGE_LAYOUT),
+      syncAidGeometry: structuredClone(SYNC_AID_GEOMETRY),
+    })
+    const frame = (text: string) => ({
+      artist: 'Artist',
+      title: 'Title',
+      playbackMs: 0,
+      showTitle: false,
+      lyricLineCount: 3,
+      stageStyle,
+      lines: [
+        {
+          id: text,
+          trackId: 'lead',
+          text,
+          style,
+          words: [{ text, progress: 0 }],
+        },
+      ],
+      syncAids: [],
+    })
+
+    expect(runtime.renderKaraokeFrame(frame('Short'), 1)).toBe(true)
+    const first = document.querySelector<HTMLElement>('.lines')!
+    expect(first.style.height).toBe('412px')
+    expect(
+      [...document.querySelectorAll('.line-footprint__line')].map((line) => line.textContent),
+    ).toEqual(['Sing the first words and see the rest', 'Sung singing waiting', 'Example line 3'])
+    expect(document.querySelectorAll('.lyric')).toHaveLength(1)
+    expect(document.querySelector<HTMLElement>('.lyric')?.classList.contains('right')).toBe(true)
+
+    expect(runtime.renderKaraokeFrame(frame('A deliberately much longer lyric line'), 2)).toBe(true)
+    expect(document.querySelector<HTMLElement>('.lines')?.style.height).toBe('412px')
+  })
+
   it('matches fonts, text safety, tuple line identities, progress, and asset reloads', async () => {
     stageDom()
     const loadedFaces: Array<{ family: string; source: string }> = []

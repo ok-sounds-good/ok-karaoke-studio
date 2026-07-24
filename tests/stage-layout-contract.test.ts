@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 import { LOGICAL_STAGE_HEIGHT, LOGICAL_STAGE_WIDTH } from '../src/lib/video-style'
 import {
   STAGE_LAYOUT,
+  lyricObjectHeightPx,
+  lyricSampleLines,
   logicalStageLayoutAtWidth,
   logicalStagePx,
   lyricGapPx,
@@ -25,11 +27,21 @@ describe('shared stage geometry', () => {
     expect(previewStageLayoutVariables(3)['--stage-lyric-gap']).toBe(
       logicalStagePx(STAGE_LAYOUT.lyric.gapsPx[3]),
     )
+    expect(lyricSampleLines(4)).toEqual([
+      'Sing the first words and see the rest',
+      'Sung singing waiting',
+      'Example line 3',
+      'Example line 4',
+    ])
+    expect(lyricObjectHeightPx(1, 100)).toBe(118)
+    expect(lyricObjectHeightPx(3, 100)).toBe(412)
+    expect(lyricObjectHeightPx(3, 82)).toBeLessThan(lyricObjectHeightPx(3, 104))
     expect(logicalStageLayoutAtWidth(3, 1280)).toMatchObject({
       stage: { widthPx: 1280, heightPx: 720 },
       scale: 2 / 3,
     })
     expect(() => logicalStagePx(Number.POSITIVE_INFINITY)).toThrow(/finite/u)
+    expect(() => lyricObjectHeightPx(3, 0)).toThrow(/positive and finite/u)
     expect(() => logicalStageLayoutAtWidth(2, 0)).toThrow(/positive and finite/u)
   })
 

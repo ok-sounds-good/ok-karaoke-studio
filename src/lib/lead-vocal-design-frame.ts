@@ -1,16 +1,33 @@
 import type { KaraokeProject } from './model'
-import { previewFrameStateAt, type StageFrameState } from './stage-frame-state'
-import { cloneVocalStyle, type StageStyle, type VocalStyle } from './video-style'
+import type { StageFrameLine, StageFrameState } from './stage-frame-state'
+import { lyricSampleLines, normalizedLyricLineCount } from './stage-layout'
+import {
+  resolveVocalStyle,
+  type ResolvedVocalStyle,
+  type StageStyle,
+  type VocalStyle,
+} from './video-style'
 
-export const DESIGN_LYRIC_WORDS = ['Sing', 'the', 'first', 'words', 'and', 'see', 'the', 'rest']
+export const DESIGN_LYRIC_WORDS = lyricSampleLines(1)[0]!.split(' ')
 
 const FIRST_WORD_MS = 120_000
-function timedDesignWords(startMs: number, durationMs = 1_000) {
-  return DESIGN_LYRIC_WORDS.map((text, index) => ({
-    id: `lead-vocal-design-word-${index}`,
+
+export function designLyricLines(
+  trackId: string,
+  style: ResolvedVocalStyle,
+  lineCount: number,
+): StageFrameLine[] {
+  return lyricSampleLines(lineCount).map((text, lineIndex) => ({
+    id: `${trackId}-design-line-${lineIndex + 1}`,
+    trackId,
     text,
-    startMs: startMs + index * durationMs,
-    endMs: startMs + (index + 1) * durationMs,
+    style,
+    words: text.split(' ').map((word, wordIndex) => ({
+      id: `${trackId}-design-word-${lineIndex + 1}-${wordIndex + 1}`,
+      text: word,
+      progress:
+        lineIndex === 0 && wordIndex === 0 ? 1 : lineIndex === 0 && wordIndex === 1 ? 0.5 : 0,
+    })),
   }))
 }
 
@@ -18,38 +35,18 @@ export function leadVocalDesignFrame(
   project: KaraokeProject,
   stageStyle: StageStyle,
   vocalStyle: VocalStyle,
-  timingValid: boolean,
+  _timingValid: boolean,
 ): StageFrameState {
-  const designVocal = cloneVocalStyle(vocalStyle)
-  if (!timingValid) designVocal.syncAid.enabled = false
-  const targetWords = timedDesignWords(FIRST_WORD_MS)
-  return previewFrameStateAt(
-    {
-      ...project,
-      id: 'lead-vocal-design-project',
-      durationMs: FIRST_WORD_MS + 20_000,
-      offsetMs: 0,
-      lyricDisplay: { lineCount: 1, advanceMode: 'clear' },
-      stageStyle,
-      tracks: [
-        {
-          id: 'lead-vocal-design-track',
-          name: 'Lead Vocal design',
-          vocalStyle: designVocal,
-          muted: false,
-          solo: false,
-          lines: [
-            {
-              id: 'lead-vocal-design-line',
-              text: DESIGN_LYRIC_WORDS.join(' '),
-              startMs: FIRST_WORD_MS,
-              endMs: targetWords.at(-1)!.endMs,
-              words: targetWords,
-            },
-          ],
-        },
-      ],
-    },
-    FIRST_WORD_MS + 1_500,
-  )
+  const lyricLineCount = normalizedLyricLineCount(project.lyricDisplay.lineCount)
+  const style = resolveVocalStyle(stageStyle.lyrics, vocalStyle)
+  return {
+    title: project.title || 'Untitled song',
+    artist: project.artist || 'Unknown artist',
+    playbackMs: FIRST_WORD_MS + 1_500,
+    showTitle: false,
+    lyricLineCount,
+    stageStyle,
+    lines: designLyricLines('lead-vocal-design-track', style, lyricLineCount),
+    syncAids: [],
+  }
 }
