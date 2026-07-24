@@ -149,14 +149,28 @@ body {
 }
 
 .lines {
-  display: flex;
+  display: block;
   width: max-content;
   min-width: ${STAGE_LAYOUT.placement.minimumLyricWidthPx}px;
   max-width: 100%;
-  flex-direction: column;
-  gap: ${STAGE_LAYOUT.lyric.gapsPx[1]}px;
 }
 
+.line-footprint {
+  display: flex;
+  width: max-content;
+  min-width: ${STAGE_LAYOUT.placement.minimumLyricWidthPx}px;
+  flex-direction: column;
+  visibility: hidden;
+}
+
+.line-content {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.line-footprint__line,
 .lyric {
   width: 100%;
   height: ${STAGE_LAYOUT.lyric.lineBoxEm}em;

@@ -268,6 +268,55 @@ describe('mounted first-time workflow', () => {
     expect(timeline?.textContent).not.toContain('Edit text')
   })
 
+  it('saves an active Live Preview lyric move as one undoable placement transaction', async () => {
+    const stage = document.querySelector<HTMLElement>('[data-stage-canvas]')!
+    const object = document.querySelector<HTMLElement>('[data-display-object-selected="true"]')!
+    Object.defineProperty(stage, 'getBoundingClientRect', {
+      value: () => DOMRect.fromRect({ width: 960, height: 540 }),
+    })
+    Object.defineProperty(object, 'getBoundingClientRect', {
+      value: () => DOMRect.fromRect({ width: 480, height: 100 }),
+    })
+    Object.defineProperty(object, 'setPointerCapture', { value: vi.fn() })
+    Object.defineProperty(object, 'releasePointerCapture', { value: vi.fn() })
+
+    await act(async () => {
+      object.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          button: 0,
+          clientX: 100,
+          clientY: 100,
+          pointerId: 22,
+        }),
+      )
+      object.dispatchEvent(
+        new PointerEvent('pointermove', {
+          bubbles: true,
+          clientX: 150,
+          clientY: 125,
+          pointerId: 22,
+        }),
+      )
+      object.dispatchEvent(
+        new PointerEvent('pointermove', {
+          bubbles: true,
+          clientX: 200,
+          clientY: 150,
+          pointerId: 22,
+        }),
+      )
+      object.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 22 }))
+    })
+
+    expect(object.getAttribute('aria-label')).toContain('position 1160, 650')
+    const undo = document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')!
+    expect(undo.disabled).toBe(false)
+    await act(async () => undo.click())
+    expect(object.getAttribute('aria-label')).toContain('position 960, 550')
+    expect(undo.disabled).toBe(true)
+  })
+
   it('starts the inspector with song details and no decorative header row', () => {
     const inspector = document.querySelector<HTMLElement>('[aria-label="Project inspector"]')
 

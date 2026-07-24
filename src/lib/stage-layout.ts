@@ -24,9 +24,26 @@ export function logicalStagePx(value: number): string {
 }
 
 export function lyricGapPx(actualLineCount: number): number {
-  const requested = Number.isFinite(actualLineCount) ? Math.trunc(actualLineCount) : 1
-  const lineCount = Math.max(1, Math.min(5, requested || 1))
-  return STAGE_LAYOUT.lyric.gapsPx[lineCount]
+  return STAGE_LAYOUT.lyric.gapsPx[normalizedLyricLineCount(actualLineCount)]
+}
+
+export function normalizedLyricLineCount(value: number): number {
+  const requested = Number.isFinite(value) ? Math.trunc(value) : 1
+  return Math.max(1, Math.min(5, requested || 1))
+}
+
+export function lyricSampleLines(lineCount: number): string[] {
+  return Array.from({ length: normalizedLyricLineCount(lineCount) }, (_unused, index) => {
+    return STAGE_LAYOUT.lyric.sampleLines[index] ?? `Example line ${index + 1}`
+  })
+}
+
+export function lyricObjectHeightPx(lineCount: number, fontSizePx: number): number {
+  if (!Number.isFinite(fontSizePx) || fontSizePx <= 0) {
+    throw new RangeError('Lyric font size must be positive and finite.')
+  }
+  const lines = normalizedLyricLineCount(lineCount)
+  return lines * fontSizePx * STAGE_LAYOUT.lyric.lineBoxEm + (lines - 1) * lyricGapPx(lines)
 }
 
 export function previewStageLayoutVariables(

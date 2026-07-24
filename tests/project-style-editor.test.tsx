@@ -680,7 +680,7 @@ describe('ProjectStyleEditor', () => {
       await Promise.resolve()
       await Promise.resolve()
     })
-    const line = container.querySelector<HTMLElement>('.active-lines .stage-line')!
+    const line = container.querySelector<HTMLElement>('.active-lines__content .stage-line')!
     expect(line.textContent).toBe('Accepted timed words')
     expect(line.style.fontFamily.split(',')[0]).toBe(alias)
     expect(line.dataset.stageFontSize).toBe('104')

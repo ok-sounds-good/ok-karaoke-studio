@@ -44,6 +44,7 @@
     "lineHeight": 1.12,
     "lineBoxEm": 1.18,
     "letterSpacingEm": 0.01,
+    "sampleLines": ["Sing the first words and see the rest", "Sung singing waiting"],
     "gapsPx": [0, 35, 32, 29, 26, 23],
     "shadow": "none"
   },

@@ -220,10 +220,18 @@ Karaoke Studio identity.
   as integer center coordinates on the logical 1920 × 1080 stage; Preview and
   MP4 clamp the rendered object bounds to that stage with a tolerance of one
   logical pixel.
-- In Design Preview, the active vocal block or selected title-card role has one
-  visible bounding box and can be moved by pointer or arrow keys. Shift+Arrow
-  moves by 10 logical pixels instead of one. Position and the vocal block's
-  internal Left, Center, or Right alignment remain independent.
+- In Live Preview, the active vocal block, and in Design Preview the active
+  vocal block or selected title-card role, has one visible bounding box and can
+  be moved by pointer or arrow keys. Shift+Arrow moves by 10 logical pixels
+  instead of one. A vocal move updates that track's one saved center position;
+  its internal Left, Center, or Right alignment remains independent.
+- A vocal block keeps a stable outer footprint for exactly the configured
+  visible-line count. Its width is measured from deterministic typeface-aware
+  sample content and its height from that count, the resolved global lyric
+  typeface, face, size, line box, and inter-line gap. Short, long, partially
+  filled, or empty current lyric content does not resize the placement object
+  or change its saved center; changing the count or lyric font recomputes the
+  footprint while retaining that center.
 - Positioned display objects may overlap intentionally. The Studio does not
   warn about, reject, reflow, or automatically separate overlapping lyric or
   title objects. The background and Stage frame do not own placement state.
@@ -237,10 +245,13 @@ Karaoke Studio identity.
   compact modern controls, unsupported traits are unavailable rather than
   synthesized, and size comes from an enumerated dropdown.
 - Font selection activates a target-aware design mode in Live Preview. The
-  fixed logical video stage renders representative content for the role being
-  edited at the selected face, traits, and size, so scale is judged relative to
-  the real video frame. There is no separate oversized `This is <typeface>`
-  specimen in the control panel.
+  fixed logical video stage renders deterministic representative content for
+  the role being edited at the selected face, traits, and size, so scale is
+  judged relative to the real video frame. Lyric Style shows exactly the
+  configured line count: `Sing the first words and see the rest`, `Sung
+singing waiting`, then `Example line 3` through the configured maximum.
+  There is no separate oversized `This is <typeface>` specimen in the control
+  panel.
 - The chosen face must resolve consistently in Live Preview and MP4 output.
   Typeface, Style, and Size are separate persisted fields; selecting one does
   not mutate the others. Persisted local faces use actual

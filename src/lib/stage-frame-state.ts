@@ -31,6 +31,7 @@ export interface StageFrameState {
   artist: string
   playbackMs: number
   showTitle: boolean
+  lyricLineCount: number
   stageStyle: StageStyle
   lines: StageFrameLine[]
   syncAids: StageFrameSyncAid[]

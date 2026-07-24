@@ -108,10 +108,28 @@
 
 .karaoke-stage .active-lines,
 .karaoke-stage .active-lines--duet {
+  display: block;
   width: max-content;
   min-width: var(--stage-minimum-lyric-width);
   max-width: 100%;
+  height: var(--stage-lyric-object-height);
+}
+
+.karaoke-stage .active-lines__footprint {
+  display: grid;
+  width: max-content;
+  min-width: var(--stage-minimum-lyric-width);
   gap: var(--stage-lyric-gap);
+  visibility: hidden;
+}
+
+.karaoke-stage .active-lines__content {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  align-content: start;
+  gap: var(--stage-lyric-gap);
+  pointer-events: none;
 }
 
 .karaoke-stage [data-display-object-selected='true'] {

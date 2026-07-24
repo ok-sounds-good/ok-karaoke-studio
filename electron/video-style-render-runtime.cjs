@@ -35,6 +35,21 @@ function installKaraokeRuntime() {
 
   const lineKey = (trackId, lineId) => JSON.stringify([trackId, lineId])
 
+  const lyricLineCount = (value) => {
+    const requested = Number.isFinite(value) ? Math.trunc(value) : 1
+    return Math.max(1, Math.min(5, requested || 1))
+  }
+
+  const lyricSampleText = (lineNumber) => {
+    const configured = window.stageLayout.lyric.sampleLines?.[lineNumber - 1]
+    return configured || `Example line ${lineNumber}`
+  }
+
+  const lyricObjectHeight = (lineCount, fontSizePx) => {
+    const layout = window.stageLayout.lyric
+    return lineCount * fontSizePx * layout.lineBoxEm + (lineCount - 1) * layout.gapsPx[lineCount]
+  }
+
   const compareOrdinal = (left, right) => {
     if (left < right) return -1
     if (left > right) return 1
@@ -289,17 +304,31 @@ function installKaraokeRuntime() {
     }
   }
 
-  const appendLyrics = (content, lines) => {
+  const appendLyrics = (content, state) => {
     const trackGroups = new Map()
-    for (const item of lines) {
+    for (const item of state.lines) {
       const entries = trackGroups.get(item.trackId) ?? []
       entries.push(item)
       trackGroups.set(item.trackId, entries)
     }
     for (const entries of trackGroups.values()) {
       const group = node('div', 'lines')
-      const actualLineCount = Math.max(1, Math.min(5, entries.length))
-      group.style.gap = `${window.stageLayout.lyric.gapsPx[actualLineCount]}px`
+      const lineCount = lyricLineCount(state.lyricLineCount ?? entries.length)
+      const style = entries[0].style
+      const gap = `${window.stageLayout.lyric.gapsPx[lineCount]}px`
+      group.style.height = `${lyricObjectHeight(lineCount, style.sizePx)}px`
+
+      const footprint = node('div', 'line-footprint')
+      footprint.style.gap = gap
+      for (let lineIndex = 1; lineIndex <= lineCount; lineIndex += 1) {
+        const sample = node('div', 'line-footprint__line', lyricSampleText(lineIndex))
+        applyText(sample, { ...style, color: 'transparent' })
+        footprint.append(sample)
+      }
+      group.append(footprint)
+
+      const lineContent = node('div', 'line-content')
+      lineContent.style.gap = gap
       for (const item of entries) {
         const lyric = node('div', `lyric ${item.style.alignment}`)
         const text = node('span', 'lyric-text')
@@ -318,8 +347,9 @@ function installKaraokeRuntime() {
         lyric.append(text)
         wordNodes.set(lineKey(item.trackId, item.id), fills)
         lineTextNodes.set(lineKey(item.trackId, item.id), text)
-        group.append(lyric)
+        lineContent.append(lyric)
       }
+      group.append(lineContent)
       content.append(group)
       positionDisplayNode(group, entries[0].style.position)
     }
@@ -374,7 +404,8 @@ function installKaraokeRuntime() {
   const nextLayoutKey = (state) =>
     state.showTitle
       ? `title:${state.title}|${state.artist}|${JSON.stringify(state.stageStyle.titleCard)}`
-      : `lines:${JSON.stringify(
+      : `lines:${JSON.stringify([
+          state.lyricLineCount,
           state.lines.map((line) => [
             line.id,
             line.trackId,
@@ -382,7 +413,7 @@ function installKaraokeRuntime() {
             line.style,
             line.words.map((word) => word.text),
           ]),
-        )}|sync:${JSON.stringify(
+        ])}|sync:${JSON.stringify(
           state.syncAids.map((aid) => [aid.trackId, aid.lineId, aid.style]),
         )}`
 
@@ -395,7 +426,7 @@ function installKaraokeRuntime() {
     content.replaceChildren()
     syncLayer.replaceChildren()
     if (state.showTitle) appendTitleCard(content, state)
-    else if (state.lines.length) appendLyrics(content, state.lines)
+    else if (state.lines.length) appendLyrics(content, state)
     appendSyncAids(syncLayer, state.syncAids)
   }
 
