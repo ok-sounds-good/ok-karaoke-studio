@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { runInNewContext } from 'node:vm'
 import { describe, expect, it } from 'vitest'
 import {
   clampDisplayPosition,
@@ -6,6 +8,20 @@ import {
 } from '../src/lib/display-placement'
 
 describe('shared display placement geometry', () => {
+  it('installs in a browser-style global without requiring CommonJS globals', () => {
+    const source = readFileSync(
+      new URL('../electron/display-placement.cjs', import.meta.url),
+      'utf8',
+    )
+    const placement = runInNewContext(
+      `${source}\nglobalThis[Symbol.for('studio.okay-karaoke.display-placement')]`,
+    ) as {
+      clampDisplayPosition(position: { x: number; y: number }): { x: number; y: number }
+    }
+
+    expect(placement.clampDisplayPosition({ x: -1, y: 2_000 })).toEqual({ x: 0, y: 1_080 })
+  })
+
   it('clamps center coordinates by the rendered object bounds without collision handling', () => {
     expect(clampDisplayPosition({ x: 0, y: 0 }, 800, 200)).toEqual({ x: 400, y: 100 })
     expect(clampDisplayPosition({ x: 1_920, y: 1_080 }, 800, 200)).toEqual({
