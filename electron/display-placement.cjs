@@ -49,7 +49,9 @@ function installDisplayPlacement(target = globalThis) {
 
 const api = installDisplayPlacement()
 
-module.exports = Object.freeze({
-  ...api,
-  installDisplayPlacement,
-})
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = Object.freeze({
+    ...api,
+    installDisplayPlacement,
+  })
+}
