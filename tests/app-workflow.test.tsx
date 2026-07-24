@@ -268,9 +268,11 @@ describe('mounted first-time workflow', () => {
     expect(timeline?.textContent).not.toContain('Edit text')
   })
 
-  it('saves an active Live Preview lyric move as one undoable placement transaction', async () => {
+  it('moves the visible title instead of a phantom lyric box and saves one undoable transaction', async () => {
     const stage = document.querySelector<HTMLElement>('[data-stage-canvas]')!
     const object = document.querySelector<HTMLElement>('[data-display-object-selected="true"]')!
+    expect(object.dataset.titleCardRole).toBe('title')
+    expect(document.querySelector('[data-lyric-object-line-count]')).toBeNull()
     Object.defineProperty(stage, 'getBoundingClientRect', {
       value: () => DOMRect.fromRect({ width: 960, height: 540 }),
     })
@@ -415,6 +417,7 @@ describe('mounted first-time workflow', () => {
   })
 
   it('persists the shared preview and video lyric-display options', async () => {
+    await selectValue('Preview content', 'song')
     const lineCount = document.querySelector<HTMLSelectElement>(
       '[aria-label="Visible lyric lines"]',
     )!
@@ -433,10 +436,12 @@ describe('mounted first-time workflow', () => {
     expect(lineCount.value).toBe('5')
     expect(advanceMode.value).toBe('scroll')
     await act(async () => harness.sendMenuAction('save'))
-    expect(parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents).lyricDisplay).toEqual({
+    const savedContents = harness.saveProject.mock.calls.at(-1)?.[0].contents
+    expect(parseProject(savedContents).lyricDisplay).toEqual({
       lineCount: 5,
       advanceMode: 'scroll',
     })
+    expect(JSON.parse(savedContents)).not.toHaveProperty('previewViewMode')
   })
 
   it('stores the inspector color shortcut as a vocal sung-color override', async () => {

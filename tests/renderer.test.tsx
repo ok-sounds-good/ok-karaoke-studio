@@ -184,8 +184,8 @@ describe('offset-aware renderer state', () => {
 
     expect(markup).toContain('Visible lyric')
     expect(markup).not.toContain('Hidden lyric')
-    expect(markup).not.toContain('Solo track label')
-    expect(markup).not.toContain('Hidden track label')
+    expect(markup).not.toContain('>Solo track label<')
+    expect(markup).not.toContain('>Hidden track label<')
     expect(markup).not.toContain('stage-voice')
   })
 

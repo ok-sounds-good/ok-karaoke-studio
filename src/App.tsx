@@ -17,7 +17,12 @@ import {
   serializeProject,
   validateProject,
 } from './lib/model'
-import { cloneStageStyle, cloneVocalStyle, type DisplayPosition } from './lib/video-style'
+import {
+  cloneStageStyle,
+  cloneVocalStyle,
+  type DisplayPosition,
+  type StageStyle,
+} from './lib/video-style'
 import {
   DEFAULT_VIDEO_EXPORT_SETTINGS,
   type VideoExportDefaults,
@@ -775,6 +780,27 @@ export default function App() {
               ? { ...candidate, vocalStyle: { ...candidate.vocalStyle, position } }
               : candidate,
           ),
+        }
+      })
+    },
+    [commit],
+  )
+
+  const updateTitlePosition = useCallback(
+    (role: keyof StageStyle['titleCard'], position: DisplayPosition) => {
+      commit((current) => {
+        const element = current.stageStyle.titleCard[role]
+        if (element.position.x === position.x && element.position.y === position.y) return current
+        return {
+          ...current,
+          updatedAt: new Date().toISOString(),
+          stageStyle: {
+            ...current.stageStyle,
+            titleCard: {
+              ...current.stageStyle.titleCard,
+              [role]: { ...element, position },
+            },
+          },
         }
       })
     },
@@ -1896,6 +1922,7 @@ export default function App() {
                   lyricMs={lyricTimeMs}
                   selectedWordIds={selectedWordIds}
                   onVocalPositionChange={updateVocalPosition}
+                  onTitlePositionChange={updateTitlePosition}
                   backgroundImage={backgroundImages.preview}
                   onUpdateLyricDisplay={updateLyricDisplay}
                   onEditLyrics={() => setLyricsDialogOpen(true)}
