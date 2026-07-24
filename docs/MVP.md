@@ -240,6 +240,11 @@ Karaoke Studio identity.
   Pointer movement and arrow keys update the selected object's saved center
   position; Shift+Arrow moves by 10 logical pixels instead of one. A vocal
   block's internal Left, Center, or Right alignment remains independent.
+- During pointer movement, each object axis independently snaps to the logical
+  stage center while its unsnapped center is within 20 logical pixels. A subtle
+  guide appears only for an axis currently in that range; moving beyond the
+  range releases it immediately. Holding Option or Alt bypasses center snapping.
+  Keyboard movement never snaps and remains available for one-pixel precision.
 - A vocal block keeps a stable outer footprint for exactly the configured
   visible-line count. Its width is measured from deterministic typeface-aware
   sample content and its height from that count, the resolved global lyric
@@ -476,7 +481,9 @@ singing waiting`, then `Example line 3` through the configured maximum.
 - [x] Active-vocal and title-card display objects move transactionally in Design
       Preview, persist through projects and Style templates, remain within the
       logical stage, and retain matching positions in Live Preview and MP4
-      without collision handling.
+      without collision handling. Pointer movement softly snaps each axis to
+      stage center with transient guides and a bypass, while keyboard movement
+      remains deterministic.
 - [x] Preview time controls line eligibility, and the built-in sync aid appears
       only on the first line of a blank-row-separated section when at least its
       configured minimum lead time is available.

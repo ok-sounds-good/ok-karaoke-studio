@@ -26,6 +26,8 @@ import {
   clampDisplayPosition,
   logicalObjectSize,
   moveDisplayPosition,
+  snapDisplayPositionToStageCenter,
+  type CenterSnapAxes,
 } from '../lib/display-placement'
 import {
   logicalStagePx,
@@ -83,6 +85,8 @@ const TITLE_CARD_ROLES = [
   { label: 'Title', value: 'title' },
   { label: 'Artist', value: 'artist' },
 ] as const satisfies ReadonlyArray<{ label: string; value: TitleCardRole }>
+
+const NO_CENTER_SNAP: CenterSnapAxes = { x: false, y: false }
 
 interface KaraokePreviewProps {
   activeVocalTrackId?: string
@@ -174,6 +178,7 @@ function DisplayObject({
   className,
   label,
   objectStyle,
+  onCenterSnapChange,
   onSelect,
   onPositionChange,
   position,
@@ -185,6 +190,7 @@ function DisplayObject({
   className: string
   label: string
   objectStyle?: CSSProperties
+  onCenterSnapChange?: (axes: CenterSnapAxes) => void
   onSelect?: () => void
   onPositionChange?: (position: DisplayPosition) => void
   position: DisplayPosition
@@ -199,8 +205,17 @@ function DisplayObject({
     latestPosition: DisplayPosition | null
     position: DisplayPosition
   } | null>(null)
+  const centerSnapChangeRef = useRef(onCenterSnapChange)
+  centerSnapChangeRef.current = onCenterSnapChange
   const [renderedPosition, setRenderedPosition] = useState(position)
   const interactive = Boolean(onPositionChange)
+
+  useEffect(
+    () => () => {
+      if (dragRef.current) centerSnapChangeRef.current?.(NO_CENTER_SNAP)
+    },
+    [],
+  )
 
   const measuredSize = () => {
     const stage = stageRef.current?.getBoundingClientRect()
@@ -217,16 +232,27 @@ function DisplayObject({
     )
   })
 
-  const move = (deltaX: number, deltaY: number, origin = position) => {
+  const move = (
+    deltaX: number,
+    deltaY: number,
+    origin = position,
+    centerSnap = false,
+    bypassCenterSnap = false,
+  ) => {
     if (!onPositionChange) return null
     const size = measuredSize()
-    const next = moveDisplayPosition(
+    const moved = moveDisplayPosition(
       origin,
       deltaX,
       deltaY,
       size.width,
       size.height,
     ) as DisplayPosition
+    const result = centerSnap
+      ? snapDisplayPositionToStageCenter(moved, bypassCenterSnap)
+      : { axes: NO_CENTER_SNAP, position: moved }
+    if (centerSnap) onCenterSnapChange?.(result.axes)
+    const next = result.position
     setRenderedPosition(next)
     return next
   }
@@ -237,6 +263,7 @@ function DisplayObject({
     onSelect?.()
     event.currentTarget.focus()
     event.currentTarget.setPointerCapture?.(event.pointerId)
+    onCenterSnapChange?.(NO_CENTER_SNAP)
     dragRef.current = {
       pointerId: event.pointerId,
       clientX: event.clientX,
@@ -253,12 +280,16 @@ function DisplayObject({
       ((event.clientX - drag.clientX) / stage.width) * STAGE_LAYOUT.stage.widthPx,
       ((event.clientY - drag.clientY) / stage.height) * STAGE_LAYOUT.stage.heightPx,
       drag.position,
+      true,
+      event.altKey,
     )
   }
   const finishPointer = (event: PointerEvent<HTMLDivElement>, commit = true) => {
     const drag = dragRef.current
     if (!drag || drag.pointerId !== event.pointerId) return
     dragRef.current = null
+    onCenterSnapChange?.(NO_CENTER_SNAP)
+    if (!commit) setRenderedPosition(drag.position)
     event.currentTarget.releasePointerCapture?.(event.pointerId)
     if (
       commit &&
@@ -307,8 +338,14 @@ function DisplayObject({
       data-display-object={label}
       data-display-object-interactive={interactive ? 'true' : undefined}
       data-display-object-selected={selected ? 'true' : undefined}
+      data-display-position-x={renderedPosition.x}
+      data-display-position-y={renderedPosition.y}
+      title={
+        interactive ? 'Hold Option or Alt while dragging to bypass center snapping.' : undefined
+      }
       onFocus={onSelect}
       onKeyDown={handleKeyDown}
+      onLostPointerCapture={(event) => finishPointer(event, false)}
       onPointerCancel={(event) => finishPointer(event, false)}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
@@ -329,6 +366,7 @@ function PreviewTitleCard({
   aliases,
   designRole,
   interactiveRole,
+  onCenterSnapChange,
   onInteractiveRoleChange,
   onPositionChange,
   onRolePositionChange,
@@ -340,6 +378,7 @@ function PreviewTitleCard({
   aliases: Record<string, string | null>
   designRole?: TitleCardRole
   interactiveRole?: TitleCardRole | null
+  onCenterSnapChange?: (axes: CenterSnapAxes) => void
   onInteractiveRoleChange?: (role: TitleCardRole) => void
   onPositionChange?: (position: DisplayPosition) => void
   onRolePositionChange?: (role: TitleCardRole, position: DisplayPosition) => void
@@ -356,6 +395,7 @@ function PreviewTitleCard({
     'data-title-card-role': role,
   })
   const roleInteractionProps = (role: TitleCardRole) => ({
+    onCenterSnapChange,
     onSelect:
       interactiveRole && onInteractiveRoleChange ? () => onInteractiveRoleChange(role) : undefined,
     onPositionChange:
@@ -470,6 +510,7 @@ function LyricDisplayObject({
   label,
   lineCount,
   lines,
+  onCenterSnapChange,
   onPositionChange,
   selected,
   selectedWordIds,
@@ -482,6 +523,7 @@ function LyricDisplayObject({
   label: string
   lineCount: number
   lines: StageFrameLine[]
+  onCenterSnapChange?: (axes: CenterSnapAxes) => void
   onPositionChange?: (position: DisplayPosition) => void
   selected: boolean
   selectedWordIds: Set<string>
@@ -509,6 +551,7 @@ function LyricDisplayObject({
       position={style.position}
       selected={selected}
       stageRef={stageRef}
+      onCenterSnapChange={onCenterSnapChange}
       onPositionChange={onPositionChange}
     >
       <div className="active-lines__footprint" aria-hidden="true">
@@ -608,6 +651,10 @@ export function KaraokePreview({
   const stageRef = useRef<HTMLDivElement>(null)
   const [viewMode, setViewMode] = useState<PreviewViewMode>('auto')
   const [selectedTitleRole, setSelectedTitleRole] = useState<TitleCardRole>('title')
+  const [centerSnapAxes, setCenterSnapAxes] = useState<CenterSnapAxes>(NO_CENTER_SNAP)
+  const updateCenterSnapAxes = (axes: CenterSnapAxes) => {
+    setCenterSnapAxes((current) => (current.x === axes.x && current.y === axes.y ? current : axes))
+  }
   const designStyle = designMode?.stageStyle ?? null
   const previewProject = useMemo(
     () =>
@@ -1019,6 +1066,16 @@ export function KaraokePreview({
         style={stageVars}
       >
         <div className="karaoke-stage__grain" />
+        {(centerSnapAxes.x || centerSnapAxes.y) && (
+          <div className="karaoke-stage__center-guides" aria-hidden="true">
+            {centerSnapAxes.x && (
+              <i className="karaoke-stage__center-guide karaoke-stage__center-guide--x" />
+            )}
+            {centerSnapAxes.y && (
+              <i className="karaoke-stage__center-guide karaoke-stage__center-guide--y" />
+            )}
+          </div>
+        )}
         {imageWarning ? (
           <div className="stage-resource-warning" role="status">
             {imageWarning}{' '}
@@ -1080,6 +1137,7 @@ export function KaraokePreview({
               label="Lyrics"
               lineCount={lyricLineCount}
               lines={designLines}
+              onCenterSnapChange={updateCenterSnapAxes}
               selected={designMode?.target === 'lead-vocal'}
               selectedWordIds={selectedWordIds}
               stageRef={stageRef}
@@ -1100,6 +1158,7 @@ export function KaraokePreview({
               interactiveRole={
                 !isDesigning && onTitlePositionChange ? effectiveTitleRole : undefined
               }
+              onCenterSnapChange={updateCenterSnapAxes}
               onInteractiveRoleChange={
                 !isDesigning && onTitlePositionChange ? setSelectedTitleRole : undefined
               }
@@ -1119,6 +1178,7 @@ export function KaraokePreview({
                 label={`${trackNames.get(trackId) ?? 'Singer'} lyric block`}
                 lineCount={lyricLineCount}
                 lines={trackLines}
+                onCenterSnapChange={updateCenterSnapAxes}
                 selected={trackId === selectedLyricTrackId && Boolean(onVocalPositionChange)}
                 selectedWordIds={selectedWordIds}
                 stageRef={stageRef}
