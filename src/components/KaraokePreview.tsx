@@ -19,8 +19,8 @@ import {
   usePreviewFonts,
   vocalDesignPreviewFonts,
 } from '../hooks/usePreviewFonts'
-import type { KaraokeProject, LyricDisplaySettings } from '../lib/model'
-import { formatTime } from '../lib/model'
+import type { KaraokeProject, LyricDisplaySettings, LyricWord, VocalTrack } from '../lib/model'
+import { formatTime, planLyricDisplayLines } from '../lib/model'
 import { fontFamilyFor } from '../lib/font-runtime'
 import {
   clampDisplayPosition,
@@ -75,6 +75,14 @@ export type KaraokePreviewDesignMode =
     }
 
 type StageFrameTextRole = 'brand' | 'clock' | 'footer'
+type TitleCardRole = keyof StageStyle['titleCard']
+type PreviewViewMode = 'auto' | 'title' | 'song'
+
+const TITLE_CARD_ROLES = [
+  { label: 'Eyebrow', value: 'eyebrow' },
+  { label: 'Title', value: 'title' },
+  { label: 'Artist', value: 'artist' },
+] as const satisfies ReadonlyArray<{ label: string; value: TitleCardRole }>
 
 interface KaraokePreviewProps {
   activeVocalTrackId?: string
@@ -83,6 +91,7 @@ interface KaraokePreviewProps {
   lyricMs: number
   selectedWordIds: Set<string>
   onVocalPositionChange?: (trackId: string, position: DisplayPosition) => void
+  onTitlePositionChange?: (role: TitleCardRole, position: DisplayPosition) => void
   onUpdateLyricDisplay?: (patch: Partial<LyricDisplaySettings>) => void
   onEditLyrics?: () => void
   designMode?: KaraokePreviewDesignMode
@@ -123,11 +132,49 @@ function projectLyricsDesignLines(style: LyricTextStyle, lineCount: number): Sta
   )
 }
 
+function wordProgress(word: LyricWord, lyricMs: number) {
+  if (word.startMs === null || word.endMs === null) return 0
+  if (lyricMs <= word.startMs) return 0
+  if (lyricMs >= word.endMs) return 1
+  return Math.max(0, Math.min(1, (lyricMs - word.startMs) / (word.endMs - word.startMs)))
+}
+
+function songPreviewLines(
+  track: VocalTrack,
+  lyricMs: number,
+  settings: LyricDisplaySettings,
+  stageStyle: StageStyle,
+  selectedWordIds: Set<string>,
+): StageFrameLine[] {
+  const focusLineId =
+    track.lines.find((line) => line.words.some((word) => selectedWordIds.has(word.id)))?.id ?? null
+  let planned = planLyricDisplayLines(track, lyricMs, settings, focusLineId)
+  if (planned.length === 0) {
+    const lastLine = [...track.lines].reverse().find((line) => line.words.some((word) => word.text))
+    planned = lastLine ? planLyricDisplayLines(track, lyricMs, settings, lastLine.id) : []
+  }
+  const style = resolveVocalStyle(stageStyle.lyrics, track.vocalStyle)
+  return planned.map((line) => ({
+    id: line.id,
+    trackId: track.id,
+    text: line.text.replaceAll('/', '·'),
+    style,
+    words: line.words
+      .filter((word) => word.text)
+      .map((word) => ({
+        id: word.id,
+        text: word.text.replaceAll('/', '·'),
+        progress: wordProgress(word, lyricMs),
+      })),
+  }))
+}
+
 function DisplayObject({
   children,
   className,
   label,
   objectStyle,
+  onSelect,
   onPositionChange,
   position,
   selected = false,
@@ -138,6 +185,7 @@ function DisplayObject({
   className: string
   label: string
   objectStyle?: CSSProperties
+  onSelect?: () => void
   onPositionChange?: (position: DisplayPosition) => void
   position: DisplayPosition
   selected?: boolean
@@ -152,6 +200,7 @@ function DisplayObject({
     position: DisplayPosition
   } | null>(null)
   const [renderedPosition, setRenderedPosition] = useState(position)
+  const interactive = Boolean(onPositionChange)
 
   const measuredSize = () => {
     const stage = stageRef.current?.getBoundingClientRect()
@@ -169,7 +218,7 @@ function DisplayObject({
   })
 
   const move = (deltaX: number, deltaY: number, origin = position) => {
-    if (!selected || !onPositionChange) return null
+    if (!onPositionChange) return null
     const size = measuredSize()
     const next = moveDisplayPosition(
       origin,
@@ -183,8 +232,9 @@ function DisplayObject({
   }
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
-    if (!selected || !onPositionChange || event.button !== 0) return
+    if (!onPositionChange || event.button !== 0) return
     event.preventDefault()
+    onSelect?.()
     event.currentTarget.focus()
     event.currentTarget.setPointerCapture?.(event.pointerId)
     dragRef.current = {
@@ -219,7 +269,7 @@ function DisplayObject({
     }
   }
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (!selected || !onPositionChange) return
+    if (!onPositionChange) return
     const step = event.shiftKey
       ? STAGE_LAYOUT.placement.keyboardLargeStepPx
       : STAGE_LAYOUT.placement.keyboardStepPx
@@ -245,15 +295,19 @@ function DisplayObject({
       {...data}
       ref={objectRef}
       className={className}
-      tabIndex={selected ? 0 : undefined}
+      tabIndex={interactive ? 0 : undefined}
       aria-label={
         selected
           ? `${label} position ${position.x}, ${position.y}. Drag or use arrow keys to move; hold Shift for 10 pixels.`
-          : undefined
+          : interactive
+            ? `${label}. Select to move.`
+            : undefined
       }
-      aria-keyshortcuts={selected ? 'ArrowUp ArrowDown ArrowLeft ArrowRight' : undefined}
+      aria-keyshortcuts={interactive ? 'ArrowUp ArrowDown ArrowLeft ArrowRight' : undefined}
       data-display-object={label}
+      data-display-object-interactive={interactive ? 'true' : undefined}
       data-display-object-selected={selected ? 'true' : undefined}
+      onFocus={onSelect}
       onKeyDown={handleKeyDown}
       onPointerCancel={(event) => finishPointer(event, false)}
       onPointerDown={handlePointerDown}
@@ -274,25 +328,43 @@ function PreviewTitleCard({
   artist,
   aliases,
   designRole,
+  interactiveRole,
+  onInteractiveRoleChange,
   onPositionChange,
+  onRolePositionChange,
   stageRef,
   stageStyle,
   title,
 }: {
   artist: string
   aliases: Record<string, string | null>
-  designRole?: keyof StageStyle['titleCard']
+  designRole?: TitleCardRole
+  interactiveRole?: TitleCardRole | null
+  onInteractiveRoleChange?: (role: TitleCardRole) => void
   onPositionChange?: (position: DisplayPosition) => void
+  onRolePositionChange?: (role: TitleCardRole, position: DisplayPosition) => void
   stageRef: RefObject<HTMLDivElement | null>
   stageStyle: StageStyle
   title: string
 }) {
   const { eyebrow, title: titleStyle, artist: artistStyle } = stageStyle.titleCard
   const selectedHidden = designRole ? !stageStyle.titleCard[designRole].visible : false
-  const roleProps = (role: keyof StageStyle['titleCard']) => ({
+  const selectedRole = designRole ?? interactiveRole
+  const roleProps = (role: TitleCardRole) => ({
     'data-hidden-output': selectedHidden && designRole === role ? 'true' : undefined,
     'data-title-card-design-role': designRole === role ? role : undefined,
     'data-title-card-role': role,
+  })
+  const roleInteractionProps = (role: TitleCardRole) => ({
+    onSelect:
+      interactiveRole && onInteractiveRoleChange ? () => onInteractiveRoleChange(role) : undefined,
+    onPositionChange:
+      designRole === role
+        ? onPositionChange
+        : interactiveRole && onRolePositionChange
+          ? (position: DisplayPosition) => onRolePositionChange(role, position)
+          : undefined,
+    selected: selectedRole === role,
   })
 
   return (
@@ -300,13 +372,12 @@ function PreviewTitleCard({
       {(eyebrow.visible || designRole === 'eyebrow') && (
         <DisplayObject
           {...roleProps('eyebrow')}
+          {...roleInteractionProps('eyebrow')}
           className="title-card__object title-card__eyebrow"
           label="Eyebrow"
           objectStyle={textStyle(eyebrow, aliases)}
           position={eyebrow.position}
-          selected={designRole === 'eyebrow'}
           stageRef={stageRef}
-          onPositionChange={designRole === 'eyebrow' ? onPositionChange : undefined}
         >
           <span style={textStyle(eyebrow, aliases)}>Tonight&apos;s performance</span>
         </DisplayObject>
@@ -314,13 +385,12 @@ function PreviewTitleCard({
       {(titleStyle.visible || designRole === 'title') && (
         <DisplayObject
           {...roleProps('title')}
+          {...roleInteractionProps('title')}
           className="title-card__object title-card__title"
           label="Song title"
           objectStyle={textStyle(titleStyle, aliases)}
           position={titleStyle.position}
-          selected={designRole === 'title'}
           stageRef={stageRef}
-          onPositionChange={designRole === 'title' ? onPositionChange : undefined}
         >
           <h3 style={textStyle(titleStyle, aliases)}>{title}</h3>
         </DisplayObject>
@@ -328,13 +398,12 @@ function PreviewTitleCard({
       {(artistStyle.visible || designRole === 'artist') && (
         <DisplayObject
           {...roleProps('artist')}
+          {...roleInteractionProps('artist')}
           className="title-card__object title-card__artist"
           label="Artist"
           objectStyle={textStyle(artistStyle, aliases)}
           position={artistStyle.position}
-          selected={designRole === 'artist'}
           stageRef={stageRef}
-          onPositionChange={designRole === 'artist' ? onPositionChange : undefined}
         >
           <p style={textStyle(artistStyle, aliases)}>{artist}</p>
         </DisplayObject>
@@ -527,14 +596,18 @@ export function KaraokePreview({
   activeVocalTrackId,
   project,
   playbackMs,
+  lyricMs,
   selectedWordIds,
   onVocalPositionChange,
+  onTitlePositionChange,
   onUpdateLyricDisplay,
   onEditLyrics,
   designMode,
   backgroundImage,
 }: KaraokePreviewProps) {
   const stageRef = useRef<HTMLDivElement>(null)
+  const [viewMode, setViewMode] = useState<PreviewViewMode>('auto')
+  const [selectedTitleRole, setSelectedTitleRole] = useState<TitleCardRole>('title')
   const designStyle = designMode?.stageStyle ?? null
   const previewProject = useMemo(
     () =>
@@ -547,6 +620,10 @@ export function KaraokePreview({
     () => previewFrameStateAt(previewProject, playbackMs),
     [playbackMs, previewProject],
   )
+  useEffect(() => {
+    setViewMode('auto')
+    setSelectedTitleRole('title')
+  }, [project.id])
   const lyricLineCount = normalizedLyricLineCount(project.lyricDisplay.lineCount)
   const projectDesignLines = useMemo(() => {
     if (designMode?.target === 'project-lyrics') {
@@ -726,23 +803,77 @@ export function KaraokePreview({
           }
         : null
   const activeVocalTrack = project.tracks.find((track) => track.id === activeVocalTrackId) ?? null
+  const previewContent = viewMode === 'auto' ? (frame.showTitle ? 'title' : 'song') : viewMode
+  const visibleTitleRoles = TITLE_CARD_ROLES.filter(
+    ({ value }) => stageStyle.titleCard[value].visible,
+  )
+  const effectiveTitleRole =
+    visibleTitleRoles.find(({ value }) => value === selectedTitleRole)?.value ??
+    visibleTitleRoles[0]?.value ??
+    null
+  const activeTrackHasLyrics = Boolean(
+    activeVocalTrack?.lines.some((line) => line.words.some((word) => word.text)),
+  )
+  const pinnedSongLines = useMemo(
+    () =>
+      activeVocalTrack && activeTrackHasLyrics
+        ? songPreviewLines(
+            activeVocalTrack,
+            lyricMs,
+            project.lyricDisplay,
+            stageStyle,
+            selectedWordIds,
+          )
+        : [],
+    [
+      activeTrackHasLyrics,
+      activeVocalTrack,
+      lyricMs,
+      project.lyricDisplay,
+      selectedWordIds,
+      stageStyle,
+    ],
+  )
   const liveLyricGroups = groupLinesByTrack(frame.lines).map((group) => ({
     lines: group,
     style: group[0]!.style,
     trackId: group[0]!.trackId,
   }))
-  if (activeVocalTrack && !liveLyricGroups.some(({ trackId }) => trackId === activeVocalTrack.id)) {
-    liveLyricGroups.push({
-      lines: [],
-      style: resolveVocalStyle(stageStyle.lyrics, activeVocalTrack.vocalStyle),
-      trackId: activeVocalTrack.id,
-    })
-  }
+  const previewLyricGroups =
+    viewMode === 'song' && activeVocalTrack && activeTrackHasLyrics
+      ? [
+          {
+            lines: pinnedSongLines,
+            style: resolveVocalStyle(stageStyle.lyrics, activeVocalTrack.vocalStyle),
+            trackId: activeVocalTrack.id,
+          },
+        ]
+      : liveLyricGroups
+  const selectedOutputTrackId =
+    liveLyricGroups.find(({ trackId }) => trackId === activeVocalTrackId)?.trackId ??
+    liveLyricGroups[0]?.trackId
+  const selectedLyricTrackId = isDesigning
+    ? activeVocalTrackId
+    : viewMode === 'song'
+      ? activeVocalTrackId
+      : selectedOutputTrackId
+  const trackNames = new Map(project.tracks.map((track) => [track.id, track.name]))
+  const showTitleCard =
+    isTitleCardDesign || (isDesigning ? frame.showTitle : previewContent === 'title')
+  const showOutputLyrics =
+    !isTitleCardDesign && (isDesigning ? !frame.showTitle : previewContent === 'song')
+  const syncAids = isDesigning
+    ? cueFrame.syncAids
+    : viewMode === 'auto' && previewContent === 'song'
+      ? frame.syncAids
+      : []
 
   return (
     <section
       className="preview-panel panel"
       aria-label={isDesigning ? `${designLabel} design preview` : 'Karaoke preview'}
+      data-preview-content={isDesigning ? undefined : previewContent}
+      data-preview-view-mode={isDesigning ? undefined : viewMode}
     >
       <header className="panel-header preview-panel__header">
         <div className="panel-title">
@@ -751,7 +882,13 @@ export function KaraokePreview({
           </span>
           <div>
             <span className="eyebrow">{isDesigning ? designLabel : 'Stage monitor'}</span>
-            <h2>{isDesigning ? 'Design preview' : 'Live preview'}</h2>
+            <h2>
+              {isDesigning
+                ? 'Design preview'
+                : viewMode === 'auto'
+                  ? 'Live preview'
+                  : `${viewMode === 'title' ? 'Title' : 'Song'} preview`}
+            </h2>
           </div>
         </div>
         {isDesigning ? (
@@ -773,39 +910,77 @@ export function KaraokePreview({
           </div>
         ) : (
           <div className="preview-toolbar">
-            <label className="preview-setting">
-              <span>Lines</span>
+            <label className="preview-setting preview-setting--view">
+              <span>View</span>
               <select
-                aria-label="Visible lyric lines"
-                title="Choose how many lyric lines appear in the preview and exported video"
-                value={project.lyricDisplay.lineCount}
-                onChange={(event) =>
-                  onUpdateLyricDisplay?.({ lineCount: Number(event.target.value) })
-                }
+                aria-label="Preview content"
+                title="Auto follows the playhead; Title and Song pin an editor view"
+                value={viewMode}
+                onChange={(event) => setViewMode(event.target.value as PreviewViewMode)}
               >
-                {[1, 2, 3, 4, 5].map((count) => (
-                  <option key={count} value={count}>
-                    {count}
-                  </option>
-                ))}
+                <option value="auto">Auto</option>
+                <option value="title">Title</option>
+                <option value="song">Song</option>
               </select>
             </label>
-            <label className="preview-setting">
-              <span>Advance</span>
-              <select
-                aria-label="Lyric line advance mode"
-                title="Clear replaces a page; Scroll advances one line at a time within a section"
-                value={project.lyricDisplay.advanceMode}
-                onChange={(event) =>
-                  onUpdateLyricDisplay?.({
-                    advanceMode: event.target.value as LyricDisplaySettings['advanceMode'],
-                  })
-                }
-              >
-                <option value="clear">Clear</option>
-                <option value="scroll">Scroll</option>
-              </select>
-            </label>
+            {previewContent === 'title' ? (
+              <label className="preview-setting">
+                <span>Element</span>
+                <select
+                  aria-label="Movable title element"
+                  disabled={!effectiveTitleRole}
+                  title="Choose the visible title element to move"
+                  value={effectiveTitleRole ?? ''}
+                  onChange={(event) => setSelectedTitleRole(event.target.value as TitleCardRole)}
+                >
+                  {visibleTitleRoles.length ? (
+                    visibleTitleRoles.map(({ label, value }) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))
+                  ) : (
+                    <option value="">None visible</option>
+                  )}
+                </select>
+              </label>
+            ) : (
+              <>
+                <label className="preview-setting">
+                  <span>Lines</span>
+                  <select
+                    aria-label="Visible lyric lines"
+                    title="Choose how many lyric lines appear in the preview and exported video"
+                    value={project.lyricDisplay.lineCount}
+                    onChange={(event) =>
+                      onUpdateLyricDisplay?.({ lineCount: Number(event.target.value) })
+                    }
+                  >
+                    {[1, 2, 3, 4, 5].map((count) => (
+                      <option key={count} value={count}>
+                        {count}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="preview-setting">
+                  <span>Advance</span>
+                  <select
+                    aria-label="Lyric line advance mode"
+                    title="Clear replaces a page; Scroll advances one line at a time within a section"
+                    value={project.lyricDisplay.advanceMode}
+                    onChange={(event) =>
+                      onUpdateLyricDisplay?.({
+                        advanceMode: event.target.value as LyricDisplaySettings['advanceMode'],
+                      })
+                    }
+                  >
+                    <option value="clear">Clear</option>
+                    <option value="scroll">Scroll</option>
+                  </select>
+                </label>
+              </>
+            )}
             {onEditLyrics && (
               <Button
                 size="sm"
@@ -817,9 +992,11 @@ export function KaraokePreview({
               </Button>
             )}
             <div className="preview-badges">
-              <span className="status-pill status-pill--live">
-                <i /> Live
-              </span>
+              {viewMode === 'auto' && (
+                <span className="status-pill status-pill--live">
+                  <i /> Live
+                </span>
+              )}
               <span className="status-pill">
                 <ShieldCheck size={12} /> Title safe
               </span>
@@ -838,6 +1015,7 @@ export function KaraokePreview({
         data-background-mode={background.mode}
         data-background-solid-color={background.solidColor}
         data-logical-stage={isDesigning ? '1920x1080' : undefined}
+        data-preview-content={isDesigning ? undefined : previewContent}
         style={stageVars}
       >
         <div className="karaoke-stage__grain" />
@@ -914,42 +1092,57 @@ export function KaraokePreview({
               }
             />
           ) : null}
-          {!designLines && (isTitleCardDesign || frame.showTitle) && (
+          {!designLines && showTitleCard && (
             <PreviewTitleCard
               artist={frame.artist}
               aliases={fontRuntime.aliases}
               designRole={isTitleCardDesign ? designMode.role : undefined}
+              interactiveRole={
+                !isDesigning && onTitlePositionChange ? effectiveTitleRole : undefined
+              }
+              onInteractiveRoleChange={
+                !isDesigning && onTitlePositionChange ? setSelectedTitleRole : undefined
+              }
               onPositionChange={isTitleCardDesign ? designMode.onPositionChange : undefined}
+              onRolePositionChange={!isDesigning ? onTitlePositionChange : undefined}
               stageRef={stageRef}
               stageStyle={stageStyle}
               title={frame.title}
             />
           )}
           {!designLines &&
-            !isTitleCardDesign &&
-            liveLyricGroups.map(({ lines: trackLines, style, trackId }) => (
+            showOutputLyrics &&
+            previewLyricGroups.map(({ lines: trackLines, style, trackId }) => (
               <LyricDisplayObject
                 key={trackId}
                 aliases={fontRuntime.aliases}
-                label={`${trackId} lyric block`}
+                label={`${trackNames.get(trackId) ?? 'Singer'} lyric block`}
                 lineCount={lyricLineCount}
                 lines={trackLines}
-                selected={trackId === activeVocalTrackId && Boolean(onVocalPositionChange)}
+                selected={trackId === selectedLyricTrackId && Boolean(onVocalPositionChange)}
                 selectedWordIds={selectedWordIds}
                 stageRef={stageRef}
                 style={style}
                 trackId={trackId}
                 onPositionChange={
-                  trackId === activeVocalTrackId && onVocalPositionChange
+                  trackId === selectedLyricTrackId && onVocalPositionChange
                     ? (position) => onVocalPositionChange(trackId, position)
                     : undefined
                 }
               />
             ))}
+          {!designLines &&
+            !isDesigning &&
+            viewMode === 'song' &&
+            previewLyricGroups.length === 0 && (
+              <p className="preview-stage-empty" role="status">
+                Add lyrics to preview the Song view.
+              </p>
+            )}
         </div>
         {!projectDesignLines &&
           !isTitleCardDesign &&
-          cueFrame.syncAids.map((aid) => {
+          syncAids.map((aid) => {
             const line = lines.get(lineKey(aid.trackId, aid.lineId))
             return line ? (
               <SyncAidCue

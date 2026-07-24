@@ -43,6 +43,11 @@
   gap: 6px;
 }
 
+.preview-setting--view {
+  padding-right: 6px;
+  border-right: 1px solid #334039;
+}
+
 .preview-badges {
   gap: 5px;
 }

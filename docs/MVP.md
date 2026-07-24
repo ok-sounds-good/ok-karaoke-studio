@@ -188,8 +188,16 @@ Karaoke Studio identity.
 - Do not automatically insert an Instrumental word, graphic, or countdown in
   gaps between lyric sections.
 - Title card, safe-area guide, and current time.
-- Live Preview is primarily a timing-verification surface. It is suspended
+- The Stage monitor defaults to **Auto**, a timing-verification view that shows
+  the same Title or Song layer the exported output has at the playhead. **Title**
+  pins the title card for placement, and **Song** pins the active singer's
+  authored lyric window for placement and text review, including untimed
+  lyrics. Title and Song are editor-only viewer choices: they are not saved in
+  the project and never alter MP4 frame planning. The monitor is suspended
   during armed synchronization and restored on exit.
+- Stage-monitor controls follow the visible layer. Title exposes the movable
+  title element; Song exposes line count and Clear/Scroll advance controls.
+  Edit text remains available in either layer. Only Auto is labeled Live.
 - Play/pause, Stop, short skip backward/forward, playback speed, volume, playhead
   time, and duration. Stop pauses playback and returns the playhead to project
   time `0:00`.
@@ -220,18 +228,25 @@ Karaoke Studio identity.
   as integer center coordinates on the logical 1920 × 1080 stage; Preview and
   MP4 clamp the rendered object bounds to that stage with a tolerance of one
   logical pixel.
-- In Live Preview, the active vocal block, and in Design Preview the active
-  vocal block or selected title-card role, has one visible bounding box and can
-  be moved by pointer or arrow keys. Shift+Arrow moves by 10 logical pixels
-  instead of one. A vocal move updates that track's one saved center position;
-  its internal Left, Center, or Right alignment remains independent.
+- In the Stage monitor, the one selected movable object always belongs to the
+  visible layer: a visible eyebrow, song title, or artist role in Title; the
+  active singer's vocal block in Song; and a role or vocal block present in the
+  actual output frame in Auto. Auto prefers the active singer when that singer
+  is present, otherwise it selects the first visible singer; a blank output
+  interval has no phantom movable block. A title card never shows a phantom
+  vocal bounding box, and Song shows an explicit empty state instead of a
+  movable blank block when the active singer has no lyrics. In Design Preview,
+  the active vocal block or selected title-card role remains the movable object.
+  Pointer movement and arrow keys update the selected object's saved center
+  position; Shift+Arrow moves by 10 logical pixels instead of one. A vocal
+  block's internal Left, Center, or Right alignment remains independent.
 - A vocal block keeps a stable outer footprint for exactly the configured
   visible-line count. Its width is measured from deterministic typeface-aware
   sample content and its height from that count, the resolved global lyric
   typeface, face, size, line box, and inter-line gap. Short, long, partially
-  filled, or empty current lyric content does not resize the placement object
-  or change its saved center; changing the count or lyric font recomputes the
-  footprint while retaining that center.
+  filled, or changing current lyric content does not resize a visible placement
+  object or change its saved center; changing the count or lyric font recomputes
+  the footprint while retaining that center.
 - Positioned display objects may overlap intentionally. The Studio does not
   warn about, reject, reflow, or automatically separate overlapping lyric or
   title objects. The background and Stage frame do not own placement state.
@@ -441,6 +456,9 @@ singing waiting`, then `Example line 3` through the configured maximum.
 - [x] Live Preview and MP4 use the same per-word timing, show no repeated singer
       or track label above lyric lines, and add no automatic Instrumental treatment
       between sections.
+- [x] The Stage monitor's Auto, Title, and Song viewer choices keep movement
+      aligned with the visible layer, expose untimed active-singer lyrics in Song,
+      and remain editor-only without changing project or MP4 output.
 - [x] The project can choose a solid, gradient, or linked-image background and
       can configure or disable the Stage frame, while title-card, footer, and frame
       typography remain independently configurable.

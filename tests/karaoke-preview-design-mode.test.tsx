@@ -329,22 +329,21 @@ describe('Karaoke Preview project-lyrics design mode', () => {
       )
       const rendered = document.createElement('div')
       rendered.innerHTML = markup
-      return rendered.querySelector<HTMLElement>('[data-display-object-selected="true"]')!
+      return rendered.querySelector<HTMLElement>(
+        '[data-lyric-object-line-count][data-display-object-selected="true"]',
+      )
     }
 
-    const shortObject = liveObject(project)
-    const longObject = liveObject(longProject)
+    const shortObject = liveObject(project)!
+    const longObject = liveObject(longProject)!
     const emptyObject = liveObject(emptyProject)
-    const fontObject = liveObject(fontProject)
+    const fontObject = liveObject(fontProject)!
     expect(shortObject.dataset.lyricObjectLineCount).toBe('3')
     expect(shortObject.style.getPropertyValue('--stage-lyric-object-height')).toBe(
       longObject.style.getPropertyValue('--stage-lyric-object-height'),
     )
-    expect(shortObject.style.getPropertyValue('--stage-lyric-object-height')).toBe(
-      emptyObject.style.getPropertyValue('--stage-lyric-object-height'),
-    )
+    expect(emptyObject).toBeNull()
     expect(shortObject.style.left).toBe(longObject.style.left)
-    expect(shortObject.style.top).toBe(emptyObject.style.top)
     expect(shortObject.style.getPropertyValue('--stage-lyric-object-height')).not.toBe(
       fontObject.style.getPropertyValue('--stage-lyric-object-height'),
     )
@@ -358,7 +357,7 @@ describe('Karaoke Preview project-lyrics design mode', () => {
       root.render(
         <KaraokePreview
           activeVocalTrackId={track.id}
-          project={emptyProject}
+          project={project}
           playbackMs={0}
           lyricMs={0}
           selectedWordIds={new Set()}
@@ -701,7 +700,8 @@ describe('Karaoke Preview project-lyrics design mode', () => {
       'local("FutureFrame-Regular")',
     ])
     expect(container.querySelector('[data-design-preview]')).toBeNull()
-    expect(container.querySelector('[aria-label="Visible lyric lines"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Preview content"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Movable title element"]')).not.toBeNull()
     await act(async () => root.unmount())
   })
 

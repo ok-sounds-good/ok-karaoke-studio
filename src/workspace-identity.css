@@ -234,6 +234,10 @@
   color: var(--muted);
 }
 
+.preview-setting--view {
+  border-right-color: var(--line);
+}
+
 .preview-setting select {
   border-color: var(--control-line);
   background: #fff;
