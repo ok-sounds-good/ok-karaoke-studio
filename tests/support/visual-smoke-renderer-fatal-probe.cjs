@@ -30,16 +30,59 @@ const PROBE_HTML = `<!doctype html>
         <button class="validation-button">Validate</button>
         <button>Export</button>
       </nav>
-      <main>
+      <main class="unified-workspace">
         <button class="play-button">Play</button>
         <select aria-label="Playback speed"><option>1×</option></select>
         <input aria-label="Volume" type="range" />
         <input aria-label="Timeline zoom" type="range" />
-        <section aria-label="Karaoke preview">Renderer fatal smoke probe</section>
-        <section class="timeline-panel" aria-label="Lyric Timing">Lyric Timing</section>
+        <section id="workspace-stage-region" aria-label="Karaoke preview">Renderer fatal smoke probe</section>
+        <div
+          aria-label="Stage Monitor and Lyric Timing height"
+          aria-orientation="horizontal"
+          aria-valuemax="100"
+          aria-valuemin="0"
+          aria-valuenow="44"
+          role="separator"
+          tabindex="0"
+        ></div>
+        <div id="workspace-timing-region" style="overflow:hidden">
+          <section class="timeline-panel" aria-label="Lyric Timing">
+            <div class="timeline-viewport" style="overflow:auto">Lyric Timing</div>
+          </section>
+        </div>
       </main>
     </div>
     <script>
+      const workspace = document.querySelector('.unified-workspace')
+      const stage = document.querySelector('#workspace-stage-region')
+      const divider = document.querySelector('[role="separator"]')
+      const cssNumber = (style, property) => {
+        const value = Number.parseFloat(style.getPropertyValue(property))
+        return Number.isFinite(value) ? value : 0
+      }
+      const ratioForHeight = (height, availableHeight) =>
+        availableHeight <= 0 ? 0 : Math.min(1, Math.max(0, height / availableHeight))
+      const updateDividerAria = () => {
+        const style = getComputedStyle(workspace)
+        const contentHeight =
+          workspace.clientHeight - cssNumber(style, 'padding-top') - cssNumber(style, 'padding-bottom')
+        const availableHeight = Math.max(0, contentHeight - cssNumber(style, '--workspace-divider-size'))
+        const maximumHeight = Math.max(0, availableHeight - cssNumber(style, '--workspace-timing-min'))
+        const minimumHeight = Math.min(cssNumber(style, '--workspace-top-min'), maximumHeight)
+        const minimum = Math.round(ratioForHeight(minimumHeight, availableHeight) * 100)
+        const maximum = Math.round(ratioForHeight(maximumHeight, availableHeight) * 100)
+        const current = Math.round(
+          ratioForHeight(stage.getBoundingClientRect().height, availableHeight) * 100,
+        )
+        divider.setAttribute('aria-valuemin', String(minimum))
+        divider.setAttribute('aria-valuemax', String(maximum))
+        divider.setAttribute('aria-valuenow', String(current))
+        divider.setAttribute(
+          'aria-valuetext',
+          current + '% Stage Monitor height; ' + (100 - current) + '% Lyric Timing height',
+        )
+      }
+      updateDividerAria()
       window.addEventListener('oks-captured', () => {
         setTimeout(() => {
           throw new TypeError('renderer-fatal-probe')
