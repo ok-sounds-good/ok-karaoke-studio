@@ -505,6 +505,73 @@ describe('project Style App integration', () => {
     expect(redone.tracks[0].vocalStyle.sungColor).toBe('#123456')
   })
 
+  it('loads one template draft, cancels Style edits, and restores title-card and stage-frame state', async () => {
+    const original = createDemoProject()
+    const originalEyebrowVisible = original.stageStyle.titleCard.eyebrow.visible
+    const originalStageFrameEnabled = original.stageStyle.stageFrame.enabled
+    const stageStyle = cloneStageStyle(original.stageStyle)
+    stageStyle.lyrics.sizePx = 96
+    stageStyle.background = {
+      ...stageStyle.background,
+      mode: 'solid',
+      solidColor: '#123456',
+    }
+    stageStyle.titleCard.eyebrow.visible = false
+    stageStyle.titleCard.artist.visible = false
+    stageStyle.stageFrame.enabled = false
+    stageStyle.stageFrame.footer.visible = false
+    const template: StyleTemplate = {
+      id: 'cancel-stage-card',
+      name: 'Cancel Stage Card',
+      preferences: {
+        stageStyle,
+        lyricDisplay: { lineCount: 2, advanceMode: 'scroll' },
+        vocalStyle: cloneVocalStyle(original.tracks[0]!.vocalStyle),
+        videoExportDefaults: { resolution: '1080p', fps: 60 },
+      },
+    }
+    harness.listStyleTemplates.mockResolvedValueOnce([template])
+
+    await openDemo()
+    await click(buttonByText('Style'))
+    await click(buttonByText('Stage frame'))
+    await click(buttonByText('Title card'))
+
+    await click(buttonByText('Templates'))
+    await click(buttonByText('Load into Style'))
+    expect(document.body.textContent).toContain('Loaded “Cancel Stage Card” into this Style draft.')
+
+    await click(buttonByText('Title card'))
+    expect(
+      document.querySelector<HTMLInputElement>('input[aria-label="Show Eyebrow in output"]')!
+        .checked,
+    ).toBe(false)
+    await click(buttonByText('Stage frame'))
+    expect(
+      document.querySelector<HTMLInputElement>('input[aria-label="Show Stage frame in output"]')!
+        .checked,
+    ).toBe(false)
+    await click(buttonByText('Cancel'))
+
+    expect(document.querySelector('.style-workspace')).toBeNull()
+    expect(buttonByLabel('Undo').disabled).toBe(true)
+    expect(document.querySelector('.karaoke-stage')?.getAttribute('data-background-mode')).toBe(
+      'gradient',
+    )
+
+    await click(buttonByText('Style'))
+    await click(buttonByText('Title card'))
+    expect(
+      document.querySelector<HTMLInputElement>('input[aria-label="Show Eyebrow in output"]')!
+        .checked,
+    ).toBe(originalEyebrowVisible)
+    await click(buttonByText('Stage frame'))
+    expect(
+      document.querySelector<HTMLInputElement>('input[aria-label="Show Stage frame in output"]')!
+        .checked,
+    ).toBe(originalStageFrameEnabled)
+  })
+
   it('loads one template draft, applies one project history step, and seeds the next Export', async () => {
     const original = createDemoProject()
     const stageStyle = cloneStageStyle(original.stageStyle)
@@ -523,7 +590,7 @@ describe('project Style App integration', () => {
       name: 'Warm stage',
       preferences: {
         stageStyle,
-        lyricDisplay: { lineCount: 3, advanceMode: 'scroll' },
+        lyricDisplay: { lineCount: 2, advanceMode: 'scroll' },
         vocalStyle,
         videoExportDefaults: { resolution: '1080p', fps: 60 },
       },
@@ -547,7 +614,7 @@ describe('project Style App integration', () => {
       mode: 'solid',
       solidColor: '#123456',
     })
-    expect(applied.lyricDisplay).toEqual({ lineCount: 3, advanceMode: 'scroll' })
+    expect(applied.lyricDisplay).toEqual({ lineCount: 2, advanceMode: 'scroll' })
     expect(applied.tracks[0]!.vocalStyle).toMatchObject({
       sungColor: '#fedcba',
       previewMs: 5_500,
@@ -578,6 +645,203 @@ describe('project Style App integration', () => {
     expect(undone.stageStyle).toEqual(original.stageStyle)
     expect(undone.lyricDisplay).toEqual(original.lyricDisplay)
     expect(undone.tracks[0]!.vocalStyle).toEqual(original.tracks[0]!.vocalStyle)
+  })
+
+  it('loads one template draft and cancels without changing project state', async () => {
+    const original = createDemoProject()
+    const stageStyle = cloneStageStyle(original.stageStyle)
+    stageStyle.lyrics.sizePx = 96
+    stageStyle.background = {
+      ...stageStyle.background,
+      mode: 'solid',
+      solidColor: '#123456',
+    }
+    stageStyle.titleCard.eyebrow.visible = !original.stageStyle.titleCard.eyebrow.visible
+    stageStyle.titleCard.artist.visible = !original.stageStyle.titleCard.artist.visible
+    stageStyle.stageFrame.enabled = !original.stageStyle.stageFrame.enabled
+    stageStyle.stageFrame.footer.visible = !original.stageStyle.stageFrame.footer.visible
+    const vocalStyle = cloneVocalStyle(original.tracks[0]!.vocalStyle)
+    vocalStyle.sungColor = '#fedcba'
+    vocalStyle.previewMs = 5_500
+    vocalStyle.syncAid = { enabled: true, minLeadMs: 2_500, maxLeadMs: 4_500 }
+    const template: StyleTemplate = {
+      id: 'warm-stage',
+      name: 'Warm stage',
+      preferences: {
+        stageStyle,
+        lyricDisplay: { lineCount: 2, advanceMode: 'scroll' },
+        vocalStyle,
+        videoExportDefaults: { resolution: '1080p', fps: 60 },
+      },
+    }
+    harness.listStyleTemplates.mockResolvedValueOnce([template])
+
+    const captureBackgroundSnapshot = () => {
+      const solid = document.querySelector<HTMLInputElement>(
+        '[aria-label="Background solid color"]',
+      )
+      const gradientStart = document.querySelector<HTMLInputElement>(
+        '[aria-label="Background gradient start color"]',
+      )
+      const gradientEnd = document.querySelector<HTMLInputElement>(
+        '[aria-label="Background gradient end color"]',
+      )
+      const mode = document.querySelector<HTMLInputElement>('input[type="radio"][value="image"]')
+        ?.checked
+        ? 'image'
+        : document.querySelector<HTMLInputElement>('input[type="radio"][value="solid"]')?.checked
+          ? 'solid'
+          : 'gradient'
+
+      return {
+        mode,
+        solidColor: solid?.value ?? null,
+        gradientStartColor: gradientStart?.value ?? null,
+        gradientEndColor: gradientEnd?.value ?? null,
+      }
+    }
+    const captureExportSnapshot = async () => {
+      await click(buttonByText('Export'))
+      const snapshot = {
+        resolution: document.querySelector<HTMLSelectElement>('[aria-label="Video resolution"]')
+          ?.value,
+        fps: document.querySelector<HTMLSelectElement>('[aria-label="Video frame rate"]')?.value,
+      }
+      await click(buttonByLabel('Close dialog'))
+      return snapshot
+    }
+
+    await openDemo()
+    const exportBaseline = await captureExportSnapshot()
+    const lyricDisplayBaseline = {
+      advanceMode: original.lyricDisplay.advanceMode,
+      lineCount: String(original.lyricDisplay.lineCount),
+    }
+
+    await click(buttonByText('Style'))
+    await click(buttonByText('Lyrics'))
+    const styleBaseline = {
+      lyricFontSize: document.querySelector<HTMLSelectElement>(
+        '[aria-label="Global lyric font size"]',
+      )!.value,
+      singer: {
+        previewMs: document.querySelector<HTMLInputElement>(
+          '[aria-label="Lead Vocal Preview Time"]',
+        )!.value,
+        syncAidEnabled: document.querySelector<HTMLInputElement>(
+          '[aria-label="Enable Lead Vocal Sync Aid"]',
+        )!.checked,
+        minLeadMs: document.querySelector<HTMLInputElement>(
+          '[aria-label="Lead Vocal Sync Aid Minimum lead"]',
+        )!.value,
+        maxLeadMs: document.querySelector<HTMLInputElement>(
+          '[aria-label="Lead Vocal Sync Aid Maximum lead"]',
+        )!.value,
+        sungColor: document.querySelector<HTMLInputElement>(
+          '[aria-label="Selected singer sung color"]',
+        )!.value,
+        unsungColor: document.querySelector<HTMLInputElement>(
+          '[aria-label="Selected singer unsung color"]',
+        )!.value,
+      },
+    }
+    await click(buttonByText('Background'))
+    const backgroundBaseline = captureBackgroundSnapshot()
+    await click(buttonByText('Title card'))
+    const titleCardBaseline = {
+      eyebrow: document.querySelector<HTMLInputElement>('[aria-label="Show Eyebrow in output"]')!
+        .checked,
+      artist: (() => {
+        document.querySelector<HTMLInputElement>('input[type="radio"][value="artist"]')!.click()
+        return document.querySelector<HTMLInputElement>('[aria-label="Show Artist in output"]')!
+          .checked
+      })(),
+    }
+    await click(buttonByText('Stage frame'))
+    const stageFrameBaseline = {
+      enabled: document.querySelector<HTMLInputElement>(
+        '[aria-label="Show Stage frame in output"]',
+      )!.checked,
+      footer: (() => {
+        document.querySelector<HTMLInputElement>('input[type="radio"][value="footer"]')!.click()
+        return document.querySelector<HTMLInputElement>('[aria-label="Show Footer in output"]')!
+          .checked
+      })(),
+    }
+    await click(buttonByText('Lyrics'))
+
+    await click(buttonByText('Templates'))
+    expect(harness.listStyleTemplates).toHaveBeenCalledOnce()
+    await click(buttonByText('Load into Style'))
+    expect(document.body.textContent).toContain('Loaded “Warm stage” into this Style draft.')
+
+    await click(buttonByText('Cancel'))
+
+    expect(document.querySelector('.style-workspace')).toBeNull()
+    expect(buttonByLabel('Undo').disabled).toBe(true)
+    expect(document.querySelector('[title="Unsaved changes"]')).toBeNull()
+
+    await click(buttonByText('Style'))
+    await click(buttonByText('Lyrics'))
+    expect(
+      document.querySelector<HTMLInputElement>('[aria-label="Global lyric font size"]')?.value,
+    ).toBe(styleBaseline.lyricFontSize)
+    expect(
+      document.querySelector<HTMLInputElement>('[aria-label="Lead Vocal Preview Time"]')?.value,
+    ).toBe(styleBaseline.singer.previewMs)
+    expect(
+      document.querySelector<HTMLInputElement>('[aria-label="Enable Lead Vocal Sync Aid"]')
+        ?.checked,
+    ).toBe(styleBaseline.singer.syncAidEnabled)
+    expect(
+      document.querySelector<HTMLInputElement>('[aria-label="Lead Vocal Sync Aid Minimum lead"]')
+        ?.value,
+    ).toBe(styleBaseline.singer.minLeadMs)
+    expect(
+      document.querySelector<HTMLInputElement>('[aria-label="Lead Vocal Sync Aid Maximum lead"]')
+        ?.value,
+    ).toBe(styleBaseline.singer.maxLeadMs)
+    expect(
+      document.querySelector<HTMLInputElement>('[aria-label="Selected singer sung color"]')?.value,
+    ).toBe(styleBaseline.singer.sungColor)
+    expect(
+      document.querySelector<HTMLInputElement>('[aria-label="Selected singer unsung color"]')
+        ?.value,
+    ).toBe(styleBaseline.singer.unsungColor)
+
+    await click(buttonByText('Background'))
+    expect(captureBackgroundSnapshot()).toEqual(backgroundBaseline)
+    await click(buttonByText('Title card'))
+    expect(
+      document.querySelector<HTMLInputElement>('[aria-label="Show Eyebrow in output"]')?.checked,
+    ).toBe(titleCardBaseline.eyebrow)
+    await click(document.querySelector<HTMLInputElement>('input[type="radio"][value="artist"]')!)
+    expect(
+      document.querySelector<HTMLInputElement>('[aria-label="Show Artist in output"]')?.checked,
+    ).toBe(titleCardBaseline.artist)
+    await click(buttonByText('Stage frame'))
+    expect(
+      document.querySelector<HTMLInputElement>('[aria-label="Show Stage frame in output"]')
+        ?.checked,
+    ).toBe(stageFrameBaseline.enabled)
+    await click(document.querySelector<HTMLInputElement>('input[type="radio"][value="footer"]')!)
+    expect(
+      document.querySelector<HTMLInputElement>('[aria-label="Show Footer in output"]')?.checked,
+    ).toBe(stageFrameBaseline.footer)
+    await click(buttonByText('Cancel'))
+
+    expect(
+      document.querySelector<HTMLSelectElement>('[aria-label="Visible lyric lines"]')?.value,
+    ).toBe(lyricDisplayBaseline.lineCount)
+    expect(
+      document.querySelector<HTMLSelectElement>('[aria-label="Lyric line advance mode"]')?.value,
+    ).toBe(lyricDisplayBaseline.advanceMode)
+    const exportAfterCancel = await captureExportSnapshot()
+    expect(exportAfterCancel).toEqual(exportBaseline)
+
+    const saved = harness.saveProject.mock.calls.at(-1)?.[0]?.contents
+    if (saved) expect(parseProject(saved)).toEqual(parseProject(serializeProject(original)))
+    expect(harness.saveProject).not.toHaveBeenCalled()
   })
 
   it('applies one verified linked Image through strict-v0 save, undo, redo, and missing reopen', async () => {

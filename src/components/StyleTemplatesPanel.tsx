@@ -215,187 +215,192 @@ export function StyleTemplatesPanel({
       role="tabpanel"
       aria-labelledby={labelledBy}
       hidden={!active}
-      className="style-templates"
+      className="style-templates style-destination-panel"
     >
-      <p className="style-field-help">
-        Templates capture and apply global stage settings plus the selected singer&apos;s color,
-        placement, and cue settings. They change this Style draft only; Apply &amp; close makes the
-        project edit.
-      </p>
-      <label className="style-field">
-        <span>Search templates</span>
-        <input
-          aria-label="Search saved templates"
-          value={query}
-          onChange={(event) => setQuery(event.currentTarget.value)}
-        />
-      </label>
-      <div className="style-template-list" aria-label="Saved style templates" aria-busy={busy}>
-        {templates === null || (busy && templates.length === 0) ? (
-          <p>Loading templates…</p>
-        ) : loadFailed ? (
-          <p>Saved templates could not be loaded.</p>
-        ) : visible.length ? (
-          visible.map((template) => (
-            <button
-              key={template.id}
-              type="button"
-              aria-pressed={template.id === selectedId}
-              disabled={busy}
-              onClick={() => {
-                setSelectedId(template.id)
-                setConfirmingDelete(false)
-                setStatus(null)
-              }}
-            >
-              {template.name}
-            </button>
-          ))
-        ) : (
-          <p>{templates.length ? 'No templates match your search.' : 'No saved templates yet.'}</p>
-        )}
-      </div>
-      {selected && (
-        <section className="style-template-detail" aria-label="Selected template">
-          <h3>{selected.name}</h3>
-          <p>
-            Includes global stage and lyric settings, the selected singer&apos;s appearance and cue
-            settings, and export defaults.
-          </p>
-          {selected.preferences.stageStyle.background.mode === 'image' && (
-            <p>
-              Includes a linked background image. Its availability is checked in Preview after
-              loading; a missing image remains linked for relinking.
-            </p>
-          )}
-          <p>
-            If a local font is unavailable, it remains selected and uses the Preview and MP4
-            fallback.
-          </p>
-          <Button
-            variant="primary"
-            disabled={busy || !selectedSingerTrackId}
-            onClick={() => void load()}
-          >
-            Load into Style
-          </Button>
-        </section>
-      )}
-      <section className="style-template-actions" aria-label="Template management">
+      <h3 className="style-destination-heading">Templates</h3>
+      <div className="style-templates-scroll">
+        <p className="style-field-help">
+          Templates capture and apply global stage settings plus the selected singer&apos;s color,
+          placement, and cue settings. They change this Style draft only; Apply &amp; close makes
+          the project edit.
+        </p>
         <label className="style-field">
-          <span>Save draft as new</span>
+          <span>Search templates</span>
           <input
-            aria-label="New template name"
-            value={newName}
-            onChange={(event) => setNewName(event.currentTarget.value)}
+            aria-label="Search saved templates"
+            value={query}
+            onChange={(event) => setQuery(event.currentTarget.value)}
           />
         </label>
-        <div>
-          <Button
-            variant="secondary"
-            disabled={busy || !newName.trim() || !selectedSingerTrackId}
-            onClick={() => void create()}
-          >
-            Save as new
-          </Button>
+        <div className="style-template-list" aria-label="Saved style templates" aria-busy={busy}>
+          {templates === null || (busy && templates.length === 0) ? (
+            <p>Loading templates…</p>
+          ) : loadFailed ? (
+            <p>Saved templates could not be loaded.</p>
+          ) : visible.length ? (
+            visible.map((template) => (
+              <button
+                key={template.id}
+                type="button"
+                aria-pressed={template.id === selectedId}
+                disabled={busy}
+                onClick={() => {
+                  setSelectedId(template.id)
+                  setConfirmingDelete(false)
+                  setStatus(null)
+                }}
+              >
+                {template.name}
+              </button>
+            ))
+          ) : (
+            <p>
+              {templates.length ? 'No templates match your search.' : 'No saved templates yet.'}
+            </p>
+          )}
         </div>
         {selected && (
-          <>
-            <label className="style-field">
-              <span>Rename selected template</span>
-              <input
-                aria-label="Rename selected template"
-                value={renameName}
-                onChange={(event) => setRenameName(event.currentTarget.value)}
-              />
-            </label>
-            <div>
-              <Button
-                variant="ghost"
-                disabled={busy || !renameName.trim() || renameName.trim() === selected.name}
-                onClick={() => void rename()}
-              >
-                Rename
-              </Button>
-              {!confirmingDelete && (
-                <Button
-                  id={deleteButtonId}
-                  variant="danger"
-                  disabled={busy}
-                  onClick={() => setConfirmingDelete(true)}
-                >
-                  Delete
-                </Button>
-              )}
-            </div>
-          </>
+          <section className="style-template-detail" aria-label="Selected template">
+            <h3>{selected.name}</h3>
+            <p>
+              Includes global stage and lyric settings, the selected singer&apos;s appearance and
+              cue settings, and export defaults.
+            </p>
+            {selected.preferences.stageStyle.background.mode === 'image' && (
+              <p>
+                Includes a linked background image. Its availability is checked in Preview after
+                loading; a missing image remains linked for relinking.
+              </p>
+            )}
+            <p>
+              If a local font is unavailable, it remains selected and uses the Preview and MP4
+              fallback.
+            </p>
+            <Button
+              variant="primary"
+              disabled={busy || !selectedSingerTrackId}
+              onClick={() => void load()}
+            >
+              Load into Style
+            </Button>
+          </section>
         )}
-      </section>
-      {selected && confirmingDelete && (
-        <div className="style-template-confirm-backdrop" role="presentation">
-          <div
-            className="style-template-confirm"
-            role="alertdialog"
-            aria-modal="true"
-            aria-label="Confirm template deletion"
-            tabIndex={-1}
-            onKeyDown={(event) => {
-              event.stopPropagation()
-              if (event.key === 'Escape') {
+        <section className="style-template-actions" aria-label="Template management">
+          <label className="style-field">
+            <span>Save draft as new</span>
+            <input
+              aria-label="New template name"
+              value={newName}
+              onChange={(event) => setNewName(event.currentTarget.value)}
+            />
+          </label>
+          <div>
+            <Button
+              variant="secondary"
+              disabled={busy || !newName.trim() || !selectedSingerTrackId}
+              onClick={() => void create()}
+            >
+              Save as new
+            </Button>
+          </div>
+          {selected && (
+            <>
+              <label className="style-field">
+                <span>Rename selected template</span>
+                <input
+                  aria-label="Rename selected template"
+                  value={renameName}
+                  onChange={(event) => setRenameName(event.currentTarget.value)}
+                />
+              </label>
+              <div>
+                <Button
+                  variant="ghost"
+                  disabled={busy || !renameName.trim() || renameName.trim() === selected.name}
+                  onClick={() => void rename()}
+                >
+                  Rename
+                </Button>
+                {!confirmingDelete && (
+                  <Button
+                    id={deleteButtonId}
+                    variant="danger"
+                    disabled={busy}
+                    onClick={() => setConfirmingDelete(true)}
+                  >
+                    Delete
+                  </Button>
+                )}
+              </div>
+            </>
+          )}
+        </section>
+        {selected && confirmingDelete && (
+          <div className="style-template-confirm-backdrop" role="presentation">
+            <div
+              className="style-template-confirm"
+              role="alertdialog"
+              aria-modal="true"
+              aria-label="Confirm template deletion"
+              tabIndex={-1}
+              onKeyDown={(event) => {
+                event.stopPropagation()
+                if (event.key === 'Escape') {
+                  event.preventDefault()
+                  if (!busy) closeDeleteConfirmation()
+                  return
+                }
+                if (event.key !== 'Tab') return
+                const actions = [
+                  ...event.currentTarget.querySelectorAll<HTMLButtonElement>(
+                    'button:not([disabled])',
+                  ),
+                ]
                 event.preventDefault()
-                if (!busy) closeDeleteConfirmation()
-                return
-              }
-              if (event.key !== 'Tab') return
-              const actions = [
-                ...event.currentTarget.querySelectorAll<HTMLButtonElement>(
-                  'button:not([disabled])',
-                ),
-              ]
-              event.preventDefault()
-              if (!actions.length) {
-                event.currentTarget.focus()
-                return
-              }
-              const first = actions[0]!
-              const last = actions.at(-1) ?? first
-              ;(event.shiftKey
-                ? document.activeElement === first
-                  ? last
-                  : first
-                : document.activeElement === last
-                  ? first
-                  : last
-              ).focus()
-            }}
-          >
-            <p>Delete “{selected.name}”?</p>
-            <div className="style-template-confirm__actions">
-              <Button autoFocus variant="ghost" disabled={busy} onClick={closeDeleteConfirmation}>
-                Keep
-              </Button>
-              <Button variant="danger" disabled={busy} onClick={() => void remove()}>
-                Delete template
-              </Button>
+                if (!actions.length) {
+                  event.currentTarget.focus()
+                  return
+                }
+                const first = actions[0]!
+                const last = actions.at(-1) ?? first
+                ;(event.shiftKey
+                  ? document.activeElement === first
+                    ? last
+                    : first
+                  : document.activeElement === last
+                    ? first
+                    : last
+                ).focus()
+              }}
+            >
+              <p>Delete “{selected.name}”?</p>
+              <div className="style-template-confirm__actions">
+                <Button autoFocus variant="ghost" disabled={busy} onClick={closeDeleteConfirmation}>
+                  Keep
+                </Button>
+                <Button variant="danger" disabled={busy} onClick={() => void remove()}>
+                  Delete template
+                </Button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
-      {loadFailed && window.studio?.listStyleTemplates && (
-        <Button variant="secondary" disabled={busy} onClick={() => void reload()}>
-          Retry loading templates
-        </Button>
-      )}
-      {status && (
-        <p role="status" className="style-template-status">
-          {status}
-        </p>
-      )}
-      {error && (
-        <p role="alert" className="style-template-error">
-          {error}
-        </p>
-      )}
+        )}
+        {loadFailed && window.studio?.listStyleTemplates && (
+          <Button variant="secondary" disabled={busy} onClick={() => void reload()}>
+            Retry loading templates
+          </Button>
+        )}
+        {status && (
+          <p role="status" className="style-template-status">
+            {status}
+          </p>
+        )}
+        {error && (
+          <p role="alert" className="style-template-error">
+            {error}
+          </p>
+        )}
+      </div>
     </section>
   )
 }

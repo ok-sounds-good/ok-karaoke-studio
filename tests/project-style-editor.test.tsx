@@ -339,6 +339,102 @@ describe('ProjectStyleEditor', () => {
     expect(onDraftChange).toHaveBeenCalledOnce()
   })
 
+  it('renders a dedicated Templates heading and scroll region', async () => {
+    const warm = testStyleTemplate('warm', 'Warm stage')
+    const listStyleTemplates = vi.fn(async () => [warm])
+    vi.stubGlobal('studio', {
+      listStyleTemplates,
+    } as unknown as StudioApi)
+
+    await renderEditor()
+
+    await act(async () => findButton(container, 'Templates').click())
+    await settleAsyncWork()
+
+    const panel = container.querySelector<HTMLElement>('[role="tabpanel"]:not([hidden])')!
+    expect(panel.querySelector('h3')?.textContent).toBe('Templates')
+    expect(panel.querySelector('.style-destination-heading')?.textContent).toBe('Templates')
+    expect(panel.querySelector('.style-templates-scroll')).not.toBeNull()
+    expect(listStyleTemplates).toHaveBeenCalledOnce()
+  })
+
+  it('assigns a shared scroll panel class to every style destination', async () => {
+    await renderEditor()
+
+    for (const tab of [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')]) {
+      const controls = tab.getAttribute('aria-controls')
+      if (!controls) throw new Error('Expected destination tabs to expose aria-controls')
+      const panel = container.querySelector<HTMLElement>(`#${CSS.escape(controls)}`)
+      if (!panel) throw new Error(`Missing panel for controls: ${controls}`)
+      expect(panel.classList.contains('style-destination-panel')).toBe(true)
+    }
+  })
+
+  it('preserves destination scroll position per tab and avoids focus landing in hidden content', async () => {
+    await renderEditor()
+
+    const getPanel = (label: string) => {
+      const tab = findButton(container, label)
+      const controls = tab.getAttribute('aria-controls')
+      if (!controls) throw new Error(`Missing aria-controls for ${label}`)
+      const panel = container.querySelector<HTMLElement>(`#${CSS.escape(controls)}`)
+      if (!panel) throw new Error(`Missing destination panel for ${label}`)
+      return panel
+    }
+    const lyricsPanel = getPanel('Lyrics')
+    const titleCardPanel = getPanel('Title card')
+    const templatesPanel = getPanel('Templates')
+
+    lyricsPanel.scrollTop = 110
+    titleCardPanel.scrollTop = 222
+    templatesPanel.scrollTop = 333
+
+    const titleCardTab = findButton(container, 'Title card')
+    const templatesTab = findButton(container, 'Templates')
+    const lyricsTab = findButton(container, 'Lyrics')
+
+    await act(async () => titleCardTab.click())
+    const eyebrowToggle = titleCardPanel.querySelector<HTMLInputElement>(
+      '[aria-label="Show Eyebrow in output"]',
+    )
+    if (!eyebrowToggle) throw new Error('Expected title-card visibility toggle')
+    await act(async () => {
+      eyebrowToggle.focus()
+    })
+    expect(document.activeElement).toBe(eyebrowToggle)
+
+    await act(async () => templatesTab.click())
+    expect(document.activeElement).toBe(templatesTab)
+
+    await act(async () => lyricsTab.click())
+    expect(document.activeElement).toBe(lyricsTab)
+
+    await act(async () => titleCardTab.click())
+    expect(lyricsPanel.scrollTop).toBe(110)
+    expect(titleCardPanel.scrollTop).toBe(222)
+    expect(templatesPanel.scrollTop).toBe(333)
+  })
+
+  it('keeps stale template loading in draft-only failure mode', async () => {
+    const template = testStyleTemplate('stale', 'Stale template')
+    const onDraftChange = vi.fn<ProjectStyleSession['change']>()
+    vi.stubGlobal('studio', {
+      listStyleTemplates: vi.fn(async () => [template]),
+    } as unknown as StudioApi)
+    const onPrepareTemplateBackground = vi.fn(async () => ({ status: 'stale' as const }))
+
+    await renderEditor({ onDraftChange, onPrepareTemplateBackground })
+    await act(async () => findButton(container, 'Templates').click())
+    await settleAsyncWork()
+    await act(async () => findButton(container, 'Load into Style').click())
+
+    expect(onPrepareTemplateBackground).toHaveBeenCalledExactlyOnceWith('stale')
+    expect(onDraftChange).not.toHaveBeenCalled()
+    expect(container.textContent).toContain(
+      'This saved template is no longer available. Reload the template library and try again.',
+    )
+  })
+
   it('prepares non-image template loading by discarding any pending image candidate', async () => {
     const template = testStyleTemplate('solid', 'Solid stage')
     template.preferences.stageStyle.background = {

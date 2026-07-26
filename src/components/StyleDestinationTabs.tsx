@@ -56,7 +56,10 @@ export function StyleDestinationTabs<Destination extends string>({
           aria-selected={selected === id}
           data-style-destination={id}
           tabIndex={selected === id ? 0 : -1}
-          onClick={() => onSelect(id)}
+          onClick={(event) => {
+            onSelect(id)
+            event.currentTarget.focus()
+          }}
           onKeyDown={navigate}
         >
           {label}

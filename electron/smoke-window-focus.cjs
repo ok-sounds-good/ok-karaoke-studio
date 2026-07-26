@@ -92,8 +92,8 @@ async function focusSmokeWindow({
       if (initialState === 'destroyed') throw focusError(code)
       if (initialState === 'alive') {
         try {
-          await awaitOperation(() => app.focus({ steal: true }))
           await awaitOperation(() => window.show())
+          await awaitOperation(() => app.focus({ steal: true }))
           await awaitOperation(() => window.focus())
           await awaitOperation(() => window.webContents.focus())
           const rendererFocused = await awaitOperation(() =>

@@ -41,7 +41,11 @@ afterEach(() => {
 describe('font smoke focus acquisition', () => {
   it('activates the app and waits for both native and renderer focus', async () => {
     const setup = fixture()
+    const activationOrder: string[] = []
     let attempts = 0
+    setup.methods.show.mockImplementation(() => activationOrder.push('show'))
+    setup.methods.app.mockImplementation(() => activationOrder.push('app'))
+    setup.methods.window.mockImplementation(() => activationOrder.push('window'))
     setup.methods.native.mockImplementation(() => attempts >= 2)
     setup.methods.execute.mockImplementation(async () => {
       attempts += 1
@@ -59,6 +63,7 @@ describe('font smoke focus acquisition', () => {
     expect(setup.methods.show).toHaveBeenCalledTimes(2)
     expect(setup.methods.window).toHaveBeenCalledTimes(2)
     expect(setup.methods.renderer).toHaveBeenCalledTimes(2)
+    expect(activationOrder.slice(0, 3)).toEqual(['show', 'app', 'window'])
   })
 
   it.each([
@@ -103,7 +108,7 @@ describe('font smoke focus acquisition', () => {
       }),
     ).resolves.toBe(true)
     expect(setup.methods.app).toHaveBeenCalledTimes(2)
-    expect(setup.methods.show).toHaveBeenCalledTimes(1)
+    expect(setup.methods.show).toHaveBeenCalledTimes(2)
   })
 
   it.each(['app', 'show', 'window', 'renderer', 'execute'] as const)(
