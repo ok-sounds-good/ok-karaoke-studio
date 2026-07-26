@@ -7,6 +7,7 @@ const {
   STYLE_SESSION_SCENARIO,
   VIEWPORT,
 } = require('../scripts/visual-result-validation.cjs')
+const { layoutSmokeProfile } = require('./visual-smoke-layout-profiles.cjs')
 const {
   PACKAGED_APP_URL,
   STABLE_RENDERER_SCRIPT,
@@ -37,6 +38,7 @@ const OPTION_PREFIX = '--oks-video-style-visual-'
 const FATAL_DIAGNOSTIC = '[oks-visual-smoke:fatal]\n'
 const OPTIONS = Object.freeze({
   output: '--oks-video-style-visual-output=',
+  profile: '--oks-video-style-visual-profile=',
   scenario: '--oks-video-style-visual-scenario=',
   sessionData: '--oks-video-style-visual-session-data=',
   sessionIdentity: '--oks-video-style-visual-session-identity=',
@@ -177,6 +179,12 @@ function parseScenario(args) {
   return scenario
 }
 
+function parseProfile(args) {
+  const profile = layoutSmokeProfile(parseOption(args, OPTIONS.profile))
+  if (!profile) throw smokeError('VISUAL_SMOKE_FLAG_INVALID')
+  return profile
+}
+
 function parseVisualSmokeArguments(argv) {
   if (!Array.isArray(argv) || argv.some((argument) => typeof argument !== 'string')) {
     throw smokeError('VISUAL_SMOKE_FLAG_INVALID')
@@ -195,6 +203,7 @@ function parseVisualSmokeArguments(argv) {
   }
   return Object.freeze({
     output: validateFreshOutputPath(parseOption(argv, OPTIONS.output)),
+    profile: parseProfile(argv),
     scenario: parseScenario(argv),
     sessionData: parseOption(argv, OPTIONS.sessionData),
     sessionIdentity: parseOption(argv, OPTIONS.sessionIdentity),
@@ -238,7 +247,7 @@ function configureVisualSmokeBeforeReady(app, config) {
     }
     app.setPath('userData', userData)
     app.setPath('sessionData', sessionData)
-    app.commandLine.appendSwitch('force-device-scale-factor', '1')
+    app.commandLine.appendSwitch('force-device-scale-factor', String(config.profile.deviceScale))
     return Object.freeze({ ...config, sessionData, userData })
   } catch {
     throw smokeError('VISUAL_SMOKE_PROFILE_FAILED')
@@ -275,4 +284,5 @@ module.exports = {
   validStyleTemplateFormState,
   validStyleTemplateState,
   validStyleTarget,
+  layoutSmokeProfile,
 }

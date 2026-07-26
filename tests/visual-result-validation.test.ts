@@ -9,6 +9,7 @@ import { validPng } from './support/png-fixture'
 
 const require = createRequire(import.meta.url)
 const results = require('../scripts/visual-result-validation.cjs')
+const layoutProfiles = require('../electron/visual-smoke-layout-profiles.cjs')
 const { publishArtifactBuffers } = require('../electron/smoke-artifacts.cjs')
 const roots: string[] = []
 
@@ -23,19 +24,36 @@ afterEach(async () =>
   ),
 )
 
-async function freshResult(scenario = results.BASELINE_SCENARIO) {
+function profileObservation(name: string, overrides: Record<string, unknown> = {}) {
+  const profile = layoutProfiles.layoutSmokeProfile(name)
+  if (!profile) throw new Error('missing layout profile')
+  return {
+    browserZoom: profile.browserZoom,
+    contentHeight: profile.contentHeight,
+    contentWidth: profile.contentWidth,
+    cssHeight: profile.cssViewport.height,
+    cssWidth: profile.cssViewport.width,
+    devicePixelRatio: profile.deviceScale * profile.browserZoom,
+    deviceScale: profile.deviceScale,
+    name: profile.name,
+    ...overrides,
+  }
+}
+
+async function freshResult(scenario = results.BASELINE_SCENARIO, profile = undefined) {
   const root = await mkdtemp(join(tmpdir(), 'oks-visual-result-'))
   roots.push(root)
   const output = join(root, 'evidence')
   const created =
     scenario === results.BASELINE_SCENARIO
-      ? results.createResultArtifacts(validPng(1280, 720))
+      ? results.createResultArtifacts(validPng(1280, 720), profile)
       : results.createScenarioResultArtifacts(
           scenario,
           results.STYLE_SESSION_VIEWPORTS.map(
             ({ width, height }: { width: number; height: number }, index: number) =>
               validPng(width, height, index + 1),
           ),
+          profile,
         )
   await publishArtifactBuffers(output, created.artifacts)
   return { output, root }
@@ -78,6 +96,25 @@ describe('visual result validation', () => {
       schemaVersion: 1,
     })
   }, 20000)
+
+  it.each([
+    ['missing profile observation', undefined],
+    ['profile name', profileObservation('100', { name: '125' })],
+    ['browser zoom', profileObservation('100', { browserZoom: 1.25 })],
+    ['content width', profileObservation('100', { contentWidth: 1279 })],
+    ['content height', profileObservation('100', { contentHeight: 719 })],
+    ['CSS width', profileObservation('100', { cssWidth: 1279 })],
+    ['CSS height', profileObservation('100', { cssHeight: 719 })],
+    ['native device scale', profileObservation('100', { deviceScale: 2 })],
+    ['post-zoom device pixel ratio', profileObservation('100', { devicePixelRatio: 2 })],
+  ])('rejects a launcher profile with a mismatched %s', async (_label, observation) => {
+    const { output } = await freshResult(results.BASELINE_SCENARIO, observation)
+    await expect(
+      results.validateVisualResultDirectory(output, {
+        expectedProfile: layoutProfiles.layoutSmokeProfile('100'),
+      }),
+    ).rejects.toThrow('VISUAL_SMOKE_RESULT_INVALID')
+  })
 
   it('accepts the exact ordered Style-session capture contract', async () => {
     const { output } = await freshResult(results.STYLE_SESSION_SCENARIO)

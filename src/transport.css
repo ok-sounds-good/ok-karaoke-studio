@@ -6,7 +6,7 @@
 .transport {
   z-index: 15;
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) auto minmax(260px, 1fr);
+  grid-template-columns: minmax(230px, 1fr) auto minmax(215px, 1fr);
   align-items: center;
   gap: 20px;
   padding: 9px 16px;
@@ -316,7 +316,7 @@
 
 @media (max-width: 1240px) {
   .transport {
-    grid-template-columns: minmax(225px, 1fr) auto minmax(220px, 1fr);
+    grid-template-columns: minmax(205px, 1fr) auto minmax(190px, 1fr);
     gap: 9px;
   }
 
@@ -333,5 +333,32 @@
   .play-button {
     width: 45px;
     height: 45px;
+  }
+}
+
+@media (max-height: 700px) {
+  .transport {
+    padding-top: 6px;
+    padding-bottom: 6px;
+    gap: 8px;
+  }
+
+  .transport__settings {
+    gap: 8px;
+  }
+
+  .sync-button {
+    height: 45px;
+    width: min(100%, 286px);
+  }
+
+  .play-button {
+    width: 42px;
+    height: 42px;
+  }
+
+  .speed-control select,
+  .volume-control input {
+    height: 27px;
   }
 }

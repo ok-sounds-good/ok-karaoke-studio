@@ -3,6 +3,7 @@
   grid-template-rows: 64px minmax(0, 1fr) 78px;
   width: 100%;
   height: 100%;
+  min-width: 0;
 }
 
 .logo-mark {
@@ -58,7 +59,7 @@
 .topbar {
   z-index: 20;
   display: grid;
-  grid-template-columns: 250px minmax(120px, 1fr) auto;
+  grid-template-columns: minmax(180px, 1fr) minmax(0, 0.75fr) minmax(440px, 1.75fr);
   align-items: center;
   gap: 20px;
   padding: 0 18px;
@@ -71,6 +72,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
 }
 
 .topbar__identity {
@@ -138,11 +140,30 @@
 }
 
 .topbar__actions {
+  min-width: 0;
+  justify-self: end;
+  justify-content: flex-start;
   gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 2px;
+  width: min(100%, 100%);
+  max-width: 100%;
+  scrollbar-width: thin;
+  scrollbar-color: #5a675f transparent;
+}
+
+.topbar__actions > * {
+  flex: 0 0 auto;
 }
 
 .toolbar-group {
+  flex-wrap: nowrap;
   gap: 1px;
+}
+
+.toolbar-divider {
+  flex: 0 0 auto;
 }
 
 .toolbar-divider {
@@ -155,13 +176,19 @@
   display: grid;
   grid-template-columns: 270px minmax(0, 1fr);
   min-height: 0;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 @media (max-width: 1240px) {
   .topbar {
-    grid-template-columns: 220px minmax(80px, 1fr) auto;
-    gap: 8px;
+    grid-template-columns: minmax(170px, 1fr) minmax(0, 1fr) minmax(180px, 1fr);
+    gap: 10px;
+    padding: 0 12px;
+  }
+
+  .topbar__actions {
+    gap: 6px;
   }
 
   .studio-main {
@@ -172,5 +199,26 @@
 @media (max-height: 760px) {
   .app-shell {
     grid-template-rows: 58px minmax(0, 1fr) 70px;
+  }
+}
+
+@media (max-height: 700px) {
+  .app-shell {
+    grid-template-rows: 54px minmax(0, 1fr) 64px;
+  }
+
+  .transport {
+    padding-top: 6px;
+    padding-bottom: 6px;
+    gap: 8px;
+  }
+
+  .sync-button {
+    height: 45px;
+  }
+
+  .play-button {
+    width: 44px;
+    height: 44px;
   }
 }

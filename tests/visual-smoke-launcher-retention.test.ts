@@ -8,6 +8,7 @@ import { validPng } from './support/png-fixture'
 const require = createRequire(import.meta.url)
 const launcher = require('../scripts/video-style-visual-smoke.cjs')
 const smoke = require('../electron/video-style-visual-smoke.cjs')
+const layoutProfiles = require('../electron/visual-smoke-layout-profiles.cjs')
 const smokeProfiles = require('../electron/smoke-profile.cjs')
 const visualResults = require('../scripts/visual-result-validation.cjs')
 const { publishArtifactBuffers } = require('../electron/smoke-artifacts.cjs')
@@ -40,6 +41,22 @@ function profile(prefix: string) {
   return { path: `/profiles/${prefix}`, serializedIdentity: `${prefix}-identity` }
 }
 
+function profileObservation(args: string[]) {
+  const option = args.find((argument) => argument.startsWith(smoke.OPTIONS.profile))
+  const profile = layoutProfiles.layoutSmokeProfile(option?.slice(smoke.OPTIONS.profile.length))
+  if (!profile) throw new Error('missing layout profile')
+  return {
+    browserZoom: profile.browserZoom,
+    contentHeight: profile.contentHeight,
+    contentWidth: profile.contentWidth,
+    cssHeight: profile.cssViewport.height,
+    cssWidth: profile.cssViewport.width,
+    devicePixelRatio: profile.deviceScale * profile.browserZoom,
+    deviceScale: profile.deviceScale,
+    name: profile.name,
+  }
+}
+
 function validatedArtifacts() {
   return [
     { bytes: Buffer.from('png:01-baseline.png'), name: visualResults.BASELINE_NAME },
@@ -52,7 +69,10 @@ function baselinePublishingChild() {
     const rawArgument = args.find((argument) => argument.startsWith(smoke.OPTIONS.output))
     if (!rawArgument) throw new Error('missing raw output argument')
     const rawOutput = rawArgument.slice(smoke.OPTIONS.output.length)
-    const artifacts = visualResults.createResultArtifacts(validPng(1280, 720)).artifacts
+    const artifacts = visualResults.createResultArtifacts(
+      validPng(1280, 720),
+      profileObservation(args),
+    ).artifacts
     await publishArtifactBuffers(rawOutput, artifacts)
     return {
       code: 0,
@@ -108,7 +128,7 @@ describe('visual smoke launcher raw-root retention', () => {
     expect(await readFile(join(displaced, smokeProfiles.OWNER_FILE), 'utf8')).toContain(
       rawClaim.identity.token,
     )
-    expect((await lstat(join(displaced, 'evidence', 'result.json'))).isFile()).toBe(true)
+    expect((await lstat(join(displaced, 'evidence-100', 'result.json'))).isFile()).toBe(true)
   })
 
   it.each([

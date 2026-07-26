@@ -9,6 +9,7 @@ const contracts = require('../electron/visual-smoke-renderer-contracts.cjs')
 function windowForOrchestration() {
   let destroyed = false
   let contentSize = [1280, 720]
+  let zoomFactor = 1
   return {
     destroy: vi.fn(() => {
       destroyed = true
@@ -25,23 +26,80 @@ function windowForOrchestration() {
         isEmpty: () => false,
         toPNG: () => validPng(1280, 720),
       })),
-      executeJavaScript: vi.fn().mockResolvedValueOnce(1).mockResolvedValueOnce({
-        bridgeFrozen: true,
-        bridgeFunctions: true,
-        bridgeKeys: contracts.STUDIO_BRIDGE_KEYS,
-        devicePixelRatio: 1,
-        height: 720,
-        href: contracts.PACKAGED_APP_URL,
-        ipcReady: true,
-        nodeAccess: false,
-        readyState: 'complete',
-        rootChildren: 1,
-        stable: true,
-        width: 1280,
-      }),
+      executeJavaScript: vi
+        .fn()
+        .mockResolvedValueOnce(1)
+        .mockImplementationOnce(async () => ({
+          devicePixelRatio: zoomFactor,
+          height: Math.floor(contentSize[1] / zoomFactor),
+          width: Math.floor(contentSize[0] / zoomFactor),
+        }))
+        .mockResolvedValueOnce({
+          valid: true,
+          windowWidth: 1280,
+          windowHeight: 720,
+          controlNames: contracts.LAYOUT_REACHABILITY_SELECTORS.base.map(({ name }) => name),
+          controls: Object.fromEntries(
+            contracts.LAYOUT_REACHABILITY_SELECTORS.base.map((target) => [
+              target.name,
+              {
+                clippedByOverflow: false,
+                clippedByOverflowAfterFocus: false,
+                exists: true,
+                focusScroll: target.focusScroll === true,
+                focused: target.focusScroll === true,
+                focusedInScrollport: true,
+                visible: true,
+                inViewport: true,
+                focusedInViewport: true,
+                ...(['newProject', 'openProject', 'saveProject'].includes(target.name)
+                  ? {
+                      scrollportAfter: {
+                        overflowX: 'auto',
+                        overflowY: 'hidden',
+                        rect: { bottom: 54, left: 960, right: 1280, top: 0 },
+                        scrollLeft: 0,
+                        scrollTop: 0,
+                      },
+                      scrollportBefore: {
+                        overflowX: 'auto',
+                        overflowY: 'hidden',
+                        rect: { bottom: 54, left: 960, right: 1280, top: 0 },
+                        scrollLeft: 0,
+                        scrollTop: 0,
+                      },
+                    }
+                  : {}),
+                optional: target.optional,
+              },
+            ]),
+          ),
+        })
+        .mockImplementationOnce(async () => ({
+          devicePixelRatio: zoomFactor,
+          height: Math.floor(contentSize[1] / zoomFactor),
+          width: Math.floor(contentSize[0] / zoomFactor),
+        }))
+        .mockResolvedValueOnce({
+          bridgeFrozen: true,
+          bridgeFunctions: true,
+          bridgeKeys: contracts.STUDIO_BRIDGE_KEYS,
+          devicePixelRatio: 1,
+          height: 720,
+          href: contracts.PACKAGED_APP_URL,
+          ipcReady: true,
+          nodeAccess: false,
+          readyState: 'complete',
+          rootChildren: 1,
+          stable: true,
+          width: 1280,
+        }),
       getURL: () => contracts.PACKAGED_APP_URL,
+      getZoomFactor: () => zoomFactor,
       isDestroyed: () => destroyed,
-      setZoomFactor: vi.fn(),
+      setZoomFactor: vi.fn((value: number) => {
+        zoomFactor = value
+      }),
     },
   }
 }

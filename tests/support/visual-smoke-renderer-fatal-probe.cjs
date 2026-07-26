@@ -16,10 +16,29 @@ const PROBE_HTML = `<!doctype html>
     <meta charset="UTF-8" />
     <style>
       html, body, #root { height: 100%; margin: 0; width: 100%; }
+      .topbar__actions { display: flex; gap: 8px; overflow-x: auto; width: 100%; }
     </style>
   </head>
   <body>
-    <div id="root"><main>Renderer fatal smoke probe</main></div>
+    <div id="root">
+      <nav class="topbar__actions" aria-label="Project actions">
+        <button class="style-button" aria-label="Edit project Style">Style</button>
+        <button aria-label="New project">New</button>
+        <button aria-label="Open project">Open</button>
+        <button aria-label="Save project">Save</button>
+        <button class="workflow-button">Workflow</button>
+        <button class="validation-button">Validate</button>
+        <button>Export</button>
+      </nav>
+      <main>
+        <button class="play-button">Play</button>
+        <select aria-label="Playback speed"><option>1×</option></select>
+        <input aria-label="Volume" type="range" />
+        <input aria-label="Timeline zoom" type="range" />
+        <section aria-label="Karaoke preview">Renderer fatal smoke probe</section>
+        <section class="timeline-panel" aria-label="Lyric Timing">Lyric Timing</section>
+      </main>
+    </div>
     <script>
       window.addEventListener('oks-captured', () => {
         setTimeout(() => {

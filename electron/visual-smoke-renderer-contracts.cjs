@@ -7,6 +7,11 @@ const { VIEWPORT } = require('../scripts/visual-result-validation.cjs')
 const PACKAGED_APP_URL = 'studio-app://app/index.html'
 const STYLE_SESSION_READINESS_TIMEOUT_MS = 10_000
 const STYLE_TEMPLATE_NAME = 'Smoke 158'
+const STYLE_DESTINATION_STATE_SCRIPT = `(() => {
+  const selected = document.querySelector('[role="tab"][aria-selected="true"][data-style-destination]')
+  const destination = selected?.getAttribute('data-style-destination')
+  return destination === 'lyrics' || destination === 'stage-frame' ? destination : null
+})()`
 const STYLE_KEY_SEQUENCE = Object.freeze([
   'Tab',
   'Tab',
@@ -33,6 +38,372 @@ const STYLE_KEY_SEQUENCE = Object.freeze([
   'Tab',
   'Tab',
 ])
+const LAYOUT_REACHABILITY_SELECTORS = Object.freeze({
+  base: Object.freeze([
+    {
+      name: 'style',
+      selector: 'button.style-button[aria-label="Edit project Style"]',
+      required: true,
+      requiredInViewport: true,
+      focusScroll: false,
+    },
+    {
+      name: 'newProject',
+      selector: 'button[aria-label="New project"]',
+      required: true,
+      requiredInViewport: true,
+      focusScroll: true,
+    },
+    {
+      name: 'openProject',
+      selector: 'button[aria-label="Open project"]',
+      required: true,
+      requiredInViewport: true,
+      focusScroll: true,
+    },
+    {
+      name: 'saveProject',
+      selector: 'button[aria-label="Save project"]',
+      required: true,
+      requiredInViewport: true,
+      focusScroll: true,
+    },
+    {
+      name: 'workflow',
+      selector: 'button.workflow-button',
+      required: true,
+      requiredInViewport: true,
+      focusScroll: true,
+    },
+    {
+      name: 'export',
+      selector: 'button',
+      text: 'Export',
+      required: true,
+      requiredInViewport: true,
+      focusScroll: true,
+    },
+    {
+      name: 'play',
+      selector: 'button.play-button',
+      required: true,
+      requiredInViewport: true,
+    },
+    {
+      name: 'playbackSpeed',
+      selector: 'select[aria-label="Playback speed"]',
+      required: true,
+      requiredInViewport: true,
+    },
+    {
+      name: 'volume',
+      selector: 'input[aria-label="Volume"]',
+      required: true,
+      requiredInViewport: true,
+    },
+    {
+      name: 'timelineZoom',
+      selector: 'input[aria-label="Timeline zoom"]',
+      required: true,
+      requiredInViewport: false,
+      focusScroll: true,
+    },
+    {
+      name: 'lyricTiming',
+      selector: 'section.timeline-panel[aria-label="Lyric Timing"]',
+      required: true,
+      requiredInViewport: true,
+      focusScroll: false,
+    },
+    {
+      name: 'preview',
+      selector: '[aria-label="Karaoke preview"]',
+      required: true,
+      requiredInViewport: true,
+      focusScroll: false,
+    },
+  ]),
+  style: Object.freeze([
+    {
+      name: 'styleSession',
+      selector: '.style-workspace[role="dialog"]',
+      required: true,
+      requiredInViewport: true,
+      focusScroll: false,
+    },
+    {
+      name: 'stylePreview',
+      selector: '[aria-label$=" design preview"]',
+      required: true,
+      requiredInViewport: true,
+      focusScroll: false,
+    },
+    {
+      name: 'previewTime',
+      selector: '[aria-label$=" Preview Time"]',
+      optional: true,
+      requiredInViewport: false,
+      focusScroll: true,
+    },
+    {
+      name: 'syncAidMinimumLead',
+      selector: '[aria-label$=" Sync Aid Minimum lead"]',
+      optional: true,
+      requiredInViewport: false,
+      focusScroll: true,
+    },
+    {
+      name: 'syncAidMaximumLead',
+      selector: '[aria-label$=" Sync Aid Maximum lead"]',
+      optional: true,
+      requiredInViewport: false,
+      focusScroll: true,
+    },
+  ]),
+})
+
+function selectLayoutReachabilityTargets(includeStyle) {
+  return includeStyle
+    ? [...LAYOUT_REACHABILITY_SELECTORS.style]
+    : [...LAYOUT_REACHABILITY_SELECTORS.base]
+}
+
+function layoutReachabilityScript(viewport, includeStyleTargets = false) {
+  const layoutTargets = selectLayoutReachabilityTargets(includeStyleTargets)
+  return `(() => {
+    const expected = ${JSON.stringify({
+      width: viewport.width,
+      height: viewport.height,
+      targets: layoutTargets,
+    })}
+    const viewport = { width: expected.width, height: expected.height }
+    if (!Number.isSafeInteger(viewport.width) || !Number.isSafeInteger(viewport.height) ||
+      viewport.width <= 0 || viewport.height <= 0)
+      return { valid: false, profile: 'layout-reachability', message: 'invalid viewport' }
+    if (document.documentElement.clientWidth < viewport.width ||
+      document.documentElement.clientHeight < viewport.height) return {
+      valid: false,
+      profile: 'layout-reachability',
+      message: 'viewport mismatch',
+    }
+    const controls = {}
+    const findByText = (selector) => {
+      const root = selector.parentSelector ? document.querySelector(selector.parentSelector) : document
+      const tag = selector.tagName ?? 'button'
+      const target = (root?.querySelectorAll?.(tag) ?? [])
+      for (const candidate of target) {
+        if (candidate instanceof HTMLElement && candidate.textContent?.trim() === selector.text) return candidate
+      }
+      return null
+    }
+    const resolveTarget = (definition) => {
+      if (definition.text) return findByText(definition)
+      const target = document.querySelector(definition.selector)
+      return target instanceof HTMLElement ? target : null
+    }
+    const containmentTolerance = 1
+    const inRect = (rect, container) =>
+      rect.width > 0 &&
+      rect.height > 0 &&
+      rect.left >= container.left - containmentTolerance &&
+      rect.top >= container.top - containmentTolerance &&
+      rect.right <= container.right + containmentTolerance &&
+      rect.bottom <= container.bottom + containmentTolerance
+    const viewportRect = Object.freeze({ left: 0, top: 0, right: viewport.width, bottom: viewport.height })
+    const overflowModes = Object.freeze(['auto', 'scroll', 'hidden', 'clip', 'overlay'])
+    const scrollModes = Object.freeze(['auto', 'scroll', 'overlay'])
+    const scrollportState = (node) => {
+      if (!node || !(node instanceof HTMLElement)) return null
+      const rect = node.getBoundingClientRect()
+      const style = getComputedStyle(node)
+      return {
+        className: typeof node.className === 'string' ? node.className : '',
+        overflowX: style.overflowX || style.overflow,
+        overflowY: style.overflowY || style.overflow,
+        rect: { bottom: rect.bottom, left: rect.left, right: rect.right, top: rect.top },
+        scrollLeft: node.scrollLeft,
+        scrollTop: node.scrollTop,
+        tagName: node.tagName.toLowerCase(),
+      }
+    }
+    const collectReachability = (node, definition) => {
+      const initialRect = node.getBoundingClientRect()
+      const style = getComputedStyle(node)
+      const visibility = style.visibility === 'visible' && style.display !== 'none'
+      const visible = initialRect.width > 0 && initialRect.height > 0 && visibility
+      let nearestScrollport = null
+      const overflowState = (rect) => {
+        let ancestor = node.parentElement
+        let clipped = false
+        while (ancestor && ancestor instanceof Element && ancestor !== document.documentElement) {
+          const ancestorStyle = getComputedStyle(ancestor)
+          const overflowX = ancestorStyle.overflowX || ancestorStyle.overflow
+          const overflowY = ancestorStyle.overflowY || ancestorStyle.overflow
+          const overflowAncestor = overflowModes.includes(overflowX) || overflowModes.includes(overflowY)
+          if (overflowAncestor) {
+            const ancestorRect = ancestor.getBoundingClientRect()
+            if (
+              rect.left < ancestorRect.left - containmentTolerance ||
+              rect.right > ancestorRect.right + containmentTolerance ||
+              rect.top < ancestorRect.top - containmentTolerance ||
+              rect.bottom > ancestorRect.bottom + containmentTolerance
+            )
+              clipped = true
+            if (!nearestScrollport && (scrollModes.includes(overflowX) || scrollModes.includes(overflowY)))
+              nearestScrollport = ancestor
+          }
+          if (ancestor === document.body) break
+          ancestor = ancestor.parentElement
+        }
+        return clipped
+      }
+      const clippedByOverflow = overflowState(initialRect)
+      let focused = false
+      let focusedInViewport = false
+      let focusedInScrollport = false
+      let focusChangedScroll = false
+      let clippedByOverflowAfterFocus = clippedByOverflow
+      let scrollportAfter = null
+      const scrollportBefore = scrollportState(nearestScrollport)
+      if (definition.focusScroll) {
+        try {
+          node.focus({ preventScroll: false })
+        } catch {}
+        focused = document.activeElement === node
+        const afterRect = node.getBoundingClientRect()
+        clippedByOverflowAfterFocus = overflowState(afterRect)
+        focusedInViewport = focused && inRect(afterRect, viewportRect)
+        scrollportAfter = scrollportState(nearestScrollport)
+        focusedInScrollport = !scrollportAfter || (focused && inRect(afterRect, scrollportAfter.rect))
+        focusChangedScroll = Boolean(
+          scrollportBefore &&
+            scrollportAfter &&
+            (scrollportBefore.scrollLeft !== scrollportAfter.scrollLeft ||
+              scrollportBefore.scrollTop !== scrollportAfter.scrollTop),
+        )
+        if (nearestScrollport && scrollportBefore) {
+          nearestScrollport.scrollLeft = scrollportBefore.scrollLeft
+          nearestScrollport.scrollTop = scrollportBefore.scrollTop
+        }
+      }
+      const inView = inRect(initialRect, viewportRect)
+      return {
+        clippedByOverflow,
+        clippedByOverflowAfterFocus,
+        exists: true,
+        focusScroll: definition.focusScroll === true,
+        focusChangedScroll,
+        focused,
+        focusedInViewport,
+        focusedInScrollport,
+        focusedInitially: inView && visible && !clippedByOverflow,
+        inViewport: inView && visible,
+        name: definition.name,
+        selector: definition.selector ?? null,
+        scrollportAfter,
+        scrollportBefore,
+        visible,
+      }
+    }
+    for (const definition of expected.targets) {
+      const element = resolveTarget(definition)
+      if (!element) {
+        controls[definition.name] = { exists: false, required: definition.required === true, optional: definition.optional === true }
+        continue
+      }
+      controls[definition.name] = collectReachability(element, definition)
+    }
+    return {
+      controlNames: expected.targets.map((control) => control.name),
+      controls,
+      viewport,
+      valid: true,
+      windowHeight: document.documentElement.clientHeight,
+      windowWidth: document.documentElement.clientWidth,
+    }
+  })()`
+}
+
+function validLayoutReachabilityState(value, viewport, options = {}) {
+  const includeStyleTargets = options.includeStyleTargets === true
+  const expectedTargets = selectLayoutReachabilityTargets(includeStyleTargets)
+  if (
+    !value ||
+    value.valid !== true ||
+    value.windowWidth !== viewport.width ||
+    value.windowHeight !== viewport.height ||
+    !Number.isSafeInteger(viewport.width) ||
+    !Number.isSafeInteger(viewport.height) ||
+    viewport.width <= 0 ||
+    viewport.height <= 0 ||
+    typeof value.controls !== 'object' ||
+    value.controls === null ||
+    !Array.isArray(value.controlNames) ||
+    value.controlNames.length !== expectedTargets.length
+  )
+    return false
+  for (const target of expectedTargets) {
+    const sample = value.controls[target.name]
+    if (!sample) return false
+    if (target.required && sample.exists !== true) return false
+    if (sample.exists !== true && sample.optional !== true) return false
+    if (!sample.exists) continue
+    if (sample.visible !== true) return false
+    if (target.requiredInViewport && options.requireInitialViewport !== false) {
+      if (sample.inViewport !== true || sample.clippedByOverflow !== false) return false
+    }
+    if (typeof sample.inViewport !== 'boolean' || typeof sample.exists !== 'boolean') return false
+    if (typeof sample.clippedByOverflow !== 'boolean') return false
+    if (
+      target.focusScroll &&
+      (sample.focusScroll !== true ||
+        sample.focused !== true ||
+        sample.focusedInViewport !== true ||
+        sample.focusedInScrollport !== true ||
+        sample.clippedByOverflowAfterFocus !== false)
+    )
+      return false
+    if (!target.focusScroll && sample.clippedByOverflow !== false) return false
+    if (
+      target.focusScroll &&
+      requiresLocalScrollport(target) &&
+      !sample.scrollportBefore &&
+      !sample.scrollportAfter
+    )
+      return false
+    if (target.focusScroll && sample.scrollportBefore) {
+      if (!scrollportSample(sample.scrollportBefore) || !scrollportSample(sample.scrollportAfter))
+        return false
+      if (
+        !scrollMode(sample.scrollportBefore.overflowX) &&
+        !scrollMode(sample.scrollportBefore.overflowY)
+      )
+        return false
+    }
+  }
+  return true
+}
+
+function requiresLocalScrollport(target) {
+  return ['newProject', 'openProject', 'saveProject'].includes(target.name)
+}
+
+function scrollMode(value) {
+  return value === 'auto' || value === 'scroll' || value === 'overlay'
+}
+
+function scrollportSample(value) {
+  return Boolean(
+    value &&
+    typeof value === 'object' &&
+    typeof value.overflowX === 'string' &&
+    typeof value.overflowY === 'string' &&
+    Number.isFinite(value.scrollLeft) &&
+    Number.isFinite(value.scrollTop) &&
+    value.rect &&
+    ['left', 'top', 'right', 'bottom'].every((key) => Number.isFinite(value.rect[key])),
+  )
+}
 const STYLE_KEY_FOCUS = Object.freeze([
   'master',
   'role:brand',
@@ -491,9 +862,16 @@ function projectLyricsReadinessScript(viewport, contract = { kind: 'project-lyri
         const tab = document.querySelector('[role="tab"][data-style-destination="lyrics"]')
         const preview = document.querySelector('[aria-label="Lyrics design preview"]')
         const stage = preview?.querySelector('[data-logical-stage="1920x1080"]')
-        const line = stage?.querySelector('[data-design-preview="lead-vocal"] .stage-line')
-        const wordProgress = [...(line?.querySelectorAll('.stage-word') ?? [])]
-          .map((word) => word.style.getPropertyValue('--word-progress'))
+        const designLines = [...(stage?.querySelectorAll('[data-design-preview="lead-vocal"] .stage-line') ?? [])]
+        const expectedWordProgress = ['100%', '50%', '0%', '0%', '0%', '0%', '0%', '0%']
+        const activeLine = designLines.find((candidate) =>
+          JSON.stringify([...candidate.querySelectorAll('.stage-word')]
+            .map((word) => word.style.getPropertyValue('--word-progress'))) ===
+            JSON.stringify(expectedWordProgress))
+        const wordProgress = activeLine instanceof HTMLElement
+          ? [...activeLine.querySelectorAll('.stage-word')]
+            .map((word) => word.style.getPropertyValue('--word-progress'))
+          : []
         const enabled = panel?.querySelector('[aria-label="Enable Lead Vocal Sync Aid"]')
         const timing = [...(panel?.querySelectorAll('.vocal-timing-field input[type="number"]') ?? [])]
         const bounds = stage?.getBoundingClientRect()
@@ -501,7 +879,7 @@ function projectLyricsReadinessScript(viewport, contract = { kind: 'project-lyri
         if (!(workspace instanceof HTMLElement) || !(panel instanceof HTMLElement) || panel.hidden ||
           !(tab instanceof HTMLButtonElement) || tab.getAttribute('aria-selected') !== 'true' ||
           !(preview instanceof HTMLElement) || !(stage instanceof HTMLElement) ||
-          !(line instanceof HTMLElement) || !bounds || bounds.width <= 0 || bounds.height <= 0 ||
+          !(activeLine instanceof HTMLElement) || !bounds || bounds.width <= 0 || bounds.height <= 0 ||
           Math.abs(bounds.width / bounds.height - 16 / 9) > .01 ||
           panel.querySelectorAll('.style-override-toggle').length !== 0 ||
           panel.querySelectorAll('input[type="color"]').length !== 2 ||
@@ -515,9 +893,9 @@ function projectLyricsReadinessScript(viewport, contract = { kind: 'project-lyri
           !text.includes('Arrow Up or Arrow Down adjusts by 100 ms') ||
           JSON.stringify(wordProgress) !==
             JSON.stringify(['100%', '50%', '0%', '0%', '0%', '0%', '0%', '0%']) ||
-          stage.querySelectorAll('.stage-line').length !== 1 || stage.querySelector('.sync-aid') ||
-          !/^stage-line stage-line--(?:left|center|right)$/u.test(line.className) ||
-          !line.getAttribute('data-stage-font-size') || document.readyState !== 'complete' ||
+          designLines.length < 1 || stage.querySelector('.sync-aid') ||
+          !/^stage-line stage-line--(?:left|center|right)$/u.test(activeLine.className) ||
+          !activeLine.getAttribute('data-stage-font-size') || document.readyState !== 'complete' ||
           fontSet?.status !== 'loaded' || document.documentElement.clientWidth !== expected.width ||
           document.documentElement.clientHeight !== expected.height ||
           document.documentElement.scrollWidth > expected.width || document.body.scrollWidth > expected.width ||
@@ -643,7 +1021,6 @@ function styleSessionActionScript(action) {
     const action = ${JSON.stringify(action)}
     const workspace = document.querySelector('.style-workspace[role="dialog"]')
     const projectTab = document.querySelector('[role="tab"][data-style-destination="lyrics"]')
-    const leadVocalTab = projectTab
     const backgroundTab = document.querySelector('[role="tab"][data-style-destination="background"]')
     const titleTab = document.querySelector('[role="tab"][data-style-destination="title-card"]')
     const stageTab = document.querySelector('[role="tab"][data-style-destination="stage-frame"]')
@@ -668,7 +1045,7 @@ function styleSessionActionScript(action) {
     )
     const selectedDisplayObject = document.querySelector('[data-display-object-selected="true"]')
     const apply = workspace?.querySelector('[data-style-action="apply"]')
-    const targets = { background: backgroundTab, cancel, lead: leadVocalTab, solid, apply,
+    const targets = { background: backgroundTab, cancel, lead: projectTab, lyrics: projectTab, solid, apply,
       title: titleTab, 'eyebrow-visibility': eyebrowVisibility, artist,
       'artist-visibility': artistVisibility, 'apply-title': apply, stage: stageTab,
       'stage-off': stageMaster, 'stage-on': stageMaster, clock, 'clock-face': clockFace,
@@ -682,8 +1059,9 @@ function styleSessionActionScript(action) {
     const semantic = ({
       background: projectTab?.getAttribute('aria-selected') === 'true' && backgroundTab?.getAttribute('aria-selected') === 'false',
       cancel: workspace instanceof HTMLElement && cancel instanceof HTMLButtonElement && !cancel.disabled,
-      lead: projectTab?.getAttribute('aria-selected') === 'true' && leadVocalTab?.getAttribute('aria-selected') === 'false',
-      'sync-aid': leadVocalTab?.getAttribute('aria-selected') === 'true' && !syncAid?.checked,
+      lead: projectTab?.getAttribute('aria-selected') === 'true',
+      lyrics: projectTab instanceof HTMLButtonElement && !projectTab.disabled,
+      'sync-aid': projectTab?.getAttribute('aria-selected') === 'true' && !syncAid?.checked,
       solid: backgroundTab?.getAttribute('aria-selected') === 'true' && gradient?.checked && !solid?.checked,
       apply: backgroundTab?.getAttribute('aria-selected') === 'true' && solid?.checked,
       title: projectTab?.getAttribute('aria-selected') === 'true',
@@ -701,7 +1079,7 @@ function styleSessionActionScript(action) {
       'apply-stage': stageTab?.getAttribute('aria-selected') === 'true' &&
         stageMaster?.checked && footer?.checked && !footerVisibility?.checked,
       templates: workspace instanceof HTMLElement &&
-        leadVocalTab?.getAttribute('aria-selected') === 'true' &&
+        projectTab?.getAttribute('aria-selected') === 'true' &&
         templatesTab?.getAttribute('aria-selected') === 'false',
       'template-name': templatesTab?.getAttribute('aria-selected') === 'true' &&
         templateName instanceof HTMLInputElement && !templateName.disabled && !templateName.value &&
@@ -1162,12 +1540,15 @@ function readinessError() {
 module.exports = {
   PACKAGED_APP_URL,
   STABLE_RENDERER_SCRIPT,
+  LAYOUT_REACHABILITY_SELECTORS,
+  layoutReachabilityScript,
   STUDIO_BRIDGE_KEYS,
   STYLE_KEY_CHANGES,
   STYLE_KEY_FOCUS,
   STYLE_KEY_RECORDER_SCRIPT,
   STYLE_KEY_RESULT_SCRIPT,
   STYLE_KEY_SEQUENCE,
+  STYLE_DESTINATION_STATE_SCRIPT,
   STYLE_SESSION_READINESS_TIMEOUT_MS,
   STYLE_TEMPLATE_NAME,
   STYLE_TARGET_SCRIPT,
@@ -1179,6 +1560,7 @@ module.exports = {
   validBackgroundState,
   validLeadVocalState,
   validProjectLyricsState,
+  validLayoutReachabilityState,
   validRendererState,
   validStageFrameState,
   validStyleActionTarget,
