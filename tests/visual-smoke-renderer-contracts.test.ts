@@ -41,6 +41,58 @@ function styleTarget(overrides: Record<string, unknown> = {}) {
   }
 }
 
+function layoutReachabilityState(
+  viewport: { height: number; width: number } = { height: 720, width: 1280 },
+  includeStyleTargets = false,
+) {
+  const targets = includeStyleTargets
+    ? contracts.LAYOUT_REACHABILITY_SELECTORS.style
+    : contracts.LAYOUT_REACHABILITY_SELECTORS.base
+  const controls = Object.fromEntries(
+    targets.map((target) => [
+      target.name,
+      {
+        clippedByOverflow: false,
+        clippedByOverflowAfterFocus: false,
+        exists: true,
+        focusScroll: target.focusScroll === true,
+        focused: target.focusScroll === true,
+        focusedInScrollport: true,
+        focusedInViewport: true,
+        inViewport: true,
+        optional: target.optional,
+        visible: true,
+      },
+    ]),
+  )
+  for (const name of ['newProject', 'openProject', 'saveProject']) {
+    controls[name] = {
+      ...controls[name],
+      scrollportAfter: {
+        overflowX: 'auto',
+        overflowY: 'hidden',
+        rect: { bottom: 54, left: 960, right: 1280, top: 0 },
+        scrollLeft: 0,
+        scrollTop: 0,
+      },
+      scrollportBefore: {
+        overflowX: 'auto',
+        overflowY: 'hidden',
+        rect: { bottom: 54, left: 960, right: 1280, top: 0 },
+        scrollLeft: 0,
+        scrollTop: 0,
+      },
+    }
+  }
+  return {
+    controlNames: targets.map(({ name }) => name),
+    controls,
+    valid: true,
+    windowHeight: viewport.height,
+    windowWidth: viewport.width,
+  }
+}
+
 function preloadBridgeKeys() {
   const exposed: { api?: Record<string, unknown>; name?: string } = {}
   runInNewContext(source('electron/preload.cjs'), {
@@ -189,6 +241,105 @@ describe('visual smoke renderer contracts', () => {
     ).toBe(false)
   })
 
+  it('validates layout reachability state and optional style layout control behavior', () => {
+    const viewport = { height: 720, width: 1280 }
+    const baseState = layoutReachabilityState(viewport)
+    expect(contracts.validLayoutReachabilityState(baseState, viewport)).toBe(true)
+    expect(
+      contracts.validLayoutReachabilityState(layoutReachabilityState(viewport, true), viewport, {
+        includeStyleTargets: true,
+      }),
+    ).toBe(true)
+    expect(
+      contracts.validLayoutReachabilityState(
+        {
+          ...baseState,
+          controls: {
+            ...baseState.controls,
+            saveProject: {
+              ...baseState.controls.saveProject,
+              exists: false,
+            },
+          },
+        },
+        viewport,
+      ),
+    ).toBe(false)
+    expect(
+      contracts.validLayoutReachabilityState(
+        {
+          ...baseState,
+          windowHeight: 719,
+        },
+        viewport,
+      ),
+    ).toBe(false)
+    const optionalStyleState = layoutReachabilityState(viewport, true)
+    optionalStyleState.controls.previewTime = {
+      ...optionalStyleState.controls.previewTime,
+      exists: false,
+      optional: true,
+    }
+    expect(
+      contracts.validLayoutReachabilityState(optionalStyleState, viewport, {
+        includeStyleTargets: true,
+      }),
+    ).toBe(true)
+    expect(
+      contracts.validLayoutReachabilityState(
+        {
+          ...optionalStyleState,
+          controls: {
+            ...optionalStyleState.controls,
+            styleSession: { ...optionalStyleState.controls.styleSession, exists: false },
+          },
+        },
+        viewport,
+        { includeStyleTargets: true },
+      ),
+    ).toBe(false)
+    expect(
+      contracts.validLayoutReachabilityState(
+        {
+          ...baseState,
+          controlNames: baseState.controlNames.slice(0, -1),
+        },
+        viewport,
+      ),
+    ).toBe(false)
+  })
+
+  it('builds layout reachability scripts from deterministic selector metadata', () => {
+    const viewport = { height: 720, width: 1280 }
+    const script = contracts.layoutReachabilityScript(viewport)
+    expect(script).toContain('"name":"style"')
+    expect(script).toContain('const expected =')
+    expect(script).toContain('focusScroll')
+    expect(script).toContain('focusedInViewport')
+    expect(script).not.toContain('scrollIntoView')
+    expect(script).toContain('scrollportBefore')
+    expect(script).toContain('clippedByOverflow')
+    expect(script).toContain('const viewport')
+    expect(script).toContain('nearestScrollport.scrollTop = scrollportBefore.scrollTop')
+  })
+
+  it('uses the selected Lyrics destination as the trusted Lead Vocal entry point', () => {
+    const script = contracts.styleSessionActionScript('lead')
+    expect(script).toContain('lead: projectTab')
+    expect(script).toContain("lead: projectTab?.getAttribute('aria-selected') === 'true'")
+    expect(script).not.toContain("leadVocalTab?.getAttribute('aria-selected') === 'false'")
+  })
+
+  it('finds the active Lead Vocal line by its exact progress pattern across the design frame', () => {
+    const script = contracts.projectLyricsReadinessScript(
+      { height: 720, width: 1280 },
+      { kind: 'lead-vocal' },
+    )
+    expect(script).toContain('const activeLine = designLines.find')
+    expect(script).toContain("const expectedWordProgress = ['100%', '50%', '0%'")
+    expect(script).toContain('designLines.length < 1')
+  })
+
   it('treats keyboard assertions as exact contracts, including every selection change', () => {
     const keyboard = {
       changes: contracts.STYLE_KEY_CHANGES.map((role: string) => ({
@@ -264,5 +415,72 @@ describe('visual smoke renderer contracts', () => {
     expect(template).toContain('Saved “')
     expect(templateForm).toContain('MutationObserver')
     expect(templateForm).toContain('aria-busy')
+  })
+
+  it('validates compact layout reachability across zoom-expected viewport profiles', () => {
+    const makeRect = (left: number, top: number, width: number, height: number) => ({
+      bottom: top + height,
+      height,
+      left,
+      right: left + width,
+      top,
+      width,
+    })
+    for (const profile of [
+      { width: 1280, height: 720, ratio: 1 },
+      { width: 1280, height: 720, ratio: 1.25 },
+      { width: 1280, height: 720, ratio: 1.5 },
+      { width: 1280, height: 720, ratio: 2 },
+    ]) {
+      const state = layoutReachabilityState({ width: profile.width, height: profile.height })
+      expect(
+        contracts.validLayoutReachabilityState(state, {
+          width: profile.width,
+          height: profile.height,
+        }),
+      ).toBe(true)
+    }
+
+    const clipped = layoutReachabilityState({ width: 1280, height: 720 })
+    clipped.controls.newProject.clippedByOverflow = true
+    clipped.controls.newProject.clippedByOverflowAfterFocus = true
+    expect(contracts.validLayoutReachabilityState(clipped, { width: 1280, height: 720 })).toBe(
+      false,
+    )
+
+    for (const controlName of ['workflow', 'lyricTiming']) {
+      const focusRevealed = layoutReachabilityState({ width: 1280, height: 720 })
+      focusRevealed.controls[controlName] = {
+        ...focusRevealed.controls[controlName],
+        clippedByOverflow: true,
+        clippedByOverflowAfterFocus: false,
+        focused: true,
+        focusedInScrollport: true,
+        focusedInViewport: true,
+        inViewport: true,
+      }
+      expect(
+        contracts.validLayoutReachabilityState(focusRevealed, { width: 1280, height: 720 }),
+      ).toBe(false)
+    }
+
+    const hidden = layoutReachabilityState({ width: 1280, height: 720 })
+    hidden.controls.newProject.scrollportBefore.overflowX = 'hidden'
+    expect(contracts.validLayoutReachabilityState(hidden, { width: 1280, height: 720 })).toBe(false)
+
+    const focusRevealed = layoutReachabilityState({ width: 1024, height: 576 })
+    focusRevealed.controls.newProject.inViewport = false
+    focusRevealed.controls.newProject.focusedInViewport = true
+    focusRevealed.controls.newProject.focusedInScrollport = true
+    focusRevealed.controls.newProject.scrollportAfter.scrollLeft = 16
+    expect(
+      contracts.validLayoutReachabilityState(
+        focusRevealed,
+        { width: 1024, height: 576 },
+        {
+          requireInitialViewport: false,
+        },
+      ),
+    ).toBe(true)
   })
 })

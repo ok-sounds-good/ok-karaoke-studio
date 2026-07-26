@@ -22,6 +22,7 @@ const {
   validateVisualResultDirectory,
 } = require('./visual-result-validation.cjs')
 const { FATAL_DIAGNOSTIC, OPTIONS, TRIGGER } = require('../electron/video-style-visual-smoke.cjs')
+const { LAYOUT_SMOKE_PROFILES } = require('../electron/visual-smoke-layout-profiles.cjs')
 
 const REPOSITORY_ROOT = path.resolve(__dirname, '..')
 const OUTPUT_ENVIRONMENT_KEY = 'OKS_VISUAL_EVIDENCE_DIR'
@@ -104,10 +105,12 @@ async function createPrivateRawRoot(fsApi = fs) {
   return createOwnedSmokeProfile('oks-visual-raw-', { fsApi })
 }
 
-function privateRawOutput(rawRoot, requested) {
+function privateRawOutput(rawRoot, requested, profileName = '100') {
   try {
     const root = validateFreshOutputPath(rawRoot?.path)
-    const output = validateFreshOutputPath(path.join(root, 'evidence'))
+    if (typeof profileName !== 'string' || !/^(100|125|150|dpr2)$/u.test(profileName))
+      throw launcherError('VISUAL_SMOKE_PROFILE_INVALID')
+    const output = validateFreshOutputPath(path.join(root, `evidence-${profileName}`))
     if (!pathsAreSeparate(output, requested)) throw launcherError('VISUAL_SMOKE_OUTPUT_INVALID')
     return output
   } catch {
@@ -115,14 +118,31 @@ function privateRawOutput(rawRoot, requested) {
   }
 }
 
-function childArguments(output, scenario, userProfile, sessionProfile, packaged = false) {
+function childArguments(
+  output,
+  scenario,
+  userProfile,
+  sessionProfile,
+  profile = LAYOUT_SMOKE_PROFILES[0],
+  packaged = false,
+) {
+  if (typeof profile === 'boolean') {
+    packaged = profile
+    profile = LAYOUT_SMOKE_PROFILES[0]
+  }
   if (scenario !== BASELINE_SCENARIO && scenario !== STYLE_SESSION_SCENARIO) {
     throw launcherError('VISUAL_SMOKE_SCENARIO_INVALID')
   }
+  if (!profile || typeof profile.name !== 'string')
+    throw launcherError('VISUAL_SMOKE_PROFILE_INVALID')
+  if (profile.deviceScale !== 1 && profile.deviceScale !== 2)
+    throw launcherError('VISUAL_SMOKE_PROFILE_INVALID')
   return Object.freeze([
+    `--force-device-scale-factor=${profile.deviceScale}`,
     ...(packaged ? [] : [REPOSITORY_ROOT]),
     TRIGGER,
     `${OPTIONS.output}${output}`,
+    `${OPTIONS.profile}${profile.name}`,
     `${OPTIONS.scenario}${scenario}`,
     `${OPTIONS.userData}${userProfile.path}`,
     `${OPTIONS.userIdentity}${userProfile.serializedIdentity}`,
@@ -172,7 +192,6 @@ async function runLauncher(options = {}, supplied = {}) {
   let scenario
   let profiles = []
   let publishedArtifacts
-  let rawOutput
   let rawRoot
   let rawRootClaimed = false
   let failureCode = null
@@ -184,33 +203,54 @@ async function runLauncher(options = {}, supplied = {}) {
     output = await claimFreshOutput(output, dependencies)
     rawRoot = await dependencies.createRawRoot()
     rawRootClaimed = true
-    rawOutput = privateRawOutput(rawRoot, output)
-    const userProfile = await dependencies.createProfile('oks-visual-user-data-')
-    profiles.push(userProfile)
-    const sessionProfile = await dependencies.createProfile('oks-visual-session-data-')
-    profiles.push(sessionProfile)
-
     const executable = options.executable || electronExecutable
     const packaged = options.packaged === true
-    const outcome = await dependencies.runChild({
-      executable,
-      args: childArguments(rawOutput, scenario, userProfile, sessionProfile, packaged),
-      captureOutput: {
-        classify: capturedFatalDiagnostic,
-        maxBytesPerStream: MAX_DIAGNOSTIC_BYTES,
-      },
-      spawnOptions: {
-        cwd: packaged ? path.dirname(executable) : REPOSITORY_ROOT,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      },
-      timeoutMs: options.timeoutMs || DEFAULT_TIMEOUT_MS,
-    })
-    failureCode = publicChildOutcomeCode('VISUAL_SMOKE', outcome)
-    if (
-      !failureCode &&
-      (outcome?.diagnostics?.fatal !== false || outcome?.diagnostics?.overflow !== false)
-    ) {
-      failureCode = 'VISUAL_SMOKE_CHILD_FAILED'
+    for (const profile of LAYOUT_SMOKE_PROFILES) {
+      const profileOutput = privateRawOutput(rawRoot, output, profile.name)
+      const userProfile = await dependencies.createProfile(`oks-visual-user-data-${profile.name}-`)
+      const sessionProfile = await dependencies.createProfile(
+        `oks-visual-session-data-${profile.name}-`,
+      )
+      profiles.push(userProfile, sessionProfile)
+      const outcome = await dependencies.runChild({
+        executable,
+        args: childArguments(
+          profileOutput,
+          scenario,
+          userProfile,
+          sessionProfile,
+          profile,
+          packaged,
+        ),
+        captureOutput: {
+          classify: capturedFatalDiagnostic,
+          maxBytesPerStream: MAX_DIAGNOSTIC_BYTES,
+        },
+        spawnOptions: {
+          cwd: packaged ? path.dirname(executable) : REPOSITORY_ROOT,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        },
+        timeoutMs: options.timeoutMs || DEFAULT_TIMEOUT_MS,
+      })
+      failureCode = publicChildOutcomeCode('VISUAL_SMOKE', outcome)
+      if (
+        !failureCode &&
+        (outcome?.diagnostics?.fatal !== false || outcome?.diagnostics?.overflow !== false)
+      ) {
+        failureCode = 'VISUAL_SMOKE_CHILD_FAILED'
+      }
+      if (failureCode) break
+      try {
+        const validated = await dependencies.validateResult(profileOutput, {
+          expectedProfile: profile,
+          scenario,
+        })
+        if (!Array.isArray(validated?.publishedArtifacts)) throw launcherError('invalid result')
+        if (profile.name === '100') publishedArtifacts = validated.publishedArtifacts
+      } catch {
+        failureCode = 'VISUAL_SMOKE_RESULT_INVALID'
+        break
+      }
     }
   } catch (error) {
     failureCode = typeof error?.code === 'string' ? error.code : 'VISUAL_SMOKE_LAUNCHER_FAILED'
@@ -220,15 +260,8 @@ async function runLauncher(options = {}, supplied = {}) {
     failureCode = 'VISUAL_SMOKE_PROFILE_IDENTITY_FAILED'
   }
 
-  if (!failureCode) {
-    try {
-      const validated = await dependencies.validateResult(rawOutput, { scenario })
-      if (!Array.isArray(validated?.publishedArtifacts)) throw launcherError('invalid result')
-      publishedArtifacts = validated.publishedArtifacts
-    } catch {
-      failureCode = 'VISUAL_SMOKE_RESULT_INVALID'
-    }
-  }
+  if (!failureCode && !Array.isArray(publishedArtifacts))
+    failureCode = 'VISUAL_SMOKE_RESULT_INVALID'
 
   if (rawRootClaimed) {
     try {

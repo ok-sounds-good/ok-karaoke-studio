@@ -199,9 +199,79 @@ function validateBaselinePng(bytes) {
   return validatePng(bytes, scenarioContract(BASELINE_SCENARIO)[0])
 }
 
+function normalizeProfileObservation(value) {
+  const profile = plainDataObject(value, [
+    'browserZoom',
+    'contentHeight',
+    'contentWidth',
+    'cssHeight',
+    'cssWidth',
+    'devicePixelRatio',
+    'deviceScale',
+    'name',
+  ])
+  if (
+    !/^(100|125|150|dpr2)$/u.test(profile.name) ||
+    !Number.isFinite(profile.browserZoom) ||
+    profile.browserZoom <= 0 ||
+    !Number.isSafeInteger(profile.contentHeight) ||
+    !Number.isSafeInteger(profile.contentWidth) ||
+    profile.contentHeight <= 0 ||
+    profile.contentWidth <= 0 ||
+    !Number.isSafeInteger(profile.cssHeight) ||
+    !Number.isSafeInteger(profile.cssWidth) ||
+    profile.cssHeight <= 0 ||
+    profile.cssWidth <= 0 ||
+    !Number.isFinite(profile.devicePixelRatio) ||
+    profile.devicePixelRatio <= 0 ||
+    !Number.isFinite(profile.deviceScale) ||
+    profile.deviceScale <= 0
+  )
+    throw resultError()
+  return Object.freeze(profile)
+}
+
+function expectedProfileContract(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw resultError()
+  const viewport = plainDataObject(value.cssViewport, ['height', 'width'])
+  const expected = {
+    browserZoom: value.browserZoom,
+    contentHeight: value.contentHeight,
+    contentWidth: value.contentWidth,
+    cssHeight: viewport.height,
+    cssWidth: viewport.width,
+    deviceScale: value.deviceScale,
+    name: value.name,
+  }
+  return normalizeProfileObservation({
+    ...expected,
+    devicePixelRatio: expected.deviceScale * expected.browserZoom,
+  })
+}
+
+function profileObservationMatches(actual, expected) {
+  return Boolean(
+    actual &&
+    expected &&
+    actual.name === expected.name &&
+    actual.browserZoom === expected.browserZoom &&
+    actual.contentWidth === expected.contentWidth &&
+    actual.contentHeight === expected.contentHeight &&
+    actual.cssWidth === expected.cssWidth &&
+    actual.cssHeight === expected.cssHeight &&
+    actual.deviceScale === expected.deviceScale &&
+    actual.devicePixelRatio === expected.devicePixelRatio,
+  )
+}
+
 function normalizeManifest(value, scenario = BASELINE_SCENARIO) {
   const contract = scenarioContract(scenario)
-  const manifest = plainDataObject(value, ['artifacts', 'ok', 'schemaVersion'])
+  const manifest = plainDataObject(
+    value,
+    Object.hasOwn(value ?? {}, 'profile')
+      ? ['artifacts', 'ok', 'profile', 'schemaVersion']
+      : ['artifacts', 'ok', 'schemaVersion'],
+  )
   if (
     manifest.ok !== true ||
     manifest.schemaVersion !== 1 ||
@@ -233,6 +303,7 @@ function normalizeManifest(value, scenario = BASELINE_SCENARIO) {
   return Object.freeze({
     artifacts: Object.freeze(artifacts),
     ok: true,
+    ...(manifest.profile ? { profile: normalizeProfileObservation(manifest.profile) } : {}),
     schemaVersion: 1,
   })
 }
@@ -241,13 +312,14 @@ function serializeManifest(manifest, scenario = BASELINE_SCENARIO) {
   return `${JSON.stringify(normalizeManifest(manifest, scenario))}\n`
 }
 
-function createScenarioResultArtifacts(scenario, pngBytes) {
+function createScenarioResultArtifacts(scenario, pngBytes, profile = undefined) {
   const contract = scenarioContract(scenario)
   if (!Array.isArray(pngBytes) || pngBytes.length !== contract.length) throw resultError()
   const manifest = normalizeManifest(
     {
       artifacts: pngBytes.map((bytes, index) => validatePng(bytes, contract[index])),
       ok: true,
+      ...(profile === undefined ? {} : { profile }),
       schemaVersion: 1,
     },
     scenario,
@@ -266,8 +338,8 @@ function createScenarioResultArtifacts(scenario, pngBytes) {
   })
 }
 
-function createResultArtifacts(pngBytes) {
-  return createScenarioResultArtifacts(BASELINE_SCENARIO, [pngBytes])
+function createResultArtifacts(pngBytes, profile = undefined) {
+  return createScenarioResultArtifacts(BASELINE_SCENARIO, [pngBytes], profile)
 }
 
 async function assertDirectory(identity, fsApi) {
@@ -356,6 +428,9 @@ function authoritativeArtifacts(consumedFiles) {
 async function validateVisualResultDirectory(rawOutput, options = {}) {
   const fsApi = options.fsApi || fs
   const scenario = options.scenario ?? BASELINE_SCENARIO
+  const expectedProfile = Object.hasOwn(options, 'expectedProfile')
+    ? expectedProfileContract(options.expectedProfile)
+    : null
   const contract = scenarioContract(scenario)
   const expectedFiles = expectedFilesForScenario(scenario)
   let output
@@ -389,6 +464,8 @@ async function validateVisualResultDirectory(rawOutput, options = {}) {
       throw resultError()
     }
     const manifest = normalizeManifest(parsed, scenario)
+    if (expectedProfile && !profileObservationMatches(manifest.profile, expectedProfile))
+      throw resultError()
     if (!resultBytes.equals(Buffer.from(serializeManifest(manifest, scenario)))) throw resultError()
 
     for (const [index, expected] of contract.entries()) {

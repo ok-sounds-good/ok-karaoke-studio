@@ -755,6 +755,39 @@ describe('first-time workflow', () => {
     expect(identity).not.toContain('.inspector > .panel-header')
   })
 
+  it('keeps topbar and transport control rows resilient under zoom-constrained viewport width', () => {
+    const styles = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
+    const shell = readFileSync(new URL('../src/shell.css', import.meta.url), 'utf8')
+    const transport = readFileSync(new URL('../src/transport.css', import.meta.url), 'utf8')
+
+    expect(styles).not.toMatch(/body\s*\{[\s\S]*?min-width:\s*1080px;/)
+    expect(styles).not.toMatch(/body\s*\{[\s\S]*?min-height:\s*680px;/)
+    expect(shell).toMatch(
+      /\.topbar\s*\{[\s\S]*?grid-template-columns:\s*minmax\(180px,\s*1fr\)\s+minmax\(0,\s*0\.75fr\)\s+minmax\(440px,\s*1\.75fr\);/u,
+    )
+    expect(shell).toMatch(
+      /\.topbar__actions\s*\{[\s\S]*?overflow-x:\s*auto;[\s\S]*?max-width:\s*100%;/u,
+    )
+    expect(shell).toMatch(/\.topbar__actions\s*\{[\s\S]*?overflow-y:\s*hidden;/u)
+    expect(shell).toMatch(/\.topbar__actions\s*\{\s*[^}]*?padding-bottom:\s*2px;/u)
+    expect(shell).toMatch(
+      /@media \(max-width: 1240px\)\s*\{[\s\S]*?\.topbar\s*\{[\s\S]*?grid-template-columns:\s*minmax\(170px,\s*1fr\)\s+minmax\(0,\s*1fr\)\s+minmax\(180px,\s*1fr\);/u,
+    )
+    expect(shell).toMatch(
+      /@media \(max-height: 700px\)\s*\{[\s\S]*?\.app-shell\s*\{[\s\S]*?grid-template-rows:\s*54px\s+minmax\(0,\s*1fr\)\s+64px;/,
+    )
+    expect(shell).toMatch(/\.studio-main\s*\{[\s\S]*?overflow-y:\s*auto;/u)
+    expect(transport).toMatch(
+      /\.transport\s*\{[\s\S]*?grid-template-columns:\s*minmax\(230px,\s*1fr\)\s+auto\s+minmax\(215px,\s*1fr\);/u,
+    )
+    expect(transport).toMatch(
+      /@media \(max-width: 1240px\)\s*\{[\s\S]*?\.transport\s*\{[\s\S]*?grid-template-columns:\s*minmax\(205px,\s*1fr\)\s+auto\s+minmax\(190px,\s*1fr\);/u,
+    )
+    expect(transport).toMatch(
+      /@media \(max-height: 700px\)\s*\{[\s\S]*?\.sync-button\s*\{[\s\S]*?height:\s*45px;/u,
+    )
+  })
+
   it('assigns playback to Shift+Space without registering bare Space globally', () => {
     const electronMain = readFileSync(new URL('../electron/main.cjs', import.meta.url), 'utf8')
     const playbackMenu = electronMain.match(

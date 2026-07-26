@@ -44,8 +44,6 @@ body,
 }
 
 body {
-  min-width: 1080px;
-  min-height: 680px;
   background:
     radial-gradient(circle at 30% -10%, rgba(94, 140, 102, 0.13), transparent 34%), var(--canvas);
   color: var(--text);

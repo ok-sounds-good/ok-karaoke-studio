@@ -623,3 +623,16 @@
     margin: 6px;
   }
 }
+
+@media (max-height: 600px) {
+  .unified-workspace,
+  .unified-workspace.is-syncing {
+    grid-template-rows: minmax(132px, 42%) minmax(180px, 58%);
+    gap: 5px;
+    padding: 5px;
+  }
+
+  .karaoke-stage {
+    margin: 4px;
+  }
+}

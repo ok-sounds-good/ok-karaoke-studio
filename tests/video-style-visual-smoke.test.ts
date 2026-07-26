@@ -8,6 +8,7 @@ import { validPng } from './support/png-fixture'
 
 const require = createRequire(import.meta.url)
 const smoke = require('../electron/video-style-visual-smoke.cjs')
+const contracts = require('../electron/visual-smoke-renderer-contracts.cjs')
 const profiles = require('../electron/smoke-profile.cjs')
 const roots: string[] = []
 
@@ -32,6 +33,7 @@ async function configuredArguments() {
     argv: [
       smoke.TRIGGER,
       `${smoke.OPTIONS.output}${output}`,
+      `${smoke.OPTIONS.profile}100`,
       `${smoke.OPTIONS.scenario}${smoke.BASELINE_SCENARIO}`,
       `${smoke.OPTIONS.userData}${user.path}`,
       `${smoke.OPTIONS.userIdentity}${user.serializedIdentity}`,
@@ -55,6 +57,12 @@ function fakeWindow(
 ) {
   let destroyed = false
   let contentSize = [1280, 720]
+  let zoomFactor = 1
+  const observation = () => ({
+    devicePixelRatio: displayScale * zoomFactor,
+    height: Math.floor(contentSize[1] / zoomFactor),
+    width: Math.floor(contentSize[0] / zoomFactor),
+  })
   return {
     destroy: vi.fn(() => {
       destroyed = true
@@ -70,6 +78,9 @@ function fakeWindow(
       executeJavaScript: vi
         .fn()
         .mockResolvedValueOnce(displayScale)
+        .mockImplementationOnce(async () => observation())
+        .mockResolvedValueOnce(layoutReachabilityState({ height: 720, width: 1280 }))
+        .mockImplementationOnce(async () => observation())
         .mockResolvedValueOnce({
           bridgeFrozen: true,
           bridgeFunctions: true,
@@ -86,9 +97,12 @@ function fakeWindow(
           ...rendererOverrides,
         }),
       getURL: () => smoke.PACKAGED_APP_URL,
+      getZoomFactor: () => zoomFactor,
       isDestroyed: () => destroyed,
       sendInputEvent: vi.fn(),
-      setZoomFactor: vi.fn(),
+      setZoomFactor: vi.fn((value: number) => {
+        zoomFactor = value
+      }),
     },
   }
 }
@@ -227,10 +241,68 @@ function styleTarget(target: unknown = undefined) {
     : target
 }
 
+function layoutReachabilityState(
+  viewport: { height: number; width: number } = { height: 720, width: 1280 },
+  includeStyleTargets = false,
+) {
+  const targets = includeStyleTargets
+    ? contracts.LAYOUT_REACHABILITY_SELECTORS.style
+    : contracts.LAYOUT_REACHABILITY_SELECTORS.base
+  const controls = Object.fromEntries(
+    targets.map((target: { focusScroll?: boolean; name: string; optional?: boolean }) => [
+      target.name,
+      {
+        clippedByOverflow: false,
+        clippedByOverflowAfterFocus: false,
+        exists: true,
+        focusScroll: target.focusScroll === true,
+        focused: target.focusScroll === true,
+        focusedInScrollport: true,
+        focusedInViewport: true,
+        focusedInitially: true,
+        hasScrollAncestor: false,
+        inViewport: true,
+        name: target.name,
+        optional: target.optional === true,
+        scrollers: [],
+        visible: true,
+      },
+    ]),
+  )
+  for (const name of ['newProject', 'openProject', 'saveProject']) {
+    controls[name] = {
+      ...controls[name],
+      scrollportAfter: {
+        overflowX: 'auto',
+        overflowY: 'hidden',
+        rect: { bottom: 54, left: 960, right: 1280, top: 0 },
+        scrollLeft: 0,
+        scrollTop: 0,
+      },
+      scrollportBefore: {
+        overflowX: 'auto',
+        overflowY: 'hidden',
+        rect: { bottom: 54, left: 960, right: 1280, top: 0 },
+        scrollLeft: 0,
+        scrollTop: 0,
+      },
+    }
+  }
+  return {
+    controlNames: targets.map((target: { name: string }) => target.name),
+    controls,
+    valid: true,
+    windowHeight: viewport.height,
+    windowWidth: viewport.width,
+  }
+}
+
 function fakeStyleSessionWindow(
   options: {
+    clockPending?: boolean
     displayScale?: number
     leadState?: unknown
+    lyricsTarget?: unknown
     readiness?: Promise<never>
     templateFormState?: unknown
     templateState?: unknown
@@ -272,13 +344,33 @@ function fakeStyleSessionWindow(
   window.webContents.executeJavaScript
     .mockReset()
     .mockResolvedValueOnce(options.displayScale ?? 1)
+    .mockImplementationOnce(async () => ({
+      devicePixelRatio: (options.displayScale ?? 1) * window.webContents.getZoomFactor(),
+      height: Math.floor(window.getContentSize()[1] / window.webContents.getZoomFactor()),
+      width: Math.floor(window.getContentSize()[0] / window.webContents.getZoomFactor()),
+    }))
+    .mockResolvedValueOnce(layoutReachabilityState({ height: 720, width: 1280 }))
+    .mockImplementationOnce(async () => ({
+      devicePixelRatio: (options.displayScale ?? 1) * window.webContents.getZoomFactor(),
+      height: Math.floor(window.getContentSize()[1] / window.webContents.getZoomFactor()),
+      width: Math.floor(window.getContentSize()[0] / window.webContents.getZoomFactor()),
+    }))
     .mockResolvedValueOnce(styleTarget(options.target))
+    .mockImplementationOnce(async () => ({
+      devicePixelRatio: (options.displayScale ?? 1) * window.webContents.getZoomFactor(),
+      height: Math.floor(window.getContentSize()[1] / window.webContents.getZoomFactor()),
+      width: Math.floor(window.getContentSize()[0] / window.webContents.getZoomFactor()),
+    }))
+    .mockResolvedValueOnce(layoutReachabilityState({ height: 720, width: 1280 }, true))
   if (options.readiness) {
     window.webContents.executeJavaScript.mockReturnValueOnce(options.readiness)
   } else {
-    window.webContents.executeJavaScript
+    const script = window.webContents.executeJavaScript
+    script
       .mockResolvedValueOnce(projectLyricsState(1280, 720))
       .mockResolvedValueOnce(projectLyricsState(1440, 900))
+      .mockResolvedValueOnce(options.lyricsTarget ?? styleActionTarget('lyrics'))
+      .mockResolvedValueOnce('lyrics')
       .mockResolvedValueOnce(projectLyricsState(1280, 720))
       .mockResolvedValueOnce(styleActionTarget('stage'))
       .mockResolvedValueOnce(stageFrameState('brand'))
@@ -310,6 +402,8 @@ function fakeStyleSessionWindow(
       .mockResolvedValueOnce(styleActionTarget('stage-off'))
       .mockResolvedValueOnce(stageFrameState('brand'))
       .mockResolvedValueOnce(styleActionTarget('stage-on'))
+    if (options.clockPending) script.mockResolvedValueOnce(null)
+    script
       .mockResolvedValueOnce(styleActionTarget('clock'))
       .mockResolvedValueOnce(styleActionTarget('clock-face'))
       .mockResolvedValueOnce(stageFrameState('clock', { changedClock: true }))
@@ -374,6 +468,20 @@ function fakeRendererContents() {
 }
 
 describe('production-window visual smoke', () => {
+  it('defines exact CSS viewport contracts for every requested layout profile', () => {
+    expect(
+      ['100', '125', '150', 'dpr2'].map((name) => {
+        const profile = smoke.layoutSmokeProfile(name)
+        return { name, viewport: profile.cssViewport }
+      }),
+    ).toEqual([
+      { name: '100', viewport: { height: 720, width: 1280 } },
+      { name: '125', viewport: { height: 576, width: 1024 } },
+      { name: '150', viewport: { height: 480, width: 853 } },
+      { name: 'dpr2', viewport: { height: 720, width: 1280 } },
+    ])
+  })
+
   it('accepts one complete flag set and configures isolated paths before readiness', async () => {
     const { argv, output } = await configuredArguments()
     const config = smoke.parseVisualSmokeArguments(argv)
@@ -428,6 +536,16 @@ describe('production-window visual smoke', () => {
         '01-baseline.png',
         'result.json',
       ])
+      expect(JSON.parse(artifacts[1].bytes.toString('utf8')).profile).toEqual({
+        browserZoom: 0.5,
+        contentHeight: 360,
+        contentWidth: 640,
+        cssHeight: 720,
+        cssWidth: 1280,
+        devicePixelRatio: 1,
+        deviceScale: 2,
+        name: 'dpr2',
+      })
     })
     await expect(
       smoke.runVisualSmoke(
@@ -446,6 +564,43 @@ describe('production-window visual smoke', () => {
     expect(window.webContents.capturePage).toHaveBeenCalledTimes(2)
     expect(captureSettle).toHaveBeenCalledOnce()
     expect(window.destroy).toHaveBeenCalledOnce()
+  })
+
+  it('fails closed when requested browser zoom is not applied', async () => {
+    const window = fakeWindow()
+    window.webContents.setZoomFactor.mockImplementation(() => undefined)
+    const publish = vi.fn()
+
+    await expect(
+      smoke.runVisualSmoke(
+        {
+          app: {},
+          config: { output: '/safe/evidence', profile: smoke.layoutSmokeProfile('125') },
+          window,
+        },
+        { focus: vi.fn(async () => true), publish },
+      ),
+    ).resolves.toEqual({ ok: false })
+
+    expect(publish).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when the requested device scale is not observed', async () => {
+    const window = fakeWindow(undefined, 1)
+    const publish = vi.fn()
+
+    await expect(
+      smoke.runVisualSmoke(
+        {
+          app: {},
+          config: { output: '/safe/evidence', profile: smoke.layoutSmokeProfile('dpr2') },
+          window,
+        },
+        { focus: vi.fn(async () => true), publish },
+      ),
+    ).resolves.toEqual({ ok: false })
+
+    expect(publish).not.toHaveBeenCalled()
   })
 
   it('slides the comparison window until a mismatched frame stabilizes', async () => {
@@ -589,8 +744,8 @@ describe('production-window visual smoke', () => {
       ),
     ).resolves.toEqual({ ok: true })
     const inputEvents = window.webContents.sendInputEvent.mock.calls.map(([event]) => event)
-    expect(inputEvents).toHaveLength(164)
-    expect(inputEvents.filter(({ type }) => type === 'mouseDown')).toHaveLength(29)
+    expect(inputEvents).toHaveLength(167)
+    expect(inputEvents.filter(({ type }) => type === 'mouseDown')).toHaveLength(30)
     const expectedKeys = [
       'Tab',
       'Tab',
@@ -646,6 +801,7 @@ describe('production-window visual smoke', () => {
     expect(
       scripts.flatMap((script) => script.match(/const action = "([^"]+)"/u)?.[1] ?? []),
     ).toEqual([
+      'lyrics',
       'stage',
       'cancel',
       'background',
@@ -671,6 +827,14 @@ describe('production-window visual smoke', () => {
       'template-name',
       'save-template',
     ])
+    const lyricsReset = scripts.findIndex((script) => script.includes('const action = "lyrics"'))
+    const resizedLyricsReadiness = scripts.findIndex(
+      (script, index) =>
+        index > lyricsReset && script.includes('const expected = {"height":720,"width":1280}'),
+    )
+    expect(lyricsReset).toBeGreaterThan(-1)
+    expect(resizedLyricsReadiness).toBeGreaterThan(lyricsReset)
+    expect(scripts[resizedLyricsReadiness]).toContain('"project-lyrics"')
     expect(scripts.filter((script) => script === smoke.STYLE_TARGET_SCRIPT)).toHaveLength(5)
     expect(window.setContentSize.mock.calls).toContainEqual([1280, 720, false])
     expect(window.setContentSize.mock.calls).toContainEqual([1440, 900, false])
@@ -692,7 +856,62 @@ describe('production-window visual smoke', () => {
     expect(readinessScript).not.toContain('setTimeout')
   })
 
-  it('converts Retina Style target coordinates for trusted input', async () => {
+  it('returns to the canonical viewport before finding the trusted Lyrics action target', async () => {
+    const lyricsTarget = { ...styleActionTarget('lyrics'), height: 900, width: 1440 }
+    const window = fakeStyleSessionWindow({ lyricsTarget })
+    const setContentSize = window.setContentSize.getMockImplementation()
+    let resized = false
+    window.setContentSize.mockImplementation((width: number, height: number, animate: boolean) => {
+      setContentSize(width, height, animate)
+      if (width === 1440 && height === 900) resized = true
+      if (resized && width === 1280 && height === 720) {
+        lyricsTarget.height = 720
+        lyricsTarget.width = 1280
+      }
+    })
+
+    await expect(
+      smoke.runVisualSmoke(
+        {
+          app: {},
+          config: {
+            output: '/safe/evidence',
+            scenario: smoke.STYLE_SESSION_SCENARIO,
+          },
+          window,
+        },
+        {
+          captureSettle: settleCaptureImmediately,
+          focus: vi.fn(async () => true),
+          publish: vi.fn(),
+        },
+      ),
+    ).resolves.toEqual({ ok: true })
+    expect(lyricsTarget).toMatchObject({ height: 720, width: 1280 })
+  })
+
+  it('waits for an action target whose semantic state follows a trusted input event', async () => {
+    const window = fakeStyleSessionWindow({ clockPending: true })
+
+    await expect(
+      smoke.runVisualSmoke(
+        {
+          app: {},
+          config: { output: '/safe/evidence', scenario: smoke.STYLE_SESSION_SCENARIO },
+          window,
+        },
+        {
+          captureSettle: settleCaptureImmediately,
+          focus: vi.fn(async () => true),
+          publish: vi.fn(),
+        },
+      ),
+    ).resolves.toEqual({ ok: true })
+    const scripts = window.webContents.executeJavaScript.mock.calls.map(([script]) => script)
+    expect(scripts.filter((script) => script.includes('const action = "clock"'))).toHaveLength(2)
+  })
+
+  it('uses browser-zoomed Style target coordinates for trusted input', async () => {
     const window = fakeStyleSessionWindow({
       displayScale: 2,
       target: {
@@ -722,7 +941,7 @@ describe('production-window visual smoke', () => {
       ),
     ).resolves.toEqual({ ok: true })
 
-    expect(window.webContents.sendInputEvent).toHaveBeenCalledTimes(164)
+    expect(window.webContents.sendInputEvent).toHaveBeenCalledTimes(167)
     expect(window.webContents.sendInputEvent.mock.calls[0][0]).toEqual({
       type: 'mouseMove',
       x: 61,
@@ -748,7 +967,7 @@ describe('production-window visual smoke', () => {
       y: 20,
     }
 
-    expect(() => smoke.sendTrustedStyleActivation(contents, target, 1.5)).toThrow(
+    expect(() => smoke.sendTrustedStyleActivation(contents, target, 0)).toThrow(
       'VISUAL_SMOKE_ACTIVATION_INVALID',
     )
     expect(() => smoke.sendTrustedStyleActivation(contents, { ...target, x: 1279 }, 2)).toThrow(
@@ -948,7 +1167,7 @@ describe('production-window visual smoke', () => {
     ).toEqual(expect.arrayContaining(['templates']))
     expect(scripts).not.toContainEqual(expect.stringContaining('const action = "template-name"'))
     expect(window.webContents.capturePage).toHaveBeenCalledTimes(30)
-    expect(window.webContents.sendInputEvent).toHaveBeenCalledTimes(131)
+    expect(window.webContents.sendInputEvent).toHaveBeenCalledTimes(134)
     expect(publish).not.toHaveBeenCalled()
     expect(writeFailure).toHaveBeenCalledOnce()
   })

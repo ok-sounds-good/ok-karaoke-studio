@@ -8,6 +8,7 @@ import { validPng } from './support/png-fixture'
 const require = createRequire(import.meta.url)
 const launcher = require('../scripts/video-style-visual-smoke.cjs')
 const smoke = require('../electron/video-style-visual-smoke.cjs')
+const layoutProfiles = require('../electron/visual-smoke-layout-profiles.cjs')
 const smokeProfiles = require('../electron/smoke-profile.cjs')
 const visualResults = require('../scripts/visual-result-validation.cjs')
 const { publishArtifactBuffers } = require('../electron/smoke-artifacts.cjs')
@@ -32,6 +33,28 @@ async function outputPath() {
 
 function profile(prefix: string) {
   return { path: `/profiles/${prefix}`, serializedIdentity: `${prefix}-identity` }
+}
+
+function profileObservation(name: string, overrides: Record<string, unknown> = {}) {
+  const profile = layoutProfiles.layoutSmokeProfile(name)
+  if (!profile) throw new Error('missing layout profile')
+  return {
+    browserZoom: profile.browserZoom,
+    contentHeight: profile.contentHeight,
+    contentWidth: profile.contentWidth,
+    cssHeight: profile.cssViewport.height,
+    cssWidth: profile.cssViewport.width,
+    devicePixelRatio: profile.deviceScale * profile.browserZoom,
+    deviceScale: profile.deviceScale,
+    name: profile.name,
+    ...overrides,
+  }
+}
+
+function requestedProfileName(args: string[]) {
+  const option = args.find((argument) => argument.startsWith(smoke.OPTIONS.profile))
+  if (!option) throw new Error('missing profile')
+  return option.slice(smoke.OPTIONS.profile.length)
 }
 
 function validatedArtifacts(scenario = smoke.BASELINE_SCENARIO) {
@@ -72,8 +95,8 @@ describe('visual smoke launcher', () => {
       events.push('publish')
     })
     const raw = rawWorkspace(output, events)
-    const rawOutput = join(raw.claim.path, 'evidence')
-    const created = [profile('user'), profile('session')]
+    const rawOutput = join(raw.claim.path, 'evidence-100')
+    const created = Array.from({ length: 4 }, () => [profile('user'), profile('session')]).flat()
     const outcome = await launcher.runLauncher(
       {
         environment: { OKS_VISUAL_EVIDENCE_DIR: output },
@@ -104,24 +127,65 @@ describe('visual smoke launcher', () => {
     )
     const args = runChild.mock.calls[0][0].args
     expect(args).toEqual([
+      '--force-device-scale-factor=1',
       launcher.REPOSITORY_ROOT,
       smoke.TRIGGER,
       `${smoke.OPTIONS.output}${rawOutput}`,
+      `${smoke.OPTIONS.profile}100`,
       `${smoke.OPTIONS.scenario}${smoke.BASELINE_SCENARIO}`,
       `${smoke.OPTIONS.userData}/profiles/user`,
       `${smoke.OPTIONS.userIdentity}user-identity`,
       `${smoke.OPTIONS.sessionData}/profiles/session`,
       `${smoke.OPTIONS.sessionIdentity}session-identity`,
     ])
-    expect(validateResult).toHaveBeenCalledWith(rawOutput, {
-      scenario: smoke.BASELINE_SCENARIO,
-    })
+    expect(runChild).toHaveBeenCalledTimes(4)
+    expect(
+      runChild.mock.calls.map(([call]) =>
+        call.args.find((argument: string) => argument.startsWith(smoke.OPTIONS.profile)),
+      ),
+    ).toEqual([
+      `${smoke.OPTIONS.profile}100`,
+      `${smoke.OPTIONS.profile}125`,
+      `${smoke.OPTIONS.profile}150`,
+      `${smoke.OPTIONS.profile}dpr2`,
+    ])
+    expect(validateResult.mock.calls.map(([, options]) => options.expectedProfile.name)).toEqual([
+      '100',
+      '125',
+      '150',
+      'dpr2',
+    ])
+    expect(
+      runChild.mock.calls.map(([call]) =>
+        call.args.find((argument: string) => argument.startsWith('--force-device-scale-factor=')),
+      ),
+    ).toEqual([
+      '--force-device-scale-factor=1',
+      '--force-device-scale-factor=1',
+      '--force-device-scale-factor=1',
+      '--force-device-scale-factor=2',
+    ])
     expect(raw.verifyRawRoot).toHaveBeenCalledWith(raw.claim)
     expect(publish).toHaveBeenCalledWith(output, authoritative)
     expect(events).toEqual(['retention', 'publish'])
   })
 
-  it('omits the source application argument for a packaged child', () => {
+  it('places the device-scale switch before the source application argument for a development child', () => {
+    const args = launcher.childArguments(
+      '/raw',
+      smoke.BASELINE_SCENARIO,
+      profile('user'),
+      profile('session'),
+      layoutProfiles.layoutSmokeProfile('dpr2'),
+    )
+    expect(args.slice(0, 3)).toEqual([
+      '--force-device-scale-factor=2',
+      launcher.REPOSITORY_ROOT,
+      smoke.TRIGGER,
+    ])
+  })
+
+  it('places the device-scale switch before the trigger for a packaged child', () => {
     const args = launcher.childArguments(
       '/raw',
       smoke.BASELINE_SCENARIO,
@@ -129,18 +193,21 @@ describe('visual smoke launcher', () => {
       profile('session'),
       true,
     )
-    expect(args[0]).toBe(smoke.TRIGGER)
+    expect(args.slice(0, 2)).toEqual(['--force-device-scale-factor=1', smoke.TRIGGER])
   })
 
   it('publishes only validated bytes after retaining the verified real private workspace', async () => {
     const output = await outputPath()
-    const created = [profile('user'), profile('session')]
+    const created = Array.from({ length: 4 }, () => [profile('user'), profile('session')]).flat()
     let rawOutput = ''
     const runChild = vi.fn(async ({ args }: { args: string[] }) => {
       const rawArgument = args.find((argument) => argument.startsWith(smoke.OPTIONS.output))
       if (!rawArgument) throw new Error('missing raw output argument')
       rawOutput = rawArgument.slice(smoke.OPTIONS.output.length)
-      const artifacts = visualResults.createResultArtifacts(validPng(1280, 720)).artifacts
+      const artifacts = visualResults.createResultArtifacts(
+        validPng(1280, 720),
+        profileObservation(requestedProfileName(args)),
+      ).artifacts
       await publishArtifactBuffers(rawOutput, artifacts)
       return {
         code: 0,
@@ -170,6 +237,47 @@ describe('visual smoke launcher', () => {
     expect(await readFile(join(retainedRoot, smokeProfiles.OWNER_FILE), 'utf8')).toContain('token')
   })
 
+  it.each([
+    ['missing profile observation', undefined],
+    ['profile name', profileObservation('100', { name: '125' })],
+    ['browser zoom', profileObservation('100', { browserZoom: 1.25 })],
+    ['content width', profileObservation('100', { contentWidth: 1279 })],
+    ['content height', profileObservation('100', { contentHeight: 719 })],
+    ['CSS width', profileObservation('100', { cssWidth: 1279 })],
+    ['CSS height', profileObservation('100', { cssHeight: 719 })],
+    ['native device scale', profileObservation('100', { deviceScale: 2 })],
+    ['post-zoom device pixel ratio', profileObservation('100', { devicePixelRatio: 2 })],
+  ])('withholds public publication for a %s', async (_label, observation) => {
+    const output = await outputPath()
+    const created = [profile('user'), profile('session')]
+    const publish = vi.fn()
+    const runChild = vi.fn(async ({ args }: { args: string[] }) => {
+      const rawArgument = args.find((argument) => argument.startsWith(smoke.OPTIONS.output))
+      if (!rawArgument) throw new Error('missing raw output argument')
+      await publishArtifactBuffers(
+        rawArgument.slice(smoke.OPTIONS.output.length),
+        visualResults.createResultArtifacts(validPng(1280, 720), observation).artifacts,
+      )
+      return { code: 0, diagnostics: { fatal: false, overflow: false }, signal: null }
+    })
+
+    await expect(
+      launcher.runLauncher(
+        { argv: [output], executable: '/electron' },
+        {
+          createProfile: vi.fn(async () => created.shift()),
+          outputState: vi.fn(async () => ({ output, state: 'absent' })),
+          publish,
+          runChild,
+          verifyProfile: vi.fn(async () => ({ retained: true })),
+        },
+      ),
+    ).resolves.toEqual({ code: 'VISUAL_SMOKE_RESULT_INVALID', ok: false })
+
+    expect(publish).not.toHaveBeenCalled()
+    expect(runChild).toHaveBeenCalledOnce()
+  })
+
   it('allowlists the Style-session scenario before creating profiles or a child', async () => {
     const output = await outputPath()
     const events: string[] = []
@@ -184,8 +292,8 @@ describe('visual smoke launcher', () => {
       events.push('publish')
     })
     const raw = rawWorkspace(output, events)
-    const rawOutput = join(raw.claim.path, 'evidence')
-    const created = [profile('user'), profile('session')]
+    const rawOutput = join(raw.claim.path, 'evidence-100')
+    const created = Array.from({ length: 4 }, () => [profile('user'), profile('session')]).flat()
     await expect(
       launcher.runLauncher(
         {
@@ -207,9 +315,7 @@ describe('visual smoke launcher', () => {
       `${smoke.OPTIONS.scenario}${smoke.STYLE_SESSION_SCENARIO}`,
     )
     expect(runChild.mock.calls[0][0].args).toContain(`${smoke.OPTIONS.output}${rawOutput}`)
-    expect(validateResult).toHaveBeenCalledWith(rawOutput, {
-      scenario: smoke.STYLE_SESSION_SCENARIO,
-    })
+    expect(runChild).toHaveBeenCalledTimes(4)
     expect(publish).toHaveBeenCalledWith(output, authoritative)
     expect(events).toEqual(['retention', 'publish'])
   })
@@ -369,7 +475,7 @@ describe('visual smoke launcher', () => {
     const output = await outputPath()
     const events: string[] = []
     const raw = rawWorkspace(output, events)
-    const rawOutput = join(raw.claim.path, 'evidence')
+    const rawOutput = join(raw.claim.path, 'evidence-100')
     const publish = vi.fn()
     const writeFailure = vi.fn(async () => {
       events.push('failure')
@@ -402,6 +508,7 @@ describe('visual smoke launcher', () => {
       ),
     ).resolves.toEqual({ code: 'VISUAL_SMOKE_RESULT_INVALID', ok: false })
     expect(validateResult).toHaveBeenCalledWith(rawOutput, {
+      expectedProfile: layoutProfiles.layoutSmokeProfile('100'),
       scenario: smoke.BASELINE_SCENARIO,
     })
     expect(publish).not.toHaveBeenCalled()

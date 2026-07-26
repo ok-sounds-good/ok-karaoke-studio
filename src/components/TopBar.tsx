@@ -9,6 +9,7 @@ import {
   Type,
   Undo2,
 } from 'lucide-react'
+import type { FocusEvent } from 'react'
 import { Button, IconButton, LogoMark } from './ui'
 
 interface TopBarProps {
@@ -52,6 +53,18 @@ export function TopBar({
   onValidate,
   onExport,
 }: TopBarProps) {
+  const revealFocusedAction = (event: FocusEvent<HTMLElement>) => {
+    const target = event.target
+    if (!(target instanceof HTMLElement)) return
+    const scrollport = event.currentTarget
+    const targetRect = target.getBoundingClientRect()
+    const scrollportRect = scrollport.getBoundingClientRect()
+    const leftDelta = targetRect.left - scrollportRect.left
+    const rightDelta = targetRect.right - scrollportRect.right
+    if (leftDelta < 0) scrollport.scrollLeft += leftDelta
+    else if (rightDelta > 0) scrollport.scrollLeft += rightDelta
+  }
+
   return (
     <header className="topbar">
       <div className="topbar__brand">
@@ -83,7 +96,7 @@ export function TopBar({
         <small>EDITING</small>
       </div>
 
-      <nav className="topbar__actions" aria-label="Project actions">
+      <nav className="topbar__actions" aria-label="Project actions" onFocus={revealFocusedAction}>
         <div className="toolbar-group">
           <IconButton aria-label="New project" title="New project" onClick={onNew}>
             <FilePlus2 size={17} />

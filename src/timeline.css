@@ -536,6 +536,27 @@
   }
 }
 
+@media (max-height: 600px) {
+  .timeline-panel {
+    min-height: 0;
+  }
+
+  .timeline-panel__header {
+    min-height: 34px;
+    padding-top: 3px;
+    padding-bottom: 3px;
+  }
+
+  .timeline-label-spacer {
+    height: 58px;
+    padding-bottom: 5px;
+  }
+
+  .timeline-waveform {
+    height: 48px;
+  }
+}
+
 .timeline-hint,
 .timeline-track-label small {
   color: var(--muted);
