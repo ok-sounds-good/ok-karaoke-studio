@@ -14,6 +14,7 @@ export type TitleCardRole = (typeof TITLE_CARD_ROLES)[number]['id']
 
 interface TitleCardStylePanelProps {
   active: boolean
+  className?: string
   draft: StageStyle
   fonts: InstalledFontState
   id: string
@@ -25,6 +26,7 @@ interface TitleCardStylePanelProps {
 
 export function TitleCardStylePanel({
   active,
+  className,
   draft,
   fonts,
   id,
@@ -46,7 +48,14 @@ export function TitleCardStylePanel({
     }))
 
   return (
-    <section id={id} role="tabpanel" aria-labelledby={labelledBy} hidden={!active}>
+    <section
+      id={id}
+      role="tabpanel"
+      aria-labelledby={labelledBy}
+      hidden={!active}
+      className={className}
+    >
+      <h3 className="style-destination-heading">Title card</h3>
       <fieldset className="title-card-role-selector">
         <legend>Title card role</legend>
         <div role="radiogroup" aria-label="Title card role">

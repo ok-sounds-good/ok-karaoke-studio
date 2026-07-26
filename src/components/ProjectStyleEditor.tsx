@@ -222,7 +222,9 @@ export function ProjectStyleEditor({
             role="tabpanel"
             aria-labelledby={`${titleId}-lyrics-tab`}
             hidden={destination !== 'lyrics'}
+            className="style-destination-panel"
           >
+            <h3 className="style-destination-heading">Lyrics</h3>
             <p className="style-field-help">Typeface, face, and size apply to every singer.</p>
             <section className="style-control-group" aria-labelledby={`${titleId}-typeface`}>
               <h3 id={`${titleId}-typeface`}>Typeface</h3>
@@ -313,7 +315,9 @@ export function ProjectStyleEditor({
             role="tabpanel"
             aria-labelledby={`${titleId}-background-tab`}
             hidden={destination !== 'background'}
+            className="style-destination-panel"
           >
+            <h3 className="style-destination-heading">Background</h3>
             <fieldset className="style-background-mode">
               <legend>Background mode</legend>
               <div>
@@ -410,6 +414,7 @@ export function ProjectStyleEditor({
 
           <TitleCardStylePanel
             active={destination === 'title-card'}
+            className="style-destination-panel"
             draft={stageStyle}
             fonts={fonts}
             id={`${titleId}-title-card-panel`}
@@ -421,6 +426,7 @@ export function ProjectStyleEditor({
 
           <StageFrameStylePanel
             active={destination === 'stage-frame'}
+            className="style-destination-panel"
             draft={stageStyle}
             fonts={fonts}
             id={`${titleId}-stage-frame-panel`}

@@ -591,6 +591,64 @@ const STYLE_KEY_RECORDER_SCRIPT = `(() => {
   return true
 })()`
 
+const STYLE_DESTINATION_SCROLL_TOPS = Object.freeze({
+  'title-card': 91,
+  templates: 0,
+})
+
+function styleDestinationLayoutScript(destination, expectedScrollTop = 0, setScrollTop = false) {
+  if (
+    !Object.hasOwn(STYLE_DESTINATION_SCROLL_TOPS, destination) ||
+    !Number.isSafeInteger(expectedScrollTop) ||
+    expectedScrollTop < 0 ||
+    expectedScrollTop > 10_000 ||
+    typeof setScrollTop !== 'boolean'
+  )
+    throw readinessError()
+  return `(() => {
+    const destination = ${JSON.stringify(destination)}
+    const expectedScrollTop = ${expectedScrollTop}
+    const setScrollTop = ${setScrollTop}
+    const workspace = document.querySelector('.style-workspace[role="dialog"]')
+    const tab = workspace?.querySelector('[role="tab"][data-style-destination="' + destination + '"]')
+    const panelId = tab?.getAttribute('aria-controls')
+    const panel = panelId ? document.getElementById(panelId) : null
+    const panels = [...(workspace?.querySelectorAll('[role="tabpanel"]') ?? [])]
+    const activeElement = document.activeElement
+    const panelRect = panel?.getBoundingClientRect()
+    const heading = panel?.querySelector('.style-destination-heading')
+    const headingRect = heading?.getBoundingClientRect()
+    if (setScrollTop && panel instanceof HTMLElement) panel.scrollTop = expectedScrollTop
+    const bounds = (rect) =>
+      rect &&
+      rect.width > 0 &&
+      rect.height > 0 &&
+      rect.left >= 0 &&
+      rect.top >= 0 &&
+      rect.right <= window.innerWidth &&
+      rect.bottom <= window.innerHeight
+    const activePanel = panels.find((candidate) => !candidate.hidden)
+    const focusInHiddenPanel = panels.some(
+      (candidate) => candidate.hidden && candidate.contains(activeElement),
+    )
+    const activeTab = workspace?.querySelector('[role="tab"][aria-selected="true"]')
+    return {
+      activePanel: activePanel?.id ?? null,
+      activeTab: activeTab?.getAttribute('data-style-destination') ?? null,
+      clientHeight: panel?.clientHeight ?? 0,
+      contentBounded:
+        panel instanceof HTMLElement && panel.scrollWidth <= panel.clientWidth,
+      focusOwnsDestination: activeElement === tab,
+      headingBounded: bounds(headingRect),
+      hiddenPanelFocus: focusInHiddenPanel,
+      panelBounded: bounds(panelRect),
+      scrollHeight: panel?.scrollHeight ?? 0,
+      scrollTop: panel?.scrollTop ?? -1,
+      selected: tab?.getAttribute('aria-selected') === 'true',
+    }
+  })()`
+}
+
 const STYLE_KEY_RESULT_SCRIPT = `(() => new Promise((resolve) => {
   requestAnimationFrame(() => requestAnimationFrame(() => {
     const storage = '__oksStyleKeyboardRecorder'
@@ -862,14 +920,11 @@ function projectLyricsReadinessScript(viewport, contract = { kind: 'project-lyri
         const tab = document.querySelector('[role="tab"][data-style-destination="lyrics"]')
         const preview = document.querySelector('[aria-label="Lyrics design preview"]')
         const stage = preview?.querySelector('[data-logical-stage="1920x1080"]')
-        const designLines = [...(stage?.querySelectorAll('[data-design-preview="lead-vocal"] .stage-line') ?? [])]
-        const expectedWordProgress = ['100%', '50%', '0%', '0%', '0%', '0%', '0%', '0%']
-        const activeLine = designLines.find((candidate) =>
-          JSON.stringify([...candidate.querySelectorAll('.stage-word')]
-            .map((word) => word.style.getPropertyValue('--word-progress'))) ===
-            JSON.stringify(expectedWordProgress))
-        const wordProgress = activeLine instanceof HTMLElement
-          ? [...activeLine.querySelectorAll('.stage-word')]
+        const line = stage?.querySelector(
+          '[data-design-preview="lead-vocal"] [data-lyric-object-content] .stage-line',
+        )
+        const wordProgress = line instanceof HTMLElement
+          ? [...line.querySelectorAll('.stage-word')]
             .map((word) => word.style.getPropertyValue('--word-progress'))
           : []
         const enabled = panel?.querySelector('[aria-label="Enable Lead Vocal Sync Aid"]')
@@ -879,7 +934,7 @@ function projectLyricsReadinessScript(viewport, contract = { kind: 'project-lyri
         if (!(workspace instanceof HTMLElement) || !(panel instanceof HTMLElement) || panel.hidden ||
           !(tab instanceof HTMLButtonElement) || tab.getAttribute('aria-selected') !== 'true' ||
           !(preview instanceof HTMLElement) || !(stage instanceof HTMLElement) ||
-          !(activeLine instanceof HTMLElement) || !bounds || bounds.width <= 0 || bounds.height <= 0 ||
+          !(line instanceof HTMLElement) || !bounds || bounds.width <= 0 || bounds.height <= 0 ||
           Math.abs(bounds.width / bounds.height - 16 / 9) > .01 ||
           panel.querySelectorAll('.style-override-toggle').length !== 0 ||
           panel.querySelectorAll('input[type="color"]').length !== 2 ||
@@ -893,9 +948,9 @@ function projectLyricsReadinessScript(viewport, contract = { kind: 'project-lyri
           !text.includes('Arrow Up or Arrow Down adjusts by 100 ms') ||
           JSON.stringify(wordProgress) !==
             JSON.stringify(['100%', '50%', '0%', '0%', '0%', '0%', '0%', '0%']) ||
-          designLines.length < 1 || stage.querySelector('.sync-aid') ||
-          !/^stage-line stage-line--(?:left|center|right)$/u.test(activeLine.className) ||
-          !activeLine.getAttribute('data-stage-font-size') || document.readyState !== 'complete' ||
+          stage.querySelector('.sync-aid') ||
+          !/^stage-line stage-line--(?:left|center|right)$/u.test(line.className) ||
+          !line.getAttribute('data-stage-font-size') || document.readyState !== 'complete' ||
           fontSet?.status !== 'loaded' || document.documentElement.clientWidth !== expected.width ||
           document.documentElement.clientHeight !== expected.height ||
           document.documentElement.scrollWidth > expected.width || document.body.scrollWidth > expected.width ||
@@ -1057,19 +1112,19 @@ function styleSessionActionScript(action) {
       target.scrollIntoView({ block: 'center' })
     }
     const semantic = ({
-      background: projectTab?.getAttribute('aria-selected') === 'true' && backgroundTab?.getAttribute('aria-selected') === 'false',
+      background: workspace instanceof HTMLElement && backgroundTab?.getAttribute('aria-selected') === 'false',
       cancel: workspace instanceof HTMLElement && cancel instanceof HTMLButtonElement && !cancel.disabled,
       lead: projectTab?.getAttribute('aria-selected') === 'true',
       lyrics: projectTab instanceof HTMLButtonElement && !projectTab.disabled,
       'sync-aid': projectTab?.getAttribute('aria-selected') === 'true' && !syncAid?.checked,
       solid: backgroundTab?.getAttribute('aria-selected') === 'true' && gradient?.checked && !solid?.checked,
       apply: backgroundTab?.getAttribute('aria-selected') === 'true' && solid?.checked,
-      title: projectTab?.getAttribute('aria-selected') === 'true',
+      title: workspace instanceof HTMLElement && titleTab?.getAttribute('aria-selected') === 'false',
       'eyebrow-visibility': titleTab?.getAttribute('aria-selected') === 'true' && eyebrow?.checked && eyebrowVisibility?.checked,
       artist: eyebrow?.checked && !eyebrowVisibility?.checked && !artist?.checked,
       'artist-visibility': artist?.checked && artistVisibility?.checked,
       'apply-title': artist?.checked && !eyebrowVisibility?.checked && !artistVisibility?.checked,
-      stage: projectTab?.getAttribute('aria-selected') === 'true' && stageTab?.getAttribute('aria-selected') === 'false',
+      stage: workspace instanceof HTMLElement && stageTab?.getAttribute('aria-selected') === 'false',
       'stage-off': stageTab?.getAttribute('aria-selected') === 'true' && brand?.checked && stageMaster?.checked,
       'stage-on': brand?.checked && !stageMaster?.checked,
       clock: stageMaster?.checked && brand?.checked && !clock?.checked,
@@ -1079,7 +1134,6 @@ function styleSessionActionScript(action) {
       'apply-stage': stageTab?.getAttribute('aria-selected') === 'true' &&
         stageMaster?.checked && footer?.checked && !footerVisibility?.checked,
       templates: workspace instanceof HTMLElement &&
-        projectTab?.getAttribute('aria-selected') === 'true' &&
         templatesTab?.getAttribute('aria-selected') === 'false',
       'template-name': templatesTab?.getAttribute('aria-selected') === 'true' &&
         templateName instanceof HTMLInputElement && !templateName.disabled && !templateName.value &&
@@ -1519,6 +1573,27 @@ function validStyleKeyboardState(value) {
   )
 }
 
+function validStyleDestinationLayout(value, destination, expectedScrollTop) {
+  return Boolean(
+    value &&
+    typeof value === 'object' &&
+    Object.hasOwn(STYLE_DESTINATION_SCROLL_TOPS, destination) &&
+    Number.isSafeInteger(expectedScrollTop) &&
+    expectedScrollTop >= 0 &&
+    value.activePanel?.endsWith(`-${destination}-panel`) &&
+    value.activeTab === destination &&
+    value.clientHeight > 0 &&
+    value.contentBounded === true &&
+    value.focusOwnsDestination === true &&
+    value.headingBounded === true &&
+    value.hiddenPanelFocus === false &&
+    value.panelBounded === true &&
+    value.scrollHeight >= value.clientHeight &&
+    value.scrollTop === expectedScrollTop &&
+    value.selected === true,
+  )
+}
+
 function executeBeforeDeadline(operation, timeoutMs) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
     throw readinessError()
@@ -1549,11 +1624,13 @@ module.exports = {
   STYLE_KEY_RESULT_SCRIPT,
   STYLE_KEY_SEQUENCE,
   STYLE_DESTINATION_STATE_SCRIPT,
+  STYLE_DESTINATION_SCROLL_TOPS,
   STYLE_SESSION_READINESS_TIMEOUT_MS,
   STYLE_TEMPLATE_NAME,
   STYLE_TARGET_SCRIPT,
   executeBeforeDeadline,
   projectLyricsReadinessScript,
+  styleDestinationLayoutScript,
   styleSessionActionScript,
   styleTemplateFormReadinessScript,
   styleTemplateReadinessScript,
@@ -1565,6 +1642,7 @@ module.exports = {
   validStageFrameState,
   validStyleActionTarget,
   validStyleKeyboardState,
+  validStyleDestinationLayout,
   validStyleTemplateFormState,
   validStyleTemplateState,
   validStyleTarget,

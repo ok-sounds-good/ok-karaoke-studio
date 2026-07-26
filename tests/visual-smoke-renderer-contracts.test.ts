@@ -209,7 +209,7 @@ describe('visual smoke renderer contracts', () => {
           stageHeight: 360,
           stageWidth: 640,
           width: 1280,
-          wordProgress: ['100%', '40%', '0%', '0%', '0%', '0%', '0%', '0%'],
+          wordProgress: ['0%', '0%', '0%', '0%', '0%', '0%', '0%', '0%'],
         },
         viewport,
       ),
@@ -330,14 +330,29 @@ describe('visual smoke renderer contracts', () => {
     expect(script).not.toContain("leadVocalTab?.getAttribute('aria-selected') === 'false'")
   })
 
-  it('finds the active Lead Vocal line by its exact progress pattern across the design frame', () => {
+  it('uses the visible Lead Vocal content rather than the hidden footprint', () => {
     const script = contracts.projectLyricsReadinessScript(
       { height: 720, width: 1280 },
       { kind: 'lead-vocal' },
     )
-    expect(script).toContain('const activeLine = designLines.find')
-    expect(script).toContain("const expectedWordProgress = ['100%', '50%', '0%'")
-    expect(script).toContain('designLines.length < 1')
+    expect(script).toContain(
+      '\'[data-design-preview="lead-vocal"] [data-lyric-object-content] .stage-line\'',
+    )
+    expect(script).toContain("JSON.stringify(['100%', '50%', '0%'")
+    expect(
+      contracts.validLeadVocalState(
+        {
+          controls: 4,
+          height: 720,
+          resourcesReady: true,
+          stageHeight: 360,
+          stageWidth: 640,
+          width: 1280,
+          wordProgress: ['0%', '0%', '0%', '0%', '0%', '0%', '0%', '0%'],
+        },
+        { height: 720, width: 1280 },
+      ),
+    ).toBe(false)
   })
 
   it('treats keyboard assertions as exact contracts, including every selection change', () => {
@@ -362,12 +377,65 @@ describe('visual smoke renderer contracts', () => {
     ).toBe(false)
   })
 
+  it('requires each Style destination to retain its visible scroll position and tab focus', () => {
+    const layout = {
+      activePanel: 'style-title-card-panel',
+      activeTab: 'title-card',
+      clientHeight: 420,
+      contentBounded: true,
+      focusOwnsDestination: true,
+      headingBounded: true,
+      hiddenPanelFocus: false,
+      panelBounded: true,
+      scrollHeight: 720,
+      scrollTop: contracts.STYLE_DESTINATION_SCROLL_TOPS['title-card'],
+      selected: true,
+    }
+    expect(
+      contracts.validStyleDestinationLayout(
+        layout,
+        'title-card',
+        contracts.STYLE_DESTINATION_SCROLL_TOPS['title-card'],
+      ),
+    ).toBe(true)
+    expect(
+      contracts.validStyleDestinationLayout(
+        { ...layout, hiddenPanelFocus: true },
+        'title-card',
+        contracts.STYLE_DESTINATION_SCROLL_TOPS['title-card'],
+      ),
+    ).toBe(false)
+    expect(
+      contracts.styleDestinationLayoutScript(
+        'templates',
+        contracts.STYLE_DESTINATION_SCROLL_TOPS.templates,
+        true,
+      ),
+    ).toContain('panel.scrollTop = expectedScrollTop')
+  })
+
   it('waits for a cancelled Style dialog to unmount before targeting the header button again', () => {
     expect(contracts.STYLE_TARGET_SCRIPT).toContain(
       'document.querySelector(\'.style-workspace[role="dialog"]\')',
     )
     expect(contracts.STYLE_TARGET_SCRIPT).toContain(
       'if (workspace || !(target instanceof HTMLButtonElement)',
+    )
+  })
+
+  it('permits non-Lyrics destination tabs from any other unselected Style destination', () => {
+    const action = contracts.styleSessionActionScript('templates')
+    expect(action).toContain(
+      "background: workspace instanceof HTMLElement && backgroundTab?.getAttribute('aria-selected') === 'false',",
+    )
+    expect(action).toContain(
+      "title: workspace instanceof HTMLElement && titleTab?.getAttribute('aria-selected') === 'false',",
+    )
+    expect(action).toContain(
+      "stage: workspace instanceof HTMLElement && stageTab?.getAttribute('aria-selected') === 'false',",
+    )
+    expect(action).toContain(
+      "templates: workspace instanceof HTMLElement &&\n        templatesTab?.getAttribute('aria-selected') === 'false',",
     )
   })
 

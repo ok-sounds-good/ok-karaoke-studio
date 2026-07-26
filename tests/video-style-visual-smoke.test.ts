@@ -46,6 +46,22 @@ async function configuredArguments() {
 
 async function settleCaptureImmediately() {}
 
+function styleDestinationLayoutState(destination: 'templates' | 'title-card', scrollTop: number) {
+  return {
+    activePanel: `style-${destination}-panel`,
+    activeTab: destination,
+    clientHeight: 420,
+    contentBounded: true,
+    focusOwnsDestination: true,
+    headingBounded: true,
+    hiddenPanelFocus: false,
+    panelBounded: true,
+    scrollHeight: 720,
+    scrollTop,
+    selected: true,
+  }
+}
+
 function fakeWindow(
   capturePage = vi.fn(async () => ({
     getSize: () => ({ height: 720, width: 1280 }),
@@ -387,6 +403,15 @@ function fakeStyleSessionWindow(
       .mockResolvedValueOnce(styleTarget())
       .mockResolvedValueOnce(styleActionTarget('title'))
       .mockResolvedValueOnce(titleCardState('eyebrow'))
+      .mockResolvedValueOnce(styleDestinationLayoutState('title-card', 91))
+      .mockResolvedValueOnce(styleActionTarget('templates'))
+      .mockResolvedValueOnce(styleDestinationLayoutState('templates', 0))
+      .mockResolvedValueOnce(styleActionTarget('title'))
+      .mockResolvedValueOnce(styleDestinationLayoutState('title-card', 91))
+      .mockResolvedValueOnce(styleActionTarget('templates'))
+      .mockResolvedValueOnce(styleDestinationLayoutState('templates', 0))
+      .mockResolvedValueOnce(styleActionTarget('title'))
+      .mockResolvedValueOnce(styleDestinationLayoutState('title-card', 0))
       .mockResolvedValueOnce(styleActionTarget('eyebrow-visibility'))
       .mockResolvedValueOnce(titleCardState('eyebrow'))
       .mockResolvedValueOnce(styleActionTarget('artist'))
@@ -402,12 +427,15 @@ function fakeStyleSessionWindow(
       .mockResolvedValueOnce(styleActionTarget('stage-off'))
       .mockResolvedValueOnce(stageFrameState('brand'))
       .mockResolvedValueOnce(styleActionTarget('stage-on'))
+      .mockResolvedValueOnce(stageFrameState('brand'))
     if (options.clockPending) script.mockResolvedValueOnce(null)
     script
       .mockResolvedValueOnce(styleActionTarget('clock'))
+      .mockResolvedValueOnce(stageFrameState('clock'))
       .mockResolvedValueOnce(styleActionTarget('clock-face'))
       .mockResolvedValueOnce(stageFrameState('clock', { changedClock: true }))
       .mockResolvedValueOnce(styleActionTarget('footer'))
+      .mockResolvedValueOnce(stageFrameState('footer', { changedClock: true }))
       .mockResolvedValueOnce(styleActionTarget('footer-visibility'))
       .mockResolvedValueOnce(stageFrameState('footer', { changedClock: true }))
       .mockResolvedValueOnce(styleActionTarget('apply-stage'))
@@ -744,8 +772,8 @@ describe('production-window visual smoke', () => {
       ),
     ).resolves.toEqual({ ok: true })
     const inputEvents = window.webContents.sendInputEvent.mock.calls.map(([event]) => event)
-    expect(inputEvents).toHaveLength(167)
-    expect(inputEvents.filter(({ type }) => type === 'mouseDown')).toHaveLength(30)
+    expect(inputEvents).toHaveLength(179)
+    expect(inputEvents.filter(({ type }) => type === 'mouseDown')).toHaveLength(34)
     const expectedKeys = [
       'Tab',
       'Tab',
@@ -808,6 +836,10 @@ describe('production-window visual smoke', () => {
       'solid',
       'apply',
       'title',
+      'templates',
+      'title',
+      'templates',
+      'title',
       'eyebrow-visibility',
       'artist',
       'artist-visibility',
@@ -836,6 +868,14 @@ describe('production-window visual smoke', () => {
     expect(resizedLyricsReadiness).toBeGreaterThan(lyricsReset)
     expect(scripts[resizedLyricsReadiness]).toContain('"project-lyrics"')
     expect(scripts.filter((script) => script === smoke.STYLE_TARGET_SCRIPT)).toHaveLength(5)
+    const layoutScripts = scripts.filter((script) => script.includes('expectedScrollTop'))
+    expect(layoutScripts).toHaveLength(5)
+    for (const script of layoutScripts) {
+      expect(script).toContain('focusOwnsDestination')
+      expect(script).toContain('hiddenPanelFocus')
+      expect(script).toContain('headingBounded')
+      expect(script).toContain('contentBounded')
+    }
     expect(window.setContentSize.mock.calls).toContainEqual([1280, 720, false])
     expect(window.setContentSize.mock.calls).toContainEqual([1440, 900, false])
     expect(window.webContents.capturePage).toHaveBeenCalledTimes(32)
@@ -941,7 +981,7 @@ describe('production-window visual smoke', () => {
       ),
     ).resolves.toEqual({ ok: true })
 
-    expect(window.webContents.sendInputEvent).toHaveBeenCalledTimes(167)
+    expect(window.webContents.sendInputEvent).toHaveBeenCalledTimes(179)
     expect(window.webContents.sendInputEvent.mock.calls[0][0]).toEqual({
       type: 'mouseMove',
       x: 61,
@@ -1167,7 +1207,7 @@ describe('production-window visual smoke', () => {
     ).toEqual(expect.arrayContaining(['templates']))
     expect(scripts).not.toContainEqual(expect.stringContaining('const action = "template-name"'))
     expect(window.webContents.capturePage).toHaveBeenCalledTimes(30)
-    expect(window.webContents.sendInputEvent).toHaveBeenCalledTimes(134)
+    expect(window.webContents.sendInputEvent).toHaveBeenCalledTimes(146)
     expect(publish).not.toHaveBeenCalled()
     expect(writeFailure).toHaveBeenCalledOnce()
   })

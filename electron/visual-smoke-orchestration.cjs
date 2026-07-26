@@ -18,11 +18,13 @@ const {
   STYLE_KEY_RESULT_SCRIPT,
   STYLE_KEY_SEQUENCE,
   STYLE_DESTINATION_STATE_SCRIPT,
+  STYLE_DESTINATION_SCROLL_TOPS,
   STYLE_SESSION_READINESS_TIMEOUT_MS,
   STYLE_TEMPLATE_NAME,
   STYLE_TARGET_SCRIPT,
   executeBeforeDeadline,
   projectLyricsReadinessScript,
+  styleDestinationLayoutScript,
   styleSessionActionScript,
   styleTemplateFormReadinessScript,
   styleTemplateReadinessScript,
@@ -33,6 +35,7 @@ const {
   validLayoutReachabilityState,
   validStageFrameState,
   validStyleActionTarget,
+  validStyleDestinationLayout,
   validStyleKeyboardState,
   validStyleTemplateFormState,
   validStyleTemplateState,
@@ -485,6 +488,17 @@ async function captureStyleSession(window, app, options, config) {
       if (!validStageFrameState(state, viewport, contract)) readinessInvalid()
       return state
     }
+    const styleDestinationLayout = async (destination, scrollTop, setScrollTop) => {
+      const state = await executeBeforeDeadline(
+        () =>
+          window.webContents.executeJavaScript(
+            styleDestinationLayoutScript(destination, scrollTop, setScrollTop),
+            false,
+          ),
+        options.readinessTimeoutMs,
+      )
+      if (!validStyleDestinationLayout(state, destination, scrollTop)) readinessInvalid()
+    }
     await activate('stage')
     await stageFrameState({ enabled: true, role: 'brand', roleVisible: true })
     const armed = await window.webContents.executeJavaScript(STYLE_KEY_RECORDER_SCRIPT, false)
@@ -542,7 +556,16 @@ async function captureStyleSession(window, app, options, config) {
     await activate('reopen')
     await activate('title')
     await titleCardState({ role: 'eyebrow', eyebrowHidden: false, artistHidden: false })
+    await styleDestinationLayout('title-card', STYLE_DESTINATION_SCROLL_TOPS['title-card'], true)
+    await activate('templates')
+    await styleDestinationLayout('templates', STYLE_DESTINATION_SCROLL_TOPS.templates, true)
+    await activate('title')
+    await styleDestinationLayout('title-card', STYLE_DESTINATION_SCROLL_TOPS['title-card'], false)
+    await activate('templates')
+    await styleDestinationLayout('templates', STYLE_DESTINATION_SCROLL_TOPS.templates, false)
+    await activate('title')
     pngs.push(await capture(viewport))
+    await styleDestinationLayout('title-card', 0, true)
     await activate('eyebrow-visibility')
     await titleCardState({ role: 'eyebrow', eyebrowHidden: true, artistHidden: false })
     pngs.push(await capture(viewport))
@@ -585,7 +608,9 @@ async function captureStyleSession(window, app, options, config) {
     await stageFrameState({ ...preservedFrame, enabled: false, role: 'brand', roleVisible: true })
     pngs.push(await capture(viewport))
     await activate('stage-on')
+    await stageFrameState({ ...preservedFrame, enabled: true, role: 'brand', roleVisible: true })
     await activate('clock')
+    await stageFrameState({ ...preservedFrame, enabled: true, role: 'clock', roleVisible: true })
     await activate('clock-face')
     const clockFrame = await stageFrameState({
       ...preservedFrame,
@@ -602,6 +627,7 @@ async function captureStyleSession(window, app, options, config) {
       clockWeight: '700',
     }
     await activate('footer')
+    await stageFrameState({ ...changedFrame, enabled: true, role: 'footer', roleVisible: true })
     await activate('footer-visibility')
     await stageFrameState({ ...changedFrame, enabled: true, role: 'footer', roleVisible: false })
     pngs.push(await capture(viewport))

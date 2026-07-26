@@ -14,6 +14,7 @@ export type StageFrameRole = (typeof STAGE_FRAME_ROLES)[number]['id']
 
 interface StageFrameStylePanelProps {
   active: boolean
+  className?: string
   draft: StageStyle
   fonts: InstalledFontState
   id: string
@@ -25,6 +26,7 @@ interface StageFrameStylePanelProps {
 
 export function StageFrameStylePanel({
   active,
+  className,
   draft,
   fonts,
   id,
@@ -46,7 +48,14 @@ export function StageFrameStylePanel({
     }))
 
   return (
-    <section id={id} role="tabpanel" aria-labelledby={labelledBy} hidden={!active}>
+    <section
+      id={id}
+      role="tabpanel"
+      aria-labelledby={labelledBy}
+      hidden={!active}
+      className={className}
+    >
+      <h3 className="style-destination-heading">Stage frame</h3>
       <label className="stage-frame-master-field">
         <input
           type="checkbox"
