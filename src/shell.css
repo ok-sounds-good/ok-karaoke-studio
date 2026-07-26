@@ -196,6 +196,12 @@
   }
 }
 
+@media (max-width: 900px) {
+  .studio-main {
+    grid-template-columns: 140px minmax(0, 1fr);
+  }
+}
+
 @media (max-height: 760px) {
   .app-shell {
     grid-template-rows: 58px minmax(0, 1fr) 70px;

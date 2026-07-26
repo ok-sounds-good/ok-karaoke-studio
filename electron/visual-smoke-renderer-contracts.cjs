@@ -313,6 +313,69 @@ function layoutReachabilityScript(viewport, includeStyleTargets = false) {
       }
       controls[definition.name] = collectReachability(element, definition)
     }
+    const workspace = document.querySelector('.unified-workspace')
+    const stage = document.querySelector('#workspace-stage-region')
+    const divider = document.querySelector('[role="separator"][aria-label="Stage Monitor and Lyric Timing height"]')
+    const timingRegion = document.querySelector('#workspace-timing-region')
+    const timing = document.querySelector('section.timeline-panel[aria-label="Lyric Timing"]')
+    const timelineViewport = timing?.querySelector('.timeline-viewport')
+    const workspaceStyle = workspace instanceof HTMLElement ? getComputedStyle(workspace) : null
+    const timingStyle = timing instanceof HTMLElement ? getComputedStyle(timing) : null
+    const viewportStyle = timelineViewport instanceof HTMLElement ? getComputedStyle(timelineViewport) : null
+    const workspaceScrollModes = ['auto', 'scroll', 'overlay']
+    const ariaNumber = (attribute) => {
+      const raw = divider instanceof HTMLElement ? divider.getAttribute(attribute) : null
+      if (typeof raw !== 'string' || raw.trim() === '') return { raw, value: null }
+      const value = Number(raw)
+      return { raw, value: Number.isFinite(value) ? value : null }
+    }
+    const dividerMinimum = ariaNumber('aria-valuemin')
+    const dividerMaximum = ariaNumber('aria-valuemax')
+    const dividerValue = ariaNumber('aria-valuenow')
+    const bounds = (node) => node instanceof HTMLElement ? node.getBoundingClientRect() : null
+    const workspaceBounds = bounds(workspace)
+    const stageBounds = bounds(stage)
+    const dividerBounds = bounds(divider)
+    const timingBounds = bounds(timing)
+    const cssNumber = (property) => {
+      const value = Number.parseFloat(workspaceStyle?.getPropertyValue(property) || '')
+      return Number.isFinite(value) ? value : 0
+    }
+    const workspaceGeometry = workspace instanceof HTMLElement && stageBounds
+      ? {
+          dividerSize: cssNumber('--workspace-divider-size'),
+          paddingBottom: cssNumber('padding-bottom'),
+          paddingTop: cssNumber('padding-top'),
+          rootHeight: workspace.clientHeight,
+          stageHeight: stageBounds.height,
+          stageMinimum: cssNumber('--workspace-top-min'),
+          timingMinimum: cssNumber('--workspace-timing-min'),
+        }
+      : null
+    const verticallyContained = (rect) =>
+      rect && workspaceBounds && rect.top >= workspaceBounds.top && rect.bottom <= workspaceBounds.bottom
+    const workspaceContract = {
+      dividerValue: dividerValue.value,
+      dividerValueRaw: dividerValue.raw,
+      maximum: dividerMaximum.value,
+      maximumRaw: dividerMaximum.raw,
+      minimum: dividerMinimum.value,
+      minimumRaw: dividerMinimum.raw,
+      geometry: workspaceGeometry,
+      ordered: stage?.nextElementSibling === divider && divider?.nextElementSibling === timingRegion,
+      orientation: divider?.getAttribute('aria-orientation') === 'horizontal',
+      present: workspace instanceof HTMLElement &&
+        stage instanceof HTMLElement &&
+        divider instanceof HTMLElement &&
+        timingRegion instanceof HTMLElement &&
+        timing instanceof HTMLElement,
+      timingBounded: verticallyContained(timingBounds) && !workspaceScrollModes.includes(timingStyle?.overflowY),
+      timingViewportScrolls: timelineViewport instanceof HTMLElement &&
+        (workspaceScrollModes.includes(viewportStyle?.overflowX) || workspaceScrollModes.includes(viewportStyle?.overflowY)),
+      unclipped: verticallyContained(stageBounds) && verticallyContained(dividerBounds) && verticallyContained(timingBounds) &&
+        !workspaceScrollModes.includes(workspaceStyle?.overflowY),
+      valueText: divider instanceof HTMLElement ? divider.getAttribute('aria-valuetext') : null,
+    }
     return {
       controlNames: expected.targets.map((control) => control.name),
       controls,
@@ -320,6 +383,7 @@ function layoutReachabilityScript(viewport, includeStyleTargets = false) {
       valid: true,
       windowHeight: document.documentElement.clientHeight,
       windowWidth: document.documentElement.clientWidth,
+      workspace: workspaceContract,
     }
   })()`
 }
@@ -338,6 +402,7 @@ function validLayoutReachabilityState(value, viewport, options = {}) {
     viewport.height <= 0 ||
     typeof value.controls !== 'object' ||
     value.controls === null ||
+    (!includeStyleTargets && !validWorkspaceReachabilityState(value.workspace)) ||
     !Array.isArray(value.controlNames) ||
     value.controlNames.length !== expectedTargets.length
   )
@@ -382,6 +447,80 @@ function validLayoutReachabilityState(value, viewport, options = {}) {
     }
   }
   return true
+}
+
+function validWorkspaceReachabilityState(workspace) {
+  if (
+    !workspace ||
+    workspace.present !== true ||
+    workspace.ordered !== true ||
+    workspace.orientation !== true ||
+    workspace.timingBounded !== true ||
+    workspace.timingViewportScrolls !== true ||
+    workspace.unclipped !== true
+  )
+    return false
+  const values = [
+    ['minimum', 'minimumRaw'],
+    ['maximum', 'maximumRaw'],
+    ['dividerValue', 'dividerValueRaw'],
+  ]
+  for (const [valueKey, rawKey] of values) {
+    const raw = workspace[rawKey]
+    if (typeof raw !== 'string' || raw.trim() === '') return false
+    const numericRaw = Number(raw)
+    if (
+      !Number.isFinite(numericRaw) ||
+      !Number.isFinite(workspace[valueKey]) ||
+      numericRaw !== workspace[valueKey]
+    )
+      return false
+  }
+  const expected = workspaceDividerValues(workspace.geometry)
+  if (
+    !expected ||
+    workspace.minimum !== expected.minimum ||
+    workspace.maximum !== expected.maximum ||
+    workspace.dividerValue !== expected.dividerValue ||
+    workspace.valueText !== expected.valueText
+  )
+    return false
+  return (
+    workspace.minimum >= 0 &&
+    workspace.maximum <= 100 &&
+    workspace.minimum < workspace.maximum &&
+    workspace.minimum <= workspace.dividerValue &&
+    workspace.dividerValue <= workspace.maximum
+  )
+}
+
+function workspaceDividerValues(geometry) {
+  if (!geometry || typeof geometry !== 'object') return null
+  const keys = [
+    'dividerSize',
+    'paddingBottom',
+    'paddingTop',
+    'rootHeight',
+    'stageHeight',
+    'stageMinimum',
+    'timingMinimum',
+  ]
+  if (keys.some((key) => !Number.isFinite(geometry[key]) || geometry[key] < 0)) return null
+  const contentHeight = geometry.rootHeight - geometry.paddingTop - geometry.paddingBottom
+  const availableHeight = Math.max(0, contentHeight - geometry.dividerSize)
+  const maximumHeight = Math.max(0, availableHeight - geometry.timingMinimum)
+  const minimumHeight = Math.min(geometry.stageMinimum, maximumHeight)
+  const ratioForHeight = (height) =>
+    availableHeight <= 0 ? 0 : Math.min(1, Math.max(0, height / availableHeight))
+  const minimum = Math.round(ratioForHeight(minimumHeight) * 100)
+  const maximum = Math.round(ratioForHeight(maximumHeight) * 100)
+  const dividerValue = Math.round(ratioForHeight(geometry.stageHeight) * 100)
+  return {
+    dividerValue,
+    maximum,
+    minimum,
+    valueText: `${dividerValue}% Stage Monitor height; ${100 - dividerValue}% Lyric Timing height`,
+  }
 }
 
 function requiresLocalScrollport(target) {

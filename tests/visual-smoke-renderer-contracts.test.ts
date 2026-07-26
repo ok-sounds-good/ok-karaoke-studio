@@ -90,6 +90,30 @@ function layoutReachabilityState(
     valid: true,
     windowHeight: viewport.height,
     windowWidth: viewport.width,
+    workspace: {
+      dividerValue: 44,
+      dividerValueRaw: '44',
+      geometry: {
+        dividerSize: 0,
+        paddingBottom: 0,
+        paddingTop: 0,
+        rootHeight: 1000,
+        stageHeight: 440,
+        stageMinimum: 440,
+        timingMinimum: 440,
+      },
+      maximum: 56,
+      maximumRaw: '56',
+      minimum: 44,
+      minimumRaw: '44',
+      ordered: true,
+      orientation: true,
+      present: true,
+      timingBounded: true,
+      timingViewportScrolls: true,
+      unclipped: true,
+      valueText: '44% Stage Monitor height; 56% Lyric Timing height',
+    },
   }
 }
 
@@ -250,6 +274,13 @@ describe('visual smoke renderer contracts', () => {
         includeStyleTargets: true,
       }),
     ).toBe(true)
+    const styleStateWithoutWorkspace = layoutReachabilityState(viewport, true)
+    delete styleStateWithoutWorkspace.workspace
+    expect(
+      contracts.validLayoutReachabilityState(styleStateWithoutWorkspace, viewport, {
+        includeStyleTargets: true,
+      }),
+    ).toBe(true)
     expect(
       contracts.validLayoutReachabilityState(
         {
@@ -260,6 +291,127 @@ describe('visual smoke renderer contracts', () => {
               ...baseState.controls.saveProject,
               exists: false,
             },
+          },
+        },
+        viewport,
+      ),
+    ).toBe(false)
+    expect(
+      contracts.validLayoutReachabilityState(
+        {
+          ...baseState,
+          workspace: {
+            ...baseState.workspace,
+            dividerValue: 45,
+            dividerValueRaw: '45',
+            valueText: '45% Stage Monitor height; 55% Lyric Timing height',
+          },
+        },
+        viewport,
+      ),
+    ).toBe(false)
+    expect(
+      contracts.validLayoutReachabilityState(
+        {
+          ...baseState,
+          workspace: {
+            ...baseState.workspace,
+            valueText: '44% Stage Monitor height; 55% Lyric Timing height',
+          },
+        },
+        viewport,
+      ),
+    ).toBe(false)
+    expect(
+      contracts.validLayoutReachabilityState(
+        {
+          ...baseState,
+          workspace: {
+            ...baseState.workspace,
+            geometry: { ...baseState.workspace.geometry, stageHeight: 500 },
+          },
+        },
+        viewport,
+      ),
+    ).toBe(false)
+    expect(
+      contracts.validLayoutReachabilityState(
+        {
+          ...baseState,
+          workspace: {
+            ...baseState.workspace,
+            geometry: { ...baseState.workspace.geometry, rootHeight: 900 },
+          },
+        },
+        viewport,
+      ),
+    ).toBe(false)
+    expect(
+      contracts.validLayoutReachabilityState(
+        {
+          ...baseState,
+          workspace: {
+            ...baseState.workspace,
+            maximum: 101,
+            maximumRaw: '101',
+          },
+        },
+        viewport,
+      ),
+    ).toBe(false)
+    for (const rawKey of ['minimumRaw', 'maximumRaw', 'dividerValueRaw']) {
+      const { [rawKey]: _missing, ...workspaceWithoutRaw } = baseState.workspace
+      expect(
+        contracts.validLayoutReachabilityState(
+          {
+            ...baseState,
+            workspace: workspaceWithoutRaw,
+          },
+          viewport,
+        ),
+      ).toBe(false)
+      for (const raw of [undefined, null, '', 'Infinity', 'not-a-number']) {
+        expect(
+          contracts.validLayoutReachabilityState(
+            {
+              ...baseState,
+              workspace: { ...baseState.workspace, [rawKey]: raw },
+            },
+            viewport,
+          ),
+        ).toBe(false)
+      }
+    }
+    expect(
+      contracts.validLayoutReachabilityState(
+        {
+          ...baseState,
+          workspace: { ...baseState.workspace, minimum: 43 },
+        },
+        viewport,
+      ),
+    ).toBe(false)
+    expect(
+      contracts.validLayoutReachabilityState(
+        {
+          ...baseState,
+          workspace: {
+            ...baseState.workspace,
+            minimum: 56,
+            minimumRaw: '56',
+          },
+        },
+        viewport,
+      ),
+    ).toBe(false)
+    expect(
+      contracts.validLayoutReachabilityState(
+        {
+          ...baseState,
+          workspace: {
+            ...baseState.workspace,
+            dividerValue: 57,
+            dividerValueRaw: '57',
           },
         },
         viewport,
@@ -321,6 +473,8 @@ describe('visual smoke renderer contracts', () => {
     expect(script).toContain('clippedByOverflow')
     expect(script).toContain('const viewport')
     expect(script).toContain('nearestScrollport.scrollTop = scrollportBefore.scrollTop')
+    expect(script).toContain("getAttribute('aria-valuetext')")
+    expect(script).toContain('workspaceGeometry')
   })
 
   it('uses the selected Lyrics destination as the trusted Lead Vocal entry point', () => {

@@ -35,6 +35,7 @@ import { ProjectStyleEditor } from './components/ProjectStyleEditor'
 import { SyncCueStrip } from './components/SyncCueStrip'
 import { Timeline } from './components/Timeline'
 import { TransportBar } from './components/TransportBar'
+import { WorkspaceDivider } from './components/WorkspaceDivider'
 import {
   ExportDialog,
   LyricsEditorDialog,
@@ -389,7 +390,6 @@ export default function App() {
   const projectRef = useRef(project)
   const lastReviewIssuesRef = useRef<ValidationIssue[]>([])
   projectRef.current = project
-
   const projectMutationIsBlocked = useCallback(() => projectTransitionRef.current, [])
 
   // Any ordinary edit ends an armed synchronization transaction before it
@@ -1918,9 +1918,10 @@ export default function App() {
             onImportLrc={() => requestProjectAction('import-lrc')}
           />
 
-          <div className={`unified-workspace ${syncMode ? 'is-syncing' : ''}`}>
-            <div className="workspace-top">
-              {syncMode && activeTrack ? (
+          <WorkspaceDivider
+            isSyncing={syncMode}
+            stage={
+              syncMode && activeTrack ? (
                 <SyncCueStrip
                   track={activeTrack}
                   syncCursor={syncCursor}
@@ -1939,37 +1940,38 @@ export default function App() {
                   onUpdateLyricDisplay={updateLyricDisplay}
                   onEditLyrics={openLyricsEditor}
                 />
-              )}
-            </div>
-
-            <Timeline
-              project={project}
-              peaks={waveform.peaks}
-              isAnalyzing={waveform.isAnalyzing}
-              durationMs={playback.durationMs}
-              currentMs={playback.currentMs}
-              zoom={zoom}
-              activeTrackId={activeTrackId}
-              selectedWordIds={selectedWordIds}
-              syncWordId={syncWordId}
-              syncMode={syncMode}
-              onSeek={playback.seek}
-              onZoom={setZoom}
-              onSelectWord={handleSelectWordId}
-              onSelectWords={setSelectedWordIds}
-              onShiftWords={(ids, deltaMs) =>
-                commit((current) => shiftWords(current, ids, deltaMs))
-              }
-              onResizeWord={(wordId, startMs, endMs) =>
-                commit((current) => patchWord(current, wordId, { startMs, endMs }))
-              }
-              onTimingDraftChange={updateTimingDraft}
-              onGestureActiveChange={handleTimelineGestureActiveChange}
-              onToggleSync={toggleSyncMode}
-              onClearTiming={handleClearTiming}
-              onClearTimingAfterCursor={handleClearTimingAfterCursor}
-            />
-          </div>
+              )
+            }
+            timing={
+              <Timeline
+                project={project}
+                peaks={waveform.peaks}
+                isAnalyzing={waveform.isAnalyzing}
+                durationMs={playback.durationMs}
+                currentMs={playback.currentMs}
+                zoom={zoom}
+                activeTrackId={activeTrackId}
+                selectedWordIds={selectedWordIds}
+                syncWordId={syncWordId}
+                syncMode={syncMode}
+                onSeek={playback.seek}
+                onZoom={setZoom}
+                onSelectWord={handleSelectWordId}
+                onSelectWords={setSelectedWordIds}
+                onShiftWords={(ids, deltaMs) =>
+                  commit((current) => shiftWords(current, ids, deltaMs))
+                }
+                onResizeWord={(wordId, startMs, endMs) =>
+                  commit((current) => patchWord(current, wordId, { startMs, endMs }))
+                }
+                onTimingDraftChange={updateTimingDraft}
+                onGestureActiveChange={handleTimelineGestureActiveChange}
+                onToggleSync={toggleSyncMode}
+                onClearTiming={handleClearTiming}
+                onClearTimingAfterCursor={handleClearTimingAfterCursor}
+              />
+            }
+          />
         </main>
       )}
 
