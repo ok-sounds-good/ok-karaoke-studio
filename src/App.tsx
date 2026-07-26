@@ -12,9 +12,9 @@ import {
   exportAss,
   exportLrc,
   importLrc,
-  parseLyrics,
   parseProject,
   serializeProject,
+  type LyricEditReconciliation,
   validateProject,
 } from './lib/model'
 import {
@@ -311,9 +311,11 @@ export function syncWordIndexFromLyricTime(words: LyricWord[], lyricTimeMs: numb
       untimedIsEligible.add(index)
     }
   }
-  return words.findIndex((word, index) =>
-    word.startMs === null ? untimedIsEligible.has(index) : word.startMs >= boundaryMs,
+  const firstUntimed = words.findIndex(
+    (word, index) => word.startMs === null && untimedIsEligible.has(index),
   )
+  if (firstUntimed >= 0) return firstUntimed
+  return words.findIndex((word) => word.startMs !== null && word.startMs >= boundaryMs)
 }
 
 const DEFAULT_SYNC_WORD_DURATION_MS = 100
@@ -1338,12 +1340,21 @@ export default function App() {
     [playback.seek, project.offsetMs, syncMode, syncWords],
   )
 
-  const cancelHeldSync = useCallback(() => {
+  const abandonHeldSyncGesture = useCallback(() => {
     syncHeldRef.current = null
     syncSpaceHeldRef.current = false
+  }, [])
+
+  const cancelHeldSync = useCallback(() => {
+    abandonHeldSyncGesture()
     syncExplicitlyEndedRef.current.clear()
     syncScopeRef.current = null
-  }, [])
+  }, [abandonHeldSyncGesture])
+
+  const openLyricsEditor = useCallback(() => {
+    abandonHeldSyncGesture()
+    setLyricsDialogOpen(true)
+  }, [abandonHeldSyncGesture])
 
   const applySyncMutation = useCallback(
     (updater: (current: KaraokeProject) => KaraokeProject) => {
@@ -1426,9 +1437,14 @@ export default function App() {
   })
 
   const requestProjectAction = useCallback(
-    (kind: Exclude<ProjectActionKind, 'native-close'>, source: 'ui' | 'menu' = 'ui') =>
-      arbitrateProjectAction({ kind, source }),
-    [arbitrateProjectAction],
+    (kind: Exclude<ProjectActionKind, 'native-close'>, source: 'ui' | 'menu' = 'ui') => {
+      if (lyricsDialogOpen) {
+        showToast('Apply or cancel the lyric edit before changing the project.', 'warning')
+        return
+      }
+      arbitrateProjectAction({ kind, source })
+    },
+    [arbitrateProjectAction, lyricsDialogOpen, showToast],
   )
 
   const selectAllActiveTrackWords = useCallback(() => {
@@ -1554,11 +1570,6 @@ export default function App() {
   }, [activeTrack?.id, cancelHeldSync, project.id, syncMode, syncWords])
 
   useEffect(() => {
-    const abandonActiveWord = () => {
-      syncHeldRef.current = null
-      syncSpaceHeldRef.current = false
-    }
-
     const advanceSyncCursor = () => {
       const next = syncCursor + 1
       setSyncCursor(next)
@@ -1640,7 +1651,7 @@ export default function App() {
       applySyncMutation((current) => patchWord(current, active.wordId, timing))
       syncExplicitlyEndedRef.current.add(active.wordId)
       const shouldAdvance = active.advanceOnRelease
-      abandonActiveWord()
+      abandonHeldSyncGesture()
       if (shouldAdvance) advanceSyncCursor()
     }
 
@@ -1718,7 +1729,7 @@ export default function App() {
 
     const keyUp = (event: KeyboardEvent) => {
       if (document.querySelector('.modal-backdrop')) {
-        if (event.code === 'Space') abandonActiveWord()
+        if (event.code === 'Space') abandonHeldSyncGesture()
         return
       }
       if (event.code !== 'Space' || !syncMode || !syncSpaceHeldRef.current) return
@@ -1726,7 +1737,7 @@ export default function App() {
       if (!held) return
       event.preventDefault()
       if (projectMutationIsBlocked()) {
-        abandonActiveWord()
+        abandonHeldSyncGesture()
         return
       }
       if (held.isLineFinal) {
@@ -1738,11 +1749,11 @@ export default function App() {
         })
         applySyncMutation((current) => patchWord(current, held.wordId, timing))
       }
-      abandonActiveWord()
+      abandonHeldSyncGesture()
       advanceSyncCursor()
     }
 
-    const windowBlur = () => abandonActiveWord()
+    const windowBlur = () => abandonHeldSyncGesture()
 
     window.addEventListener('keydown', keyDown)
     window.addEventListener('keyup', keyUp)
@@ -1754,6 +1765,7 @@ export default function App() {
     }
   }, [
     applySyncMutation,
+    abandonHeldSyncGesture,
     cancelHeldSync,
     commit,
     playback.getCurrentMs,
@@ -1818,7 +1830,7 @@ export default function App() {
     open: () => requestProjectAction('open'),
     attachAudio: () => requestProjectAction('import-audio'),
     editLyrics: () => {
-      if (!styleSession.isOpen) setLyricsDialogOpen(true)
+      if (!styleSession.isOpen) openLyricsEditor()
     },
     importLrc: () => requestProjectAction('import-lrc'),
     startSync: toggleSyncMode,
@@ -1912,7 +1924,7 @@ export default function App() {
                 <SyncCueStrip
                   track={activeTrack}
                   syncCursor={syncCursor}
-                  onEditLyrics={() => setLyricsDialogOpen(true)}
+                  onEditLyrics={openLyricsEditor}
                 />
               ) : (
                 <KaraokePreview
@@ -1925,7 +1937,7 @@ export default function App() {
                   onTitlePositionChange={updateTitlePosition}
                   backgroundImage={backgroundImages.preview}
                   onUpdateLyricDisplay={updateLyricDisplay}
-                  onEditLyrics={() => setLyricsDialogOpen(true)}
+                  onEditLyrics={openLyricsEditor}
                 />
               )}
             </div>
@@ -2006,14 +2018,38 @@ export default function App() {
         <LyricsEditorDialog
           track={activeTrack}
           onClose={() => setLyricsDialogOpen(false)}
-          onSave={(text) => {
-            replaceTrack(activeTrack.id, parseLyrics(text, activeTrack.id, activeTrack))
-            cancelHeldSync()
-            syncSessionHasCommitRef.current = false
-            setSyncMode(false)
+          onSave={(reconciliation: LyricEditReconciliation) => {
+            const currentTrack = projectRef.current.tracks.find(
+              (track) => track.id === activeTrack.id,
+            )
+            if (
+              !currentTrack ||
+              reconciliation.sourceTrack !== currentTrack ||
+              reconciliation.track.id !== currentTrack.id
+            ) {
+              showToast(
+                'The active lyrics changed while this edit was open. Review and apply it again.',
+                'warning',
+              )
+              return
+            }
+            const nextWords = flattenTrack(reconciliation.track).map(({ word }) => word)
+            const nextSyncCursor = syncWordIndexFromLyricTime(
+              nextWords,
+              lyricTimeAtPlayback(playback.getCurrentMs(), project.offsetMs),
+            )
+            replaceTrack(currentTrack.id, reconciliation.track)
+            setSyncCursor(nextSyncCursor >= 0 ? nextSyncCursor : nextWords.length)
             setSelectedWordIds(new Set())
             setLyricsDialogOpen(false)
-            showToast('Lyrics updated', 'success')
+            showToast(
+              reconciliation.newUntimedWordCount > 0
+                ? `Lyrics updated · ${reconciliation.newUntimedWordCount} ${
+                    reconciliation.newUntimedWordCount === 1 ? 'word is' : 'words are'
+                  } ready for sync`
+                : 'Lyrics updated',
+              'success',
+            )
           }}
         />
       )}

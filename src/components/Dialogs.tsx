@@ -19,7 +19,13 @@ import {
   Sparkles,
   Zap,
 } from 'lucide-react'
-import type { ValidationIssue, VocalTrack } from '../lib/model'
+import {
+  formatTime,
+  reconcileLyricEdit,
+  type LyricEditReconciliation,
+  type ValidationIssue,
+  type VocalTrack,
+} from '../lib/model'
 import {
   VIDEO_FRAME_RATES,
   VIDEO_RESOLUTION_OPTIONS,
@@ -189,14 +195,53 @@ export function WorkflowGuideDialog({
 interface LyricsEditorDialogProps {
   track: VocalTrack
   onClose: () => void
-  onSave: (lyrics: string) => void
+  onSave: (reconciliation: LyricEditReconciliation) => void
 }
 
 export function LyricsEditorDialog({ track, onClose, onSave }: LyricsEditorDialogProps) {
   const initialText = useMemo(() => track.lines.map((line) => line.text).join('\n'), [track])
   const [text, setText] = useState(initialText)
+  const [pendingReconciliation, setPendingReconciliation] = useState<{
+    text: string
+    sourceTrack: VocalTrack
+    value: LyricEditReconciliation
+  } | null>(null)
+  const [reconciliationError, setReconciliationError] = useState<string | null>(null)
   const lines = text.split(/\r?\n/)
   const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0
+  const pendingIsCurrent =
+    pendingReconciliation?.text === text && pendingReconciliation.sourceTrack === track
+  const pendingInvalidations = pendingIsCurrent
+    ? pendingReconciliation.value.invalidatedTimings
+    : []
+  const pendingLineInvalidations = pendingIsCurrent
+    ? pendingReconciliation.value.invalidatedLineTimings
+    : []
+  const pendingInvalidationCount = pendingInvalidations.length + pendingLineInvalidations.length
+
+  const applyLyrics = () => {
+    if (pendingIsCurrent) {
+      onSave(pendingReconciliation.value)
+      return
+    }
+    try {
+      const reconciliation = reconcileLyricEdit(text, track.id, track)
+      setReconciliationError(null)
+      if (
+        reconciliation.invalidatedTimings.length > 0 ||
+        reconciliation.invalidatedLineTimings.length > 0
+      ) {
+        setPendingReconciliation({ text, sourceTrack: track, value: reconciliation })
+        return
+      }
+      onSave(reconciliation)
+    } catch (error) {
+      setPendingReconciliation(null)
+      setReconciliationError(
+        error instanceof Error ? error.message : 'The lyric edit could not be reconciled safely.',
+      )
+    }
+  }
 
   return (
     <Modal
@@ -207,13 +252,21 @@ export function LyricsEditorDialog({ track, onClose, onSave }: LyricsEditorDialo
       footer={
         <>
           <span className="modal-note">
-            Existing timings are preserved by word position where possible.
+            {reconciliationError
+              ? 'Lyrics were not changed.'
+              : pendingInvalidationCount > 0
+                ? 'Review the timing changes before applying.'
+                : 'Matching words keep their timing; new or changed words are untimed.'}
           </span>
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" onClick={() => onSave(text)}>
-            Apply lyrics
+          <Button variant="primary" onClick={applyLyrics}>
+            {pendingInvalidationCount > 0
+              ? `Apply and clear ${pendingInvalidationCount} ${
+                  pendingInvalidationCount === 1 ? 'timing' : 'timings'
+                }`
+              : 'Apply lyrics'}
           </Button>
         </>
       }
@@ -229,10 +282,70 @@ export function LyricsEditorDialog({ track, onClose, onSave }: LyricsEditorDialo
           <textarea
             autoFocus
             value={text}
-            onChange={(event) => setText(event.target.value)}
+            onChange={(event) => {
+              setText(event.target.value)
+              setPendingReconciliation(null)
+              setReconciliationError(null)
+            }}
             spellCheck
             placeholder={'Paste one lyric line per row…\nUse / to mark a syllable break.'}
           />
+          {reconciliationError && (
+            <div className="lyric-reconciliation lyric-reconciliation--error" role="alert">
+              <strong>This edit was not applied.</strong>
+              <p>{reconciliationError}</p>
+            </div>
+          )}
+          {pendingInvalidationCount > 0 && (
+            <div className="lyric-reconciliation lyric-reconciliation--warning" role="alert">
+              <strong>
+                {pendingInvalidationCount}{' '}
+                {pendingInvalidationCount === 1 ? 'timing entry cannot' : 'timing entries cannot'}{' '}
+                follow this text edit.
+              </strong>
+              <p>Applying will clear only the listed timing:</p>
+              <ul
+                aria-label="Timing entries to clear"
+                tabIndex={0}
+                onKeyDown={(event) => {
+                  const list = event.currentTarget
+                  const page = Math.max(24, list.clientHeight - 16)
+                  const nextScrollTop =
+                    event.key === 'Home'
+                      ? 0
+                      : event.key === 'End'
+                        ? list.scrollHeight
+                        : event.key === 'PageUp'
+                          ? list.scrollTop - page
+                          : event.key === 'PageDown'
+                            ? list.scrollTop + page
+                            : event.key === 'ArrowUp'
+                              ? list.scrollTop - 24
+                              : event.key === 'ArrowDown'
+                                ? list.scrollTop + 24
+                                : null
+                  if (nextScrollTop === null) return
+                  event.preventDefault()
+                  list.scrollTop = nextScrollTop
+                }}
+              >
+                {pendingInvalidations.map((word) => (
+                  <li key={word.wordId}>
+                    Line {word.lineNumber}, word {word.wordNumber}: “{word.text}” (
+                    {word.startMs === null ? 'no start' : formatTime(word.startMs)}–
+                    {word.endMs === null ? 'no end' : formatTime(word.endMs)})
+                  </li>
+                ))}
+                {pendingLineInvalidations.map((line) => (
+                  <li key={line.lineId}>
+                    Line {line.lineNumber} range: “{line.text}” (
+                    {line.startMs === null ? 'no start' : formatTime(line.startMs)}–
+                    {line.endMs === null ? 'no end' : formatTime(line.endMs)})
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <p>
             <Sparkles size={13} /> Tip: write <code>nev/er</code> to display <strong>nev·er</strong>{' '}
             as two visual syllables.

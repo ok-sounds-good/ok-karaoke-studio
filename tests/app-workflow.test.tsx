@@ -247,6 +247,13 @@ describe('mounted first-time workflow', () => {
     await clickButton('Edit text')
     await replaceTextarea('Ready to export')
     await clickButton('Apply lyrics')
+    if (
+      [...document.querySelectorAll<HTMLButtonElement>('button')].some((button) =>
+        button.textContent?.includes('Apply and clear'),
+      )
+    ) {
+      await clickButton('Apply and clear')
+    }
     await clickButton('Workflow')
     await clickButton('Attach audio')
     await clickButton('Workflow')
@@ -854,6 +861,142 @@ describe('mounted first-time workflow', () => {
 
     expect(document.querySelector('.transport')?.classList.contains('is-syncing')).toBe(true)
     expect(document.querySelector('.sync-cue__line.is-current')?.textContent).toContain('beta')
+  })
+
+  it('preserves partial timing through a lyric insertion and resumes at the new untimed words', async () => {
+    await clickButton('Edit text')
+    await replaceTextarea('Alpha beta\nGamma delta')
+    await clickButton('Apply lyrics')
+    await clickButton('Start sync')
+
+    await tapSyncWord()
+    await pressKey('ArrowRight', { shiftKey: true })
+    await tapSyncWord()
+    await pressKey('ArrowRight', { shiftKey: true })
+    await tapSyncWord()
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[aria-label="Stop"]')!.click()
+    })
+
+    const timingBeforeEdit = timelineTimingLabels()
+    expect(timingBeforeEdit).toHaveLength(3)
+    expect(document.querySelector('.vocal-track-card__status')?.textContent).toContain('3/4 timed')
+
+    await clickButton('Edit text')
+    await replaceTextarea('Alpha beta\nMissing words\nGamma delta')
+    await clickButton('Apply lyrics')
+
+    expect(timelineTimingLabels()).toEqual(timingBeforeEdit)
+    expect(document.querySelector('.vocal-track-card__status')?.textContent).toContain('3/6 timed')
+    expect(document.querySelector('.project-health')?.textContent).toContain(
+      '3 words still need timing',
+    )
+    expect(document.querySelector('.untimed-tray')?.textContent).toContain('Missing')
+    expect(document.querySelector('.untimed-tray')?.textContent).toContain('words')
+    expect(document.querySelector('.untimed-tray')?.textContent).toContain('delta')
+
+    await act(async () => harness.sendMenuAction('undo'))
+    expect(timelineTimingLabels()).toEqual(timingBeforeEdit)
+    expect(document.querySelector('.vocal-track-card__status')?.textContent).toContain('3/4 timed')
+    await clickButton('Edit text')
+    expect(document.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe(
+      'Alpha beta\nGamma delta',
+    )
+    await clickButton('Cancel')
+
+    await act(async () => harness.sendMenuAction('redo'))
+    expect(document.querySelector('.vocal-track-card__status')?.textContent).toContain('3/6 timed')
+    await clickButton('Start sync')
+    expect(document.querySelector('.sync-cue__line.is-current')?.textContent).toContain('Missing')
+    expect(document.querySelector('.sync-cue__line.is-current')?.textContent).toContain('words')
+    expect(document.querySelector('.sync-cue .is-target')?.textContent).toBe('Missing')
+
+    await tapSyncWord()
+    expect(timelineTimingLabels()).toEqual(
+      expect.arrayContaining([expect.stringContaining('Missing timing block')]),
+    )
+    expect(document.querySelector('.sync-cue .is-target')?.textContent).toBe('words')
+  })
+
+  it('lists exact timing invalidation and requires confirmation before applying it', async () => {
+    await clickButton('Edit text')
+    await replaceTextarea('Keep remove')
+    await clickButton('Apply lyrics')
+    await clickButton('Start sync')
+    await tapSyncWord()
+    await pressKey('ArrowRight', { shiftKey: true })
+    await tapSyncWord()
+
+    const timingBeforeEdit = timelineTimingLabels()
+    expect(timingBeforeEdit).toHaveLength(2)
+    await clickButton('Edit text')
+    await replaceTextarea('Keep replacement')
+    await clickButton('Apply lyrics')
+
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      'Line 1, word 2: “remove” (00:01.000–00:01.100)',
+    )
+    expect(timelineTimingLabels()).toEqual(timingBeforeEdit)
+    const invalidationList = document.querySelector<HTMLElement>(
+      '[aria-label="Timing entries to clear"]',
+    )!
+    Object.defineProperties(invalidationList, {
+      clientHeight: { configurable: true, value: 96 },
+      scrollHeight: { configurable: true, value: 260 },
+    })
+    expect(invalidationList.tabIndex).toBe(0)
+    await act(async () => {
+      invalidationList.dispatchEvent(
+        new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'End' }),
+      )
+    })
+    expect(invalidationList.scrollTop).toBe(260)
+
+    await act(async () => {
+      harness.sendMenuAction('undo')
+      harness.sendMenuAction('new')
+      harness.sendMenuAction('open')
+    })
+    expect(harness.resetProjectScope).not.toHaveBeenCalled()
+    expect(harness.openProject).not.toHaveBeenCalled()
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      'Line 1, word 2: “remove”',
+    )
+    expect(document.querySelector('.toast')?.textContent).toContain(
+      'Apply or cancel the lyric edit',
+    )
+    expect(timelineTimingLabels()).toEqual(timingBeforeEdit)
+
+    await clickButton('Apply and clear 1 timing')
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(timelineTimingLabels()).toEqual([timingBeforeEdit[0]])
+    expect(document.querySelector('.untimed-tray')?.textContent).toContain('replacement')
+
+    await act(async () => harness.sendMenuAction('undo'))
+    expect(timelineTimingLabels()).toEqual(timingBeforeEdit)
+    await clickButton('Edit text')
+    expect(document.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('Keep remove')
+    await clickButton('Cancel')
+  })
+
+  it('abandons a held sync gesture when the lyric editor opens', async () => {
+    await clickButton('Edit text')
+    await replaceTextarea('Held word')
+    await clickButton('Apply lyrics')
+    await clickButton('Start sync')
+    await pressKey('Space')
+    const timingAtEditorOpen = timelineTimingLabels()
+
+    await clickButton('Edit text')
+    await releaseKey('Space')
+
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+    expect(timingAtEditorOpen).toHaveLength(1)
+    expect(timelineTimingLabels()).toEqual(timingAtEditorOpen)
+    await clickButton('Cancel')
+    expect(timelineTimingLabels()).toEqual(timingAtEditorOpen)
   })
 
   it('guards explicit sync arrows and consumes a Space hold ended by Down once', async () => {
