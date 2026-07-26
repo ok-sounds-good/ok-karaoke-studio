@@ -60,6 +60,31 @@ export interface VocalTrack {
   lines: LyricLine[]
 }
 
+export interface InvalidatedLyricTiming {
+  wordId: string
+  text: string
+  lineNumber: number
+  wordNumber: number
+  startMs: number | null
+  endMs: number | null
+}
+
+export interface InvalidatedLyricLineTiming {
+  lineId: string
+  text: string
+  lineNumber: number
+  startMs: number | null
+  endMs: number | null
+}
+
+export interface LyricEditReconciliation {
+  sourceTrack: VocalTrack | null
+  track: VocalTrack
+  invalidatedTimings: InvalidatedLyricTiming[]
+  invalidatedLineTimings: InvalidatedLyricLineTiming[]
+  newUntimedWordCount: number
+}
+
 export type LyricAdvanceMode = 'clear' | 'scroll'
 
 export interface LyricDisplaySettings {
@@ -342,21 +367,88 @@ export function createDemoProject(): KaraokeProject {
 }
 
 function alignExistingWords(tokens: string[], existingWords: LyricWord[]): LyricWord[] {
-  const result: LyricWord[] = []
-  let searchFrom = 0
-
-  for (const token of tokens) {
-    const matchIndex = existingWords.findIndex(
-      (word, index) => index >= searchFrom && word.text === token,
+  const rows = tokens.length + 1
+  const columns = existingWords.length + 1
+  if (rows * columns > MAX_LYRIC_ALIGNMENT_CELLS) {
+    throw new RangeError(
+      'This lyric line edit is too large to align safely. Split it into smaller edits.',
     )
-    if (matchIndex >= 0) {
-      result.push({ ...existingWords[matchIndex], text: token })
-      searchFrom = matchIndex + 1
-    } else {
-      result.push(createLyricWord(token))
+  }
+
+  // Maximize ordered exact matches, then minimize their total displacement.
+  // The second criterion keeps repeated tokens attached to the occurrence that
+  // stayed in place around an insertion, deletion, or substitution.
+  const matchWeight = MAX_PROJECT_WORDS * MAX_PROJECT_WORDS + 1
+  const scores = new Float64Array(rows * columns)
+  const scoreAt = (newIndex: number, oldIndex: number) => scores[newIndex * columns + oldIndex]
+
+  for (let newIndex = tokens.length - 1; newIndex >= 0; newIndex -= 1) {
+    for (let oldIndex = existingWords.length - 1; oldIndex >= 0; oldIndex -= 1) {
+      const position = newIndex * columns + oldIndex
+      const skipNew = scoreAt(newIndex + 1, oldIndex)
+      const skipOld = scoreAt(newIndex, oldIndex + 1)
+      let best = Math.max(skipNew, skipOld)
+      if (tokens[newIndex] === existingWords[oldIndex].text) {
+        best = Math.max(
+          best,
+          scoreAt(newIndex + 1, oldIndex + 1) + matchWeight - Math.abs(newIndex - oldIndex),
+        )
+      }
+      scores[position] = best
     }
   }
-  return result
+
+  const matches = new Map<number, LyricWord>()
+  let newIndex = 0
+  let oldIndex = 0
+  while (newIndex < tokens.length && oldIndex < existingWords.length) {
+    const current = scoreAt(newIndex, oldIndex)
+    const diagonal = scoreAt(newIndex + 1, oldIndex + 1)
+    const match =
+      tokens[newIndex] === existingWords[oldIndex].text
+        ? diagonal + matchWeight - Math.abs(newIndex - oldIndex)
+        : Number.NEGATIVE_INFINITY
+    if (current === match) {
+      matches.set(newIndex, existingWords[oldIndex])
+      newIndex += 1
+      oldIndex += 1
+    } else if (current === diagonal) {
+      // A positional substitution is the least surprising interpretation when
+      // it does not sacrifice a later exact match.
+      newIndex += 1
+      oldIndex += 1
+    } else if (scoreAt(newIndex + 1, oldIndex) >= scoreAt(newIndex, oldIndex + 1)) {
+      newIndex += 1
+    } else {
+      oldIndex += 1
+    }
+  }
+
+  return tokens.map((token, index) => {
+    const previous = matches.get(index)
+    return previous ? { ...previous, text: token } : createLyricWord(token)
+  })
+}
+
+function wordTimingEnvelope(words: LyricWord[]): TimingRange | null {
+  const timedWords = words.filter(
+    (word): word is LyricWord & TimingRange => word.startMs !== null && word.endMs !== null,
+  )
+  if (timedWords.length === 0) return null
+  return {
+    startMs: Math.min(...timedWords.map((word) => word.startMs)),
+    endMs: Math.max(...timedWords.map((word) => word.endMs)),
+  }
+}
+
+function hasIndependentLineTiming(line: LyricLine): boolean {
+  if (line.startMs === null && line.endMs === null) return false
+  const wordEnvelope = wordTimingEnvelope(line.words)
+  return (
+    wordEnvelope === null ||
+    line.startMs !== wordEnvelope.startMs ||
+    line.endMs !== wordEnvelope.endMs
+  )
 }
 
 function lineSimilarity(left: string, right: string): number {
@@ -533,13 +625,16 @@ export function parseLyrics(text: string, trackId: string, existing?: VocalTrack
   const lines = lyricLines.map((lineText, index) => {
     const previous = alignedLines.get(index)
     const tokens = tokensByLine[index]
+    const words = previous
+      ? alignExistingWords(tokens, previous.words)
+      : tokens.map((token) => createLyricWord(token))
+    const editedTiming =
+      previous && previous.text !== lineText ? wordTimingEnvelope(words) : undefined
     return createLyricLine(lineText, {
       id: previous?.id,
-      startMs: previous?.startMs,
-      endMs: previous?.endMs,
-      words: previous
-        ? alignExistingWords(tokens, previous.words)
-        : tokens.map((token) => createLyricWord(token)),
+      startMs: editedTiming?.startMs ?? (editedTiming === undefined ? previous?.startMs : null),
+      endMs: editedTiming?.endMs ?? (editedTiming === undefined ? previous?.endMs : null),
+      words,
     })
   })
 
@@ -551,6 +646,75 @@ export function parseLyrics(text: string, trackId: string, existing?: VocalTrack
     solo: existing?.solo ?? false,
     lines,
   })
+}
+
+export function reconcileLyricEdit(
+  text: string,
+  trackId: string,
+  existing?: VocalTrack,
+): LyricEditReconciliation {
+  const track = parseLyrics(text, trackId, existing)
+  if (!existing) {
+    return {
+      sourceTrack: null,
+      track,
+      invalidatedTimings: [],
+      invalidatedLineTimings: [],
+      newUntimedWordCount: track.lines.reduce((total, line) => total + line.words.length, 0),
+    }
+  }
+
+  const retainedWordIds = new Set(track.lines.flatMap((line) => line.words.map((word) => word.id)))
+  const existingWordIds = new Set(
+    existing.lines.flatMap((line) => line.words.map((word) => word.id)),
+  )
+  const invalidatedTimings = existing.lines.flatMap((line, lineIndex) =>
+    line.words.flatMap((word, wordIndex) =>
+      (word.startMs !== null || word.endMs !== null) && !retainedWordIds.has(word.id)
+        ? [
+            {
+              wordId: word.id,
+              text: word.text,
+              lineNumber: lineIndex + 1,
+              wordNumber: wordIndex + 1,
+              startMs: word.startMs,
+              endMs: word.endMs,
+            },
+          ]
+        : [],
+    ),
+  )
+  const nextLinesById = new Map(track.lines.map((line) => [line.id, line]))
+  const invalidatedLineTimings = existing.lines.flatMap((line, lineIndex) => {
+    if (!hasIndependentLineTiming(line)) return []
+    const nextLine = nextLinesById.get(line.id)
+    if (nextLine?.startMs === line.startMs && nextLine.endMs === line.endMs) return []
+    return [
+      {
+        lineId: line.id,
+        text: line.text,
+        lineNumber: lineIndex + 1,
+        startMs: line.startMs,
+        endMs: line.endMs,
+      },
+    ]
+  })
+  const newUntimedWordCount = track.lines.reduce(
+    (total, line) =>
+      total +
+      line.words.filter(
+        (word) => !existingWordIds.has(word.id) && word.startMs === null && word.endMs === null,
+      ).length,
+    0,
+  )
+
+  return {
+    sourceTrack: existing,
+    track,
+    invalidatedTimings,
+    invalidatedLineTimings,
+    newUntimedWordCount,
+  }
 }
 
 interface LyricDisplayPosition {

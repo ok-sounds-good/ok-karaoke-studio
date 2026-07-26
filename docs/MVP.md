@@ -136,6 +136,16 @@ Karaoke Studio identity.
   Convert them to lyric time with the project offset, and ignore taps that occur
   before lyric time `0:00` when a positive offset delays the lyrics.
 - Start or resume synchronization from the current playhead.
+- Applying an **Edit text** transaction preserves matching word identity and
+  timing, leaves added or changed words untimed, rebuilds the active sync cursor
+  from the current playhead, and ends any held sync gesture safely. Newly
+  untimed words take priority when synchronization resumes; a fully timed
+  passage remains eligible for an intentional re-sync.
+- Before an edit drops existing word timing or an independently authored line
+  range, list the exact affected text and timing ranges and require a second
+  confirmation. Applying the lyric and timing reconciliation is one atomic
+  undoable edit. Project-changing actions remain blocked while the lyric edit is
+  open so a draft cannot cross project or history ownership.
 - A low-latency Sync Focus with cursor-ordered current and next lyric lines, a
   visible target word, and timed/untimed progress. The heavier stage preview is
   not mounted while synchronization is armed.
@@ -447,6 +457,10 @@ singing waiting`, then `Example line 3` through the configured maximum.
       explicit endings preserve intentional gaps, while Shift+Left/Right only seek.
 - [x] One synchronization session is one undoable history step; Lyric Timing
       selection and correction behaviors remain available afterward.
+- [x] Transactional lyric edits preserve matching timing, disclose and confirm
+      any exact timing invalidation, rebuild derived timing state, and resume at
+      newly untimed words without clearing unrelated work; Undo restores the
+      pre-edit lyric and timing state atomically.
 - [x] Command/Ctrl+A and marquee selection select the intended active-track words
       without selecting page text.
 - [x] Non-overlapping lead-track timing blocks share one chronological baseline;

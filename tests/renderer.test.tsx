@@ -551,6 +551,7 @@ describe('tap-sync cursor selection', () => {
       createLyricWord('Anchor', { startMs: 10_000, endMs: 11_000 }),
     ]
 
+    expect(syncWordIndexFromLyricTime(words, 0)).toBe(1)
     expect(syncWordIndexFromLyricTime(words, 5_000)).toBe(1)
     expect(syncWordIndexFromLyricTime(words, 12_000)).toBe(-1)
     expect(
@@ -559,6 +560,16 @@ describe('tap-sync cursor selection', () => {
         12_000,
       ),
     ).toBe(3)
+  })
+
+  it('falls back to a timed word when no eligible untimed word remains', () => {
+    const words = [
+      createLyricWord('First', { startMs: 1_000, endMs: 2_000 }),
+      createLyricWord('Second', { startMs: 3_000, endMs: 4_000 }),
+    ]
+
+    expect(syncWordIndexFromLyricTime(words, 0)).toBe(0)
+    expect(syncWordIndexFromLyricTime(words, 2_500)).toBe(1)
   })
 })
 

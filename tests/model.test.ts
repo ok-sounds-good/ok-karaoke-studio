@@ -7,12 +7,16 @@ import {
   createLyricWord,
   createProject,
   createVocalTrack,
+  exportAss,
+  exportLrc,
   formatTime,
+  importLrc,
   MAX_PROJECT_DURATION_MS,
   MAX_PROJECT_TRACKS,
   parseLyrics,
   parseProject,
   planLyricDisplayLines,
+  reconcileLyricEdit,
   retimeLine,
   serializeProject,
   UNSUPPORTED_PROJECT_FORMAT_ERROR,
@@ -108,6 +112,174 @@ describe('karaoke project model', () => {
     expect(edited.lines[2].id).toBe(timed.lines[1].id)
     expect(edited.lines[2].startMs).toBe(3_000)
     expect(edited.lines[3].id).toBe(timed.lines[2].id)
+  })
+
+  it.each([
+    {
+      position: 'before',
+      lyrics: 'Missing words\nAlpha beta\nGamma delta\nEpsilon zeta',
+      insertedLineIndex: 0,
+    },
+    {
+      position: 'within',
+      lyrics: 'Alpha beta\nMissing words\nGamma delta\nEpsilon zeta',
+      insertedLineIndex: 1,
+    },
+    {
+      position: 'after',
+      lyrics: 'Alpha beta\nGamma delta\nEpsilon zeta\nMissing words',
+      insertedLineIndex: 3,
+    },
+  ])(
+    'preserves existing timing and leaves an insertion $position the timed region untimed',
+    ({ lyrics, insertedLineIndex }) => {
+      const initial = parseLyrics('Alpha beta\nGamma delta\nEpsilon zeta', 'lead')
+      const timed = {
+        ...initial,
+        lines: initial.lines.map((line, index) =>
+          retimeLine(line, 1_000 + index * 2_000, 2_000 + index * 2_000),
+        ),
+      }
+      const originalWords = timed.lines.flatMap((line) => line.words)
+
+      const reconciliation = reconcileLyricEdit(lyrics, 'lead', timed)
+      const reconciledWords = reconciliation.track.lines.flatMap((line) => line.words)
+
+      expect(reconciliation.invalidatedTimings).toEqual([])
+      expect(reconciliation.newUntimedWordCount).toBe(2)
+      expect(
+        reconciliation.track.lines[insertedLineIndex].words.map(({ text, startMs, endMs }) => [
+          text,
+          startMs,
+          endMs,
+        ]),
+      ).toEqual([
+        ['Missing', null, null],
+        ['words', null, null],
+      ])
+      originalWords.forEach((original) => {
+        expect(reconciledWords.find((word) => word.id === original.id)).toEqual(original)
+      })
+    },
+  )
+
+  it('reports every timed word that a lyric edit would invalidate', () => {
+    const initial = parseLyrics('Keep change remove', 'lead')
+    const timed = { ...initial, lines: [retimeLine(initial.lines[0], 1_000, 4_000)] }
+
+    const reconciliation = reconcileLyricEdit('Keep replacement', 'lead', timed)
+
+    expect(reconciliation.newUntimedWordCount).toBe(1)
+    expect(
+      reconciliation.invalidatedTimings.map(({ text, lineNumber, wordNumber, startMs, endMs }) => ({
+        text,
+        lineNumber,
+        wordNumber,
+        startMs,
+        endMs,
+      })),
+    ).toEqual([
+      {
+        text: 'change',
+        lineNumber: 1,
+        wordNumber: 2,
+        startMs: 2_000,
+        endMs: 3_000,
+      },
+      {
+        text: 'remove',
+        lineNumber: 1,
+        wordNumber: 3,
+        startMs: 3_000,
+        endMs: 4_000,
+      },
+    ])
+  })
+
+  it('keeps duplicate-word timing attached to the unchanged occurrence', () => {
+    const initial = parseLyrics('go go', 'lead')
+    const timed = { ...initial, lines: [retimeLine(initial.lines[0], 1_000, 3_000)] }
+
+    const reconciliation = reconcileLyricEdit('stop go', 'lead', timed)
+
+    expect(reconciliation.track.lines[0].words[0]).toMatchObject({
+      text: 'stop',
+      startMs: null,
+      endMs: null,
+    })
+    expect(timed.lines[0].words.map(({ id }) => id)).not.toContain(
+      reconciliation.track.lines[0].words[0].id,
+    )
+    expect(reconciliation.track.lines[0].words[1]).toEqual(timed.lines[0].words[1])
+    expect(reconciliation.invalidatedTimings.map(({ wordId }) => wordId)).toEqual([
+      timed.lines[0].words[0].id,
+    ])
+    expect(reconciliation.track.lines[0]).toMatchObject({ startMs: 2_000, endMs: 3_000 })
+  })
+
+  it.each([
+    {
+      edit: 'go',
+      retainedIndex: 0,
+    },
+    {
+      edit: 'stop go',
+      retainedIndex: 1,
+    },
+    {
+      edit: 'go stop',
+      retainedIndex: 0,
+    },
+  ])('uses positional context to align repeated words in “$edit”', ({ edit, retainedIndex }) => {
+    const initial = parseLyrics('go go', 'lead')
+    const timed = { ...initial, lines: [retimeLine(initial.lines[0], 1_000, 3_000)] }
+
+    const reconciliation = reconcileLyricEdit(edit, 'lead', timed)
+    const retained = reconciliation.track.lines[0].words.find(
+      (word) => word.id === timed.lines[0].words[retainedIndex].id,
+    )
+
+    expect(retained).toBeDefined()
+    expect(retained?.startMs).toBe(1_000 + retainedIndex * 1_000)
+  })
+
+  it('rebuilds an edited line range from retained word timing before preview and export', () => {
+    const initial = parseLyrics('Keep remove', 'lead')
+    const timed = { ...initial, lines: [retimeLine(initial.lines[0], 1_000, 3_000)] }
+
+    const partial = reconcileLyricEdit('Keep replacement', 'lead', timed)
+    expect(partial.track.lines[0]).toMatchObject({ startMs: 1_000, endMs: 2_000 })
+
+    const replaced = reconcileLyricEdit('replacement only', 'lead', timed)
+    const project = createProject({ tracks: [replaced.track] })
+
+    expect(replaced.track.lines[0]).toMatchObject({ startMs: null, endMs: null })
+    expect(
+      replaced.track.lines[0].words.every((word) => word.startMs === null && word.endMs === null),
+    ).toBe(true)
+    expect(exportLrc(project, 'lead')).not.toContain('replacement only')
+    expect(exportAss(project)).not.toContain('Dialogue:')
+  })
+
+  it('discloses and clears independently imported line timing when its text changes', () => {
+    const imported = importLrc('[00:01]Keep remove', 'lead')
+
+    const reconciliation = reconcileLyricEdit('Keep replacement', 'lead', imported)
+    const project = createProject({ tracks: [reconciliation.track] })
+
+    expect(reconciliation.invalidatedTimings).toEqual([])
+    expect(reconciliation.invalidatedLineTimings).toEqual([
+      {
+        lineId: imported.lines[0].id,
+        text: 'Keep remove',
+        lineNumber: 1,
+        startMs: imported.lines[0].startMs,
+        endMs: imported.lines[0].endMs,
+      },
+    ])
+    expect(reconciliation.track.lines[0]).toMatchObject({ startMs: null, endMs: null })
+    expect(exportLrc(project, 'lead')).not.toContain('Keep replacement')
+    expect(exportAss(project)).not.toContain('Dialogue:')
   })
 
   it('keeps an edited line aligned when an earlier line is deleted', () => {
