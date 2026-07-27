@@ -1,5 +1,4 @@
 import {
-  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -35,6 +34,10 @@ import {
   TIMELINE_LABEL_TOP_PX,
   TIMELINE_MIN_TRACK_HEIGHT_PX,
   TIMELINE_WORD_HEIGHT_PX,
+  TIMELINE_LABEL_DOM_CAP_PER_TRACK,
+  timelineLineRegionsInRect,
+  timelineMountedLabels,
+  timelineMountedWords,
   timelineTime,
   timelineWordIdsInRect,
   timelineWordLabel,
@@ -90,6 +93,69 @@ interface TimelineMarquee {
   startY: number
   currentX: number
   currentY: number
+}
+
+export interface TimelineViewportSnapshot {
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
+export function createTimelineViewportStore(
+  initial: TimelineViewportSnapshot = {
+    left: 0,
+    top: 0,
+    // Browsers replace this before paint. The fallback preserves deterministic
+    // mounted tests where happy-dom intentionally has no layout engine.
+    width: 10_000,
+    height: 0,
+  },
+) {
+  let snapshot = initial
+  const listeners = new Set<() => void>()
+  return {
+    getSnapshot: () => snapshot,
+    subscribe(listener: () => void) {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    update(next: TimelineViewportSnapshot) {
+      if (
+        next.left === snapshot.left &&
+        next.top === snapshot.top &&
+        next.width === snapshot.width &&
+        next.height === snapshot.height
+      )
+        return
+      snapshot = next
+      listeners.forEach((listener) => listener())
+    },
+  }
+}
+
+type TimelineViewportStore = ReturnType<typeof createTimelineViewportStore>
+
+export function timelineSyncRevealPosition(
+  viewport: TimelineViewportSnapshot,
+  target: { left: number; width: number; top: number; height: number },
+  margin = 130,
+) {
+  const horizontalVisible =
+    target.left >= viewport.left + margin &&
+    target.left + target.width <= viewport.left + viewport.width - margin
+  const verticalVisible =
+    target.top >= viewport.top + margin &&
+    target.top + target.height <= viewport.top + viewport.height - margin
+  if (horizontalVisible && verticalVisible) return null
+  return {
+    left: horizontalVisible
+      ? viewport.left
+      : Math.max(0, target.left - Math.max(0, viewport.width * 0.32)),
+    top: verticalVisible
+      ? viewport.top
+      : Math.max(0, target.top - Math.max(0, viewport.height * 0.32)),
+  }
 }
 
 export function indexTimelineLinesBySourceIndex(layout: TimelineTrackLayout | null) {
@@ -176,6 +242,7 @@ function PendingSyncBlocks({
   offsetMs,
   leadInMs,
   color,
+  maxRecords = 64,
 }: {
   session: SyncSession
   lineLayoutsBySourceIndex: ReadonlyMap<number, TimelineLineLayout>
@@ -183,6 +250,7 @@ function PendingSyncBlocks({
   offsetMs: number
   leadInMs: number
   color: string
+  maxRecords?: number
 }) {
   useSyncExternalStore(session.subscribe.bind(session), session.getSnapshot)
   return session
@@ -190,6 +258,7 @@ function PendingSyncBlocks({
     .filter(
       (word) => word.startMs !== null && (!word.initiallyTimed || word.changedFromMaterialized),
     )
+    .slice(0, maxRecords)
     .map((word) => {
       const line = pendingLineLayoutAt(lineLayoutsBySourceIndex, word.lineIndex)
       const wordLayout = line?.words[word.wordIndex]
@@ -223,6 +292,377 @@ function PendingSyncBlocks({
         />
       )
     })
+}
+
+function TimelineTrackLabels({
+  project,
+  activeTrackId,
+  trackLayoutById,
+  viewportStore,
+  isAnalyzing,
+}: {
+  project: KaraokeProject
+  activeTrackId: string
+  trackLayoutById: ReadonlyMap<string, TimelineTrackLayout>
+  viewportStore: TimelineViewportStore
+  isAnalyzing: boolean
+}) {
+  const { top } = useSyncExternalStore(
+    viewportStore.subscribe,
+    viewportStore.getSnapshot,
+    viewportStore.getSnapshot,
+  )
+  return (
+    <div className="timeline-track-label-stack" style={{ transform: `translateY(${-top}px)` }}>
+      <div className="timeline-label-spacer">
+        <span>Waveform</span>
+        {isAnalyzing && <i>Analyzing…</i>}
+      </div>
+      {project.tracks.map((track, index) => (
+        <div
+          key={track.id}
+          className={`timeline-track-label ${track.id === activeTrackId ? 'is-active' : ''}`}
+          style={{ height: trackLayoutById.get(track.id)?.height ?? TIMELINE_MIN_TRACK_HEIGHT_PX }}
+        >
+          <span style={{ background: resolveVocalSungColor(project.stageStyle, track.vocalStyle) }}>
+            {index + 1}
+          </span>
+          <div>
+            <strong>{track.name}</strong>
+            <small>Voice {index + 1}</small>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function TimelineDensityLanes({
+  project,
+  activeTrackId,
+  trackLayoutById,
+  viewportStore,
+  viewportRef,
+  selectedWordIds,
+  syncSession,
+  activeLineLayoutsBySourceIndex,
+  pixelsPerSecond,
+  timingDraft,
+  marquee,
+  onMarqueePointerDown,
+  onMarqueePointerMove,
+  onMarqueePointerUp,
+  onMarqueePointerCancel,
+  onMarqueeCaptureLost,
+  onWordPointerDown,
+  onWordPointerMove,
+  onWordPointerUp,
+  onWordPointerCancel,
+  onWordCaptureLost,
+  onWordKeyDown,
+  onSeek,
+  registerSyncTargetNode,
+  pinnedWordIds,
+  dragPinnedWordId,
+  onFocusWord,
+  onBlurWord,
+}: {
+  project: KaraokeProject
+  activeTrackId: string
+  trackLayoutById: ReadonlyMap<string, TimelineTrackLayout>
+  viewportStore: TimelineViewportStore
+  viewportRef: RefObject<HTMLDivElement | null>
+  selectedWordIds: Set<string>
+  syncSession?: SyncSession | null
+  activeLineLayoutsBySourceIndex: ReadonlyMap<number, TimelineLineLayout>
+  pixelsPerSecond: number
+  timingDraft: ProjectTimingDraft | null
+  marquee: TimelineMarquee | null
+  onMarqueePointerDown: (event: ReactPointerEvent<HTMLDivElement>, trackId: string) => void
+  onMarqueePointerMove: (event: ReactPointerEvent<HTMLDivElement>) => void
+  onMarqueePointerUp: (
+    event: ReactPointerEvent<HTMLDivElement>,
+    layout: TimelineTrackLayout,
+  ) => void
+  onMarqueePointerCancel: (event: ReactPointerEvent<HTMLDivElement>) => void
+  onMarqueeCaptureLost: (event: ReactPointerEvent<HTMLDivElement>) => void
+  onWordPointerDown: (event: ReactPointerEvent<HTMLButtonElement>, word: LyricWord) => void
+  onWordPointerMove: (event: ReactPointerEvent<HTMLButtonElement>) => void
+  onWordPointerUp: (event: ReactPointerEvent<HTMLButtonElement>) => void
+  onWordPointerCancel: (event: ReactPointerEvent<HTMLButtonElement>) => void
+  onWordCaptureLost: (event: ReactPointerEvent<HTMLButtonElement>) => void
+  onWordKeyDown: (
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    word: LyricWord,
+    selected: boolean,
+  ) => void
+  onSeek: (timeMs: number) => void
+  registerSyncTargetNode: (surface: string, wordId: string) => (node: HTMLElement | null) => void
+  pinnedWordIds: ReadonlySet<string>
+  dragPinnedWordId: string | null
+  onFocusWord: (wordId: string, node: HTMLButtonElement) => void
+  onBlurWord: (wordId: string, node: HTMLButtonElement) => void
+}) {
+  const viewport = useSyncExternalStore(
+    viewportStore.subscribe,
+    viewportStore.getSnapshot,
+    viewportStore.getSnapshot,
+  )
+  const syncPresentation = useSyncExternalStore(
+    (listener) => syncSession?.subscribe(listener) ?? (() => undefined),
+    () => syncSession?.getSnapshot() ?? null,
+    () => null,
+  )
+  const syncTargetId = syncPresentation?.targetWordId ?? null
+  const windowLeft = Math.max(0, viewport.left - 180)
+  const windowRight = viewport.left + Math.max(viewport.width, 1040) + 180
+  const trackCanvasTopById = useMemo(() => {
+    let top = 104
+    const positions = new Map<string, number>()
+    for (const track of project.tracks) {
+      positions.set(track.id, top)
+      top += trackLayoutById.get(track.id)?.height ?? TIMELINE_MIN_TRACK_HEIGHT_PX
+    }
+    return positions
+  }, [project.tracks, trackLayoutById])
+
+  useEffect(() => {
+    if (!syncTargetId) return
+    const layout = trackLayoutById.get(activeTrackId)
+    const word = layout?.wordById.get(syncTargetId)
+    const element = viewportRef.current
+    if (!word || !element) return
+    const snapshot = viewportStore.getSnapshot()
+    const reveal = timelineSyncRevealPosition(snapshot, {
+      left: word.left,
+      width: word.width,
+      top: (trackCanvasTopById.get(activeTrackId) ?? 104) + word.top,
+      height: TIMELINE_WORD_HEIGHT_PX,
+    })
+    if (!reveal) return
+    element.scrollTo({ ...reveal, behavior: 'auto' })
+    viewportStore.update({ ...snapshot, ...reveal })
+  }, [activeTrackId, syncTargetId, trackCanvasTopById, trackLayoutById, viewportRef, viewportStore])
+
+  return (
+    <div className="timeline-lanes">
+      {(() => {
+        let laneTop = 104
+        return project.tracks.map((track) => {
+          const layout = trackLayoutById.get(track.id)
+          if (!layout) return null
+          const currentLaneTop = laneTop
+          laneTop += layout.height
+          const forced = new Set(pinnedWordIds)
+          if (dragPinnedWordId) forced.add(dragPinnedWordId)
+          if (track.id === activeTrackId && syncTargetId) forced.add(syncTargetId)
+          const pendingWords =
+            syncSession && track.id === activeTrackId && syncSession.trackId === track.id
+              ? syncSession
+                  .getPendingWords()
+                  .filter(
+                    (word) =>
+                      word.startMs !== null &&
+                      (!word.initiallyTimed || word.changedFromMaterialized),
+                  )
+                  .slice(0, 64)
+              : []
+          const pendingIds = new Set(pendingWords.map((word) => word.id))
+          const laneViewportTop = viewport.height
+            ? Math.max(0, viewport.top - currentLaneTop)
+            : Number.NaN
+          const laneViewportBottom = viewport.height
+            ? Math.max(0, viewport.top + viewport.height - currentLaneTop)
+            : Number.NaN
+          const mounted = timelineMountedWords(
+            layout,
+            windowLeft,
+            windowRight,
+            forced,
+            Math.max(0, 96 - pendingWords.length),
+            laneViewportTop,
+            laneViewportBottom,
+          )
+          const mountedWords = mounted.words.filter((word) => !pendingIds.has(word.word.id))
+          const labelForced = new Set<string>()
+          if (track.id === activeTrackId && syncTargetId) labelForced.add(syncTargetId)
+          const labels = timelineMountedLabels(
+            layout,
+            windowLeft,
+            windowRight,
+            laneViewportTop,
+            laneViewportBottom,
+            labelForced,
+            TIMELINE_LABEL_DOM_CAP_PER_TRACK,
+          )
+          const lineRegions = timelineLineRegionsInRect(
+            layout,
+            windowLeft,
+            windowRight,
+            laneViewportTop,
+            laneViewportBottom,
+            TIMELINE_LABEL_DOM_CAP_PER_TRACK,
+          ).values
+          const aggregateTop = Number.isFinite(laneViewportTop)
+            ? Math.max(
+                3,
+                Math.min(
+                  Math.max(3, layout.height - 19),
+                  Math.min(layout.height, laneViewportTop + 3),
+                ),
+              )
+            : 3
+          const activeMarquee = marquee?.trackId === track.id ? marquee : null
+          const trackColor = resolveVocalSungColor(project.stageStyle, track.vocalStyle)
+          return (
+            <div
+              key={track.id}
+              data-track-id={track.id}
+              className={`timeline-lane ${track.id === activeTrackId ? 'is-active' : ''}`}
+              style={{ height: layout.height }}
+              onPointerDown={(event) => onMarqueePointerDown(event, track.id)}
+              onPointerMove={onMarqueePointerMove}
+              onPointerUp={(event) => onMarqueePointerUp(event, layout)}
+              onPointerCancel={onMarqueePointerCancel}
+              onLostPointerCapture={onMarqueeCaptureLost}
+            >
+              {syncSession && track.id === activeTrackId && syncSession.trackId === track.id && (
+                <PendingSyncBlocks
+                  session={syncSession}
+                  lineLayoutsBySourceIndex={activeLineLayoutsBySourceIndex}
+                  pixelsPerSecond={pixelsPerSecond}
+                  offsetMs={project.offsetMs}
+                  leadInMs={project.opening.leadInMs}
+                  color={trackColor}
+                  maxRecords={pendingWords.length || 64}
+                />
+              )}
+              {lineRegions.map((line) => (
+                <span
+                  key={line.line.id}
+                  className="line-region"
+                  style={
+                    {
+                      top: line.top,
+                      left: line.intervalStart,
+                      width: Math.max(1, line.intervalEnd - line.intervalStart),
+                      height: line.height - 2,
+                      '--track-color': trackColor,
+                    } as CSSProperties
+                  }
+                />
+              ))}
+              {labels.map((label) => {
+                const { word } = label.word
+                const selected = selectedWordIds.has(word.id)
+                const syncTarget = word.id === syncTargetId
+                return (
+                  <span
+                    key={word.id}
+                    ref={syncTarget ? registerSyncTargetNode('line-label', word.id) : undefined}
+                    className={`timeline-line-label timeline-line-label__word ${selected ? 'is-selected' : ''}`}
+                    style={
+                      {
+                        top: label.top + TIMELINE_LABEL_TOP_PX,
+                        left: label.left,
+                        width: label.width,
+                        '--track-color': trackColor,
+                      } as CSSProperties
+                    }
+                    aria-hidden="true"
+                  >
+                    {label.word.labelText}
+                  </span>
+                )
+              })}
+              {mountedWords.map((wordLayout) => {
+                const { word } = wordLayout
+                const draftTiming = timingDraft?.get(word.id)
+                const rawStart = draftTiming?.startMs ?? word.startMs ?? 0
+                const rawEnd = draftTiming?.endMs ?? word.endMs ?? rawStart + 360
+                const adjustedStart = Math.max(
+                  0,
+                  timelineTime(rawStart, project.offsetMs, project.opening.leadInMs),
+                )
+                const adjustedEnd = timelineTime(rawEnd, project.offsetMs, project.opening.leadInMs)
+                const timingLabel = `${formatTime(adjustedStart, true)}–${formatTime(adjustedEnd, true)}`
+                const selected = selectedWordIds.has(word.id)
+                return (
+                  <button
+                    ref={registerSyncTargetNode('timing-word', word.id)}
+                    className={`timeline-word ${wordLayout.width < 14 ? 'is-compact' : ''} ${selected ? 'is-selected' : ''}`}
+                    style={
+                      {
+                        top: wordLayout.top,
+                        left: wordLayout.left,
+                        width: wordLayout.width,
+                        height: TIMELINE_WORD_HEIGHT_PX,
+                        '--track-color': trackColor,
+                      } as CSSProperties
+                    }
+                    aria-label={`${timelineWordLabel(word)} timing block, ${timingLabel}`}
+                    aria-pressed={selected}
+                    title={`${timelineWordLabel(word)} · ${timingLabel}`}
+                    onFocus={(event) => onFocusWord(word.id, event.currentTarget)}
+                    onBlur={(event) => onBlurWord(word.id, event.currentTarget)}
+                    onKeyDown={(event) => onWordKeyDown(event, word, selected)}
+                    onPointerDown={(event) => onWordPointerDown(event, word)}
+                    onPointerMove={onWordPointerMove}
+                    onPointerUp={onWordPointerUp}
+                    onPointerCancel={onWordPointerCancel}
+                    onLostPointerCapture={onWordCaptureLost}
+                    onDoubleClick={() =>
+                      onSeek(
+                        Math.max(
+                          0,
+                          timelineTime(
+                            word.startMs ?? 0,
+                            project.offsetMs,
+                            project.opening.leadInMs,
+                          ),
+                        ),
+                      )
+                    }
+                  >
+                    <i
+                      data-resize="start"
+                      className="timeline-word__handle timeline-word__handle--start"
+                    />
+                    <i
+                      data-resize="end"
+                      className="timeline-word__handle timeline-word__handle--end"
+                    />
+                  </button>
+                )
+              })}
+              {mounted.omittedCount > 0 && (
+                <span
+                  className="timeline-density-aggregate"
+                  role="status"
+                  aria-label="Additional timing records in this view"
+                  style={{ left: viewport.left + 8, top: aggregateTop }}
+                >
+                  Additional timing records in this view
+                </span>
+              )}
+              {activeMarquee && (
+                <span
+                  className="timeline-marquee"
+                  style={{
+                    left: Math.min(activeMarquee.startX, activeMarquee.currentX),
+                    top: Math.min(activeMarquee.startY, activeMarquee.currentY),
+                    width: Math.abs(activeMarquee.currentX - activeMarquee.startX),
+                    height: Math.abs(activeMarquee.currentY - activeMarquee.startY),
+                  }}
+                  aria-hidden="true"
+                />
+              )}
+            </div>
+          )
+        })
+      })()}
+    </div>
+  )
 }
 
 export function Timeline({
@@ -263,6 +703,9 @@ export function Timeline({
   }
   const playbackClock = clock ?? staticClockRef.current
   const viewportRef = useRef<HTMLDivElement>(null)
+  const viewportStoreRef = useRef<TimelineViewportStore | null>(null)
+  if (!viewportStoreRef.current) viewportStoreRef.current = createTimelineViewportStore()
+  const viewportStore = viewportStoreRef.current
   const syncTargetNodesRef = useRef(new Map<string, Map<HTMLElement, string>>())
   const syncTargetCallbacksRef = useRef(new Map<string, (node: HTMLElement | null) => void>())
   const activeSyncTargetRef = useRef<{ scope: string; wordId: string } | null>(null)
@@ -275,7 +718,15 @@ export function Timeline({
   const [marquee, setMarquee] = useState<TimelineMarquee | null>(null)
   const marqueeRef = useRef<TimelineMarquee | null>(null)
   const mountedRef = useRef(true)
-  const [timelineScrollTop, setTimelineScrollTop] = useState(0)
+  const [pinnedWordIds, setPinnedWordIds] = useState<Set<string>>(() => new Set())
+  const focusPinsRef = useRef(new Map<string, { node: HTMLButtonElement; scopeKey: string }>())
+  const dragPinRef = useRef<{
+    wordId: string
+    pointerId: number
+    captureTarget: EventTarget
+    scopeKey: string
+  } | null>(null)
+  const [dragPinnedWordId, setDragPinnedWordId] = useState<string | null>(null)
 
   const clearSyncTargetNodes = useCallback((scope?: string) => {
     for (const [wordId, nodes] of syncTargetNodesRef.current) {
@@ -375,11 +826,11 @@ export function Timeline({
           track,
           project.offsetMs,
           pixelsPerSecond,
-          timingDraft,
+          null,
           project.opening.leadInMs,
         ),
       ),
-    [pixelsPerSecond, project.offsetMs, project.opening.leadInMs, project.tracks, timingDraft],
+    [pixelsPerSecond, project.offsetMs, project.opening.leadInMs, project.tracks],
   )
   const trackLayoutById = useMemo(
     () => new Map(trackLayouts.map((layout) => [layout.trackId, layout])),
@@ -387,7 +838,7 @@ export function Timeline({
   )
   const activeLayout = trackLayoutById.get(activeTrackId) ?? null
   const activeLineLayoutsBySourceIndex = useMemo(
-    () => indexTimelineLinesBySourceIndex(activeLayout),
+    () => activeLayout?.lineBySourceIndex ?? indexTimelineLinesBySourceIndex(activeLayout),
     [activeLayout],
   )
   const width = Math.max(
@@ -406,7 +857,27 @@ export function Timeline({
     () => timelineGestureScopeKey(project.id, activeTrackId, activeTrack),
     [activeTrack, activeTrackId, project.id],
   )
-  const activeTrackWords = activeTrack ? flattenTrack(activeTrack) : []
+  const activeTrackWords = useMemo(
+    () => (activeTrack ? flattenTrack(activeTrack) : []),
+    [activeTrack],
+  )
+  const activeTrackWordIds = useMemo(
+    () => new Set(activeTrackWords.map(({ word }) => word.id)),
+    [activeTrackWords],
+  )
+  const projectWordCount = useMemo(
+    () => project.tracks.reduce((count, track) => count + flattenTrack(track).length, 0),
+    [project.tracks],
+  )
+  const untimedWords = useMemo(
+    () =>
+      project.tracks.flatMap((track) =>
+        flattenTrack(track)
+          .filter(({ word }) => word.startMs === null)
+          .map(({ word }) => ({ word, track })),
+      ),
+    [project.tracks],
+  )
   const activeHasMaterializedTiming = Boolean(
     activeTrack?.lines.some(
       (line) =>
@@ -454,10 +925,44 @@ export function Timeline({
   const parentDraftCallbackRef = useRef(onTimingDraftChange)
   parentDraftCallbackRef.current = onTimingDraftChange
 
+  useEffect(() => {
+    // A compatible project revision retains the same structural scope and its
+    // pins. A changed project, track, or word identity invalidates ownership.
+    focusPinsRef.current.clear()
+    dragPinRef.current = null
+    setPinnedWordIds(new Set())
+    setDragPinnedWordId(null)
+  }, [activeGestureScopeKey])
+
+  useEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport) return
+    const update = () =>
+      viewportStore.update({
+        left: viewport.scrollLeft,
+        top: viewport.scrollTop,
+        width: viewport.clientWidth || viewportStore.getSnapshot().width,
+        height: viewport.clientHeight || viewportStore.getSnapshot().height,
+      })
+    update()
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update)
+    observer?.observe(viewport)
+    return () => observer?.disconnect()
+  }, [viewportStore])
+
   const finishTimingActivity = (finished: boolean) => {
     if (!finished) return false
     timingGestureScopeRef.current = null
     gestureActivityRef.current!.end('timing')
+    return true
+  }
+
+  const clearDragPin = (pointerId?: number, captureTarget?: EventTarget | null) => {
+    const pin = dragPinRef.current
+    if (!pin || (pointerId !== undefined && pin.pointerId !== pointerId)) return false
+    if (captureTarget !== undefined && captureTarget !== pin.captureTarget) return false
+    dragPinRef.current = null
+    setDragPinnedWordId(null)
     return true
   }
 
@@ -510,8 +1015,11 @@ export function Timeline({
       const abandoned = gestureSessionRef.current!.abandon()
       if (abandoned) gestureContextRef.current!.onTimingDraftChange(null)
       finishTimingActivity(abandoned)
+      if (abandoned) clearDragPin()
     } else {
-      finishTimingActivity(gestureSessionRef.current!.invalidateProject(project))
+      const invalidated = gestureSessionRef.current!.invalidateProject(project)
+      finishTimingActivity(invalidated)
+      if (invalidated) clearDragPin()
     }
     if (marqueeRef.current && marqueeRef.current.scopeKey !== activeGestureScopeKey) {
       clearMarquee()
@@ -523,7 +1031,10 @@ export function Timeline({
     const captureEnded = (event: Event) => {
       const pointerId = (event as PointerEvent).pointerId
       if (typeof pointerId !== 'number') return
-      finishTimingActivity(gestureSessionRef.current!.captureLost(pointerId, event.target))
+      const finished = finishTimingActivity(
+        gestureSessionRef.current!.captureLost(pointerId, event.target),
+      )
+      if (finished) clearDragPin(pointerId)
       clearMarquee(pointerId, event.target)
     }
     document.addEventListener('lostpointercapture', captureEnded, true)
@@ -623,9 +1134,8 @@ export function Timeline({
       right: point.x,
       bottom: point.y,
     })
-    const activeWordIds = new Set(activeTrackWords.map(({ word }) => word.id))
     const next = activeMarquee.add
-      ? new Set([...selectedWordIds].filter((wordId) => activeWordIds.has(wordId)))
+      ? new Set([...selectedWordIds].filter((wordId) => activeTrackWordIds.has(wordId)))
       : new Set<string>()
     selected.forEach((wordId) => next.add(wordId))
     onSelectWords(next)
@@ -663,6 +1173,13 @@ export function Timeline({
       deltaMs: 0,
     }
     if (!gestureSessionRef.current!.begin(drag)) return
+    dragPinRef.current = {
+      wordId: word.id,
+      pointerId: event.pointerId,
+      captureTarget: event.currentTarget,
+      scopeKey: activeGestureScopeKey,
+    }
+    setDragPinnedWordId(word.id)
     timingGestureScopeRef.current = activeGestureScopeKey
     if (!selectedWordIds.has(word.id))
       onSelectWord(word.id, event.shiftKey || event.metaKey || event.ctrlKey)
@@ -672,16 +1189,19 @@ export function Timeline({
     } catch {
       gestureSessionRef.current!.abandon()
       timingGestureScopeRef.current = null
+      clearDragPin(event.pointerId, event.currentTarget)
       return
     }
     if (!safelyHasPointerCapture(event.currentTarget, event.pointerId)) {
       gestureSessionRef.current!.abandon()
       timingGestureScopeRef.current = null
+      clearDragPin(event.pointerId, event.currentTarget)
       return
     }
     if (!gestureActivityRef.current!.begin('timing')) {
       gestureSessionRef.current!.abandon()
       timingGestureScopeRef.current = null
+      clearDragPin(event.pointerId, event.currentTarget)
       safelyReleasePointerCapture(event.currentTarget, event.pointerId)
       return
     }
@@ -697,6 +1217,7 @@ export function Timeline({
     )
       return
     safelyReleasePointerCapture(event.currentTarget, event.pointerId)
+    clearDragPin(event.pointerId, event.currentTarget)
   }
 
   const pointerCancel = (event: ReactPointerEvent<HTMLButtonElement>) => {
@@ -705,13 +1226,15 @@ export function Timeline({
     )
       return
     safelyReleasePointerCapture(event.currentTarget, event.pointerId)
+    clearDragPin(event.pointerId, event.currentTarget)
   }
 
   const lostPointerCapture = (event: ReactPointerEvent<HTMLButtonElement>) => {
     if (safelyHasPointerCapture(event.currentTarget, event.pointerId)) return
-    finishTimingActivity(
+    const finished = finishTimingActivity(
       gestureSessionRef.current!.captureLost(event.pointerId, event.currentTarget),
     )
+    if (finished) clearDragPin(event.pointerId, event.currentTarget)
   }
 
   const wordKeyDown = (
@@ -733,15 +1256,7 @@ export function Timeline({
     onSelectWord(word.id, selected || event.shiftKey || event.metaKey || event.ctrlKey)
   }
 
-  const untimedWords = project.tracks.flatMap((track) =>
-    flattenTrack(track)
-      .filter(({ word }) => word.startMs === null)
-      .map(({ word }) => ({ word, track })),
-  )
-  const totalWordCount = project.tracks.reduce(
-    (total, track) => total + flattenTrack(track).length,
-    0,
-  )
+  const totalWordCount = projectWordCount
 
   return (
     <section className="timeline-panel panel" aria-label="Lyric Timing">
@@ -836,42 +1351,26 @@ export function Timeline({
           className="timeline-track-labels"
           style={{ '--track-count': project.tracks.length } as CSSProperties}
         >
-          <div
-            className="timeline-track-label-stack"
-            style={{ transform: `translateY(${-timelineScrollTop}px)` }}
-          >
-            <div className="timeline-label-spacer">
-              <span>Waveform</span>
-              {isAnalyzing && <i>Analyzing…</i>}
-            </div>
-            {project.tracks.map((track, index) => (
-              <div
-                key={track.id}
-                className={`timeline-track-label ${track.id === activeTrackId ? 'is-active' : ''}`}
-                style={{
-                  height: trackLayoutById.get(track.id)?.height ?? TIMELINE_MIN_TRACK_HEIGHT_PX,
-                }}
-              >
-                <span
-                  style={{
-                    background: resolveVocalSungColor(project.stageStyle, track.vocalStyle),
-                  }}
-                >
-                  {index + 1}
-                </span>
-                <div>
-                  <strong>{track.name}</strong>
-                  <small>Voice {index + 1}</small>
-                </div>
-              </div>
-            ))}
-          </div>
+          <TimelineTrackLabels
+            project={project}
+            activeTrackId={activeTrackId}
+            trackLayoutById={trackLayoutById}
+            viewportStore={viewportStore}
+            isAnalyzing={isAnalyzing}
+          />
         </div>
 
         <div
           className="timeline-viewport"
           ref={viewportRef}
-          onScroll={(event) => setTimelineScrollTop(event.currentTarget.scrollTop)}
+          onScroll={(event) =>
+            viewportStore.update({
+              left: event.currentTarget.scrollLeft,
+              top: event.currentTarget.scrollTop,
+              width: event.currentTarget.clientWidth || viewportStore.getSnapshot().width,
+              height: event.currentTarget.clientHeight || viewportStore.getSnapshot().height,
+            })
+          }
         >
           <div className="timeline-canvas" style={{ width }}>
             {project.opening.leadInMs > 0 && (
@@ -912,170 +1411,48 @@ export function Timeline({
               />
             </div>
 
-            <div className="timeline-lanes">
-              {project.tracks.map((track) => {
-                const layout =
-                  trackLayoutById.get(track.id) ??
-                  buildTimelineTrackLayout(
-                    track,
-                    project.offsetMs,
-                    pixelsPerSecond,
-                    timingDraft,
-                    project.opening.leadInMs,
-                  )
-                const activeMarquee = marquee?.trackId === track.id ? marquee : null
-                const trackColor = resolveVocalSungColor(project.stageStyle, track.vocalStyle)
-                return (
-                  <div
-                    key={track.id}
-                    data-track-id={track.id}
-                    className={`timeline-lane ${track.id === activeTrackId ? 'is-active' : ''}`}
-                    style={{ height: layout.height }}
-                    onPointerDown={(event) => marqueePointerDown(event, track.id)}
-                    onPointerMove={marqueePointerMove}
-                    onPointerUp={(event) => marqueePointerUp(event, layout)}
-                    onPointerCancel={marqueePointerCancel}
-                    onLostPointerCapture={marqueeCaptureLost}
-                  >
-                    {syncSession &&
-                      track.id === activeTrackId &&
-                      syncSession.trackId === track.id && (
-                        <PendingSyncBlocks
-                          session={syncSession}
-                          lineLayoutsBySourceIndex={activeLineLayoutsBySourceIndex}
-                          pixelsPerSecond={pixelsPerSecond}
-                          offsetMs={project.offsetMs}
-                          leadInMs={project.opening.leadInMs}
-                          color={trackColor}
-                        />
-                      )}
-                    {layout.lines.map((lineLayout) => (
-                      <Fragment key={lineLayout.line.id}>
-                        <span
-                          className="line-region"
-                          style={
-                            {
-                              top: lineLayout.top,
-                              left: lineLayout.intervalStart,
-                              width: Math.max(1, lineLayout.intervalEnd - lineLayout.intervalStart),
-                              height: lineLayout.height - 2,
-                              '--track-color': resolveVocalSungColor(
-                                project.stageStyle,
-                                track.vocalStyle,
-                              ),
-                            } as CSSProperties
-                          }
-                        />
-                        <span
-                          className="timeline-line-label"
-                          style={
-                            {
-                              top: lineLayout.top + TIMELINE_LABEL_TOP_PX,
-                              left: lineLayout.labelLeft,
-                              width: lineLayout.labelWidth,
-                              '--track-color': resolveVocalSungColor(
-                                project.stageStyle,
-                                track.vocalStyle,
-                              ),
-                            } as CSSProperties
-                          }
-                          aria-hidden="true"
-                        >
-                          {lineLayout.words.map((wordLayout) => (
-                            <span
-                              key={wordLayout.word.id}
-                              ref={registerSyncTargetNode('line-label', wordLayout.word.id)}
-                              className={`timeline-line-label__word ${selectedWordIds.has(wordLayout.word.id) ? 'is-selected' : ''}`}
-                              style={{ width: wordLayout.labelWidth }}
-                            >
-                              {timelineWordLabel(wordLayout.word)}
-                            </span>
-                          ))}
-                        </span>
-                        {lineLayout.words.map((wordLayout) => {
-                          const { word } = wordLayout
-                          const draftTiming = timingDraft?.get(word.id)
-                          const rawStart = draftTiming?.startMs ?? word.startMs ?? 0
-                          const rawEnd = draftTiming?.endMs ?? word.endMs ?? rawStart + 360
-                          const adjustedStart = Math.max(
-                            0,
-                            timelineTime(rawStart, project.offsetMs, project.opening.leadInMs),
-                          )
-                          const adjustedEnd = timelineTime(
-                            rawEnd,
-                            project.offsetMs,
-                            project.opening.leadInMs,
-                          )
-                          const timingLabel = `${formatTime(adjustedStart, true)}–${formatTime(adjustedEnd, true)}`
-                          const selected = selectedWordIds.has(word.id)
-                          return (
-                            <button
-                              key={word.id}
-                              ref={registerSyncTargetNode('timing-word', word.id)}
-                              className={`timeline-word ${wordLayout.width < 14 ? 'is-compact' : ''} ${selected ? 'is-selected' : ''}`}
-                              style={
-                                {
-                                  top: wordLayout.top,
-                                  left: wordLayout.left,
-                                  width: wordLayout.width,
-                                  height: TIMELINE_WORD_HEIGHT_PX,
-                                  '--track-color': resolveVocalSungColor(
-                                    project.stageStyle,
-                                    track.vocalStyle,
-                                  ),
-                                } as CSSProperties
-                              }
-                              aria-label={`${timelineWordLabel(word)} timing block, ${timingLabel}`}
-                              aria-pressed={selected}
-                              title={`${timelineWordLabel(word)} · ${timingLabel}`}
-                              onKeyDown={(event) => wordKeyDown(event, word, selected)}
-                              onPointerDown={(event) => pointerDown(event, word)}
-                              onPointerMove={pointerMove}
-                              onPointerUp={pointerUp}
-                              onPointerCancel={pointerCancel}
-                              onLostPointerCapture={lostPointerCapture}
-                              onDoubleClick={() =>
-                                onSeek(
-                                  Math.max(
-                                    0,
-                                    timelineTime(
-                                      word.startMs ?? 0,
-                                      project.offsetMs,
-                                      project.opening.leadInMs,
-                                    ),
-                                  ),
-                                )
-                              }
-                            >
-                              <i
-                                data-resize="start"
-                                className="timeline-word__handle timeline-word__handle--start"
-                              />
-                              <i
-                                data-resize="end"
-                                className="timeline-word__handle timeline-word__handle--end"
-                              />
-                            </button>
-                          )
-                        })}
-                      </Fragment>
-                    ))}
-                    {activeMarquee && (
-                      <span
-                        className="timeline-marquee"
-                        style={{
-                          left: Math.min(activeMarquee.startX, activeMarquee.currentX),
-                          top: Math.min(activeMarquee.startY, activeMarquee.currentY),
-                          width: Math.abs(activeMarquee.currentX - activeMarquee.startX),
-                          height: Math.abs(activeMarquee.currentY - activeMarquee.startY),
-                        }}
-                        aria-hidden="true"
-                      />
-                    )}
-                  </div>
-                )
-              })}
-            </div>
+            <TimelineDensityLanes
+              project={project}
+              activeTrackId={activeTrackId}
+              trackLayoutById={trackLayoutById}
+              viewportStore={viewportStore}
+              viewportRef={viewportRef}
+              selectedWordIds={selectedWordIds}
+              syncSession={syncSession}
+              activeLineLayoutsBySourceIndex={activeLineLayoutsBySourceIndex}
+              pixelsPerSecond={pixelsPerSecond}
+              timingDraft={timingDraft}
+              marquee={marquee}
+              onMarqueePointerDown={marqueePointerDown}
+              onMarqueePointerMove={marqueePointerMove}
+              onMarqueePointerUp={marqueePointerUp}
+              onMarqueePointerCancel={marqueePointerCancel}
+              onMarqueeCaptureLost={marqueeCaptureLost}
+              onWordPointerDown={pointerDown}
+              onWordPointerMove={pointerMove}
+              onWordPointerUp={pointerUp}
+              onWordPointerCancel={pointerCancel}
+              onWordCaptureLost={lostPointerCapture}
+              onWordKeyDown={wordKeyDown}
+              onSeek={onSeek}
+              registerSyncTargetNode={registerSyncTargetNode}
+              pinnedWordIds={pinnedWordIds}
+              dragPinnedWordId={dragPinnedWordId}
+              onFocusWord={(wordId, node) => {
+                focusPinsRef.current.set(wordId, { node, scopeKey: activeGestureScopeKey })
+                setPinnedWordIds((current) => new Set(current).add(wordId))
+              }}
+              onBlurWord={(wordId, node) => {
+                const pin = focusPinsRef.current.get(wordId)
+                if (pin?.node !== node || pin.scopeKey !== activeGestureScopeKey) return
+                focusPinsRef.current.delete(wordId)
+                setPinnedWordIds((current) => {
+                  const next = new Set(current)
+                  next.delete(wordId)
+                  return next
+                })
+              }}
+            />
             <TimelinePlayhead
               clock={playbackClock}
               pixelsPerSecond={pixelsPerSecond}
