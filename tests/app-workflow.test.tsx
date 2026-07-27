@@ -5,7 +5,13 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import App from '../src/App'
-import { createDemoProject, parseProject, serializeProject } from '../src/lib/model'
+import {
+  createDemoProject,
+  createLyricLine,
+  createVocalTrack,
+  parseProject,
+  serializeProject,
+} from '../src/lib/model'
 import {
   MAX_PROJECT_DURATION_MS,
   hasValidationErrors,
@@ -19,11 +25,16 @@ interface StudioHarness {
   exportText: ReturnType<typeof vi.fn>
   exportVideo: ReturnType<typeof vi.fn>
   importAudio: ReturnType<typeof vi.fn>
+  importLrc: ReturnType<typeof vi.fn>
+  emitClose: (request: StudioWindowCloseRequest) => void
   openProject: ReturnType<typeof vi.fn>
+  getPendingWindowClose: ReturnType<typeof vi.fn>
+  onWindowCloseRequest: ReturnType<typeof vi.fn>
   resetProjectScope: ReturnType<typeof vi.fn>
   saveProject: ReturnType<typeof vi.fn>
   settleProjectOpen: ReturnType<typeof vi.fn>
   sendMenuAction: (action: StudioMenuAction) => void
+  resolveWindowClose: ReturnType<typeof vi.fn>
 }
 
 class MetadataAudio extends EventTarget {
@@ -46,11 +57,14 @@ class MetadataAudio extends EventTarget {
 }
 
 function createStudioHarness(): StudioHarness {
+  let closeListener: ((request: StudioWindowCloseRequest) => void) | null = null
+  let pendingClose: StudioWindowCloseRequest | null = null
   const openProject = vi.fn(async () => null)
   const settleProjectOpen = vi.fn(async () => true)
   const resetProjectScope = vi.fn(async () => true)
   const saveProject = vi.fn(async () => ({ path: '/saved/project.oks' }))
   const importAudio = vi.fn(async () => null)
+  const importLrc = vi.fn(async () => null)
   const exportText = vi.fn(async () => ({ path: '/exports/project.oks' }))
   const exportVideo = vi.fn(async () => null)
   const cancelVideoExport = vi.fn(async () => true)
@@ -69,10 +83,22 @@ function createStudioHarness(): StudioHarness {
     importAudio,
     resolveProjectAudio: vi.fn(async () => null),
     releaseAudio: vi.fn(async () => undefined),
-    importLrc: vi.fn(async () => null),
+    importLrc,
     exportText,
     exportVideo,
     cancelVideoExport,
+    onWindowCloseRequest: vi.fn((callback: (request: StudioWindowCloseRequest) => void) => {
+      closeListener = callback
+      return () => {
+        if (closeListener === callback) closeListener = null
+      }
+    }),
+    getPendingWindowClose: vi.fn(async () => pendingClose),
+    resolveWindowClose: vi.fn(async (requestId: string) => {
+      if (pendingClose?.requestId !== requestId) return false
+      pendingClose = null
+      return true
+    }),
     onVideoExportProgress: vi.fn(() => () => undefined),
     onMenuAction,
   } as unknown as StudioApi
@@ -80,11 +106,19 @@ function createStudioHarness(): StudioHarness {
   return {
     studio,
     cancelVideoExport,
+    emitClose(request) {
+      pendingClose = request
+      closeListener?.(request)
+    },
     exportText,
     exportVideo,
     importAudio,
+    importLrc,
+    getPendingWindowClose: studio.getPendingWindowClose,
+    onWindowCloseRequest: studio.onWindowCloseRequest,
     openProject,
     resetProjectScope,
+    resolveWindowClose: studio.resolveWindowClose,
     saveProject,
     settleProjectOpen,
     sendMenuAction: (action) => menuActionListener?.(action),
@@ -187,8 +221,8 @@ async function tapSyncWord() {
 }
 
 function timelineTimingLabels() {
-  return [...document.querySelectorAll<HTMLElement>('.timeline-word')].map((word) =>
-    word.getAttribute('aria-label'),
+  return [...document.querySelectorAll<HTMLElement>('.timeline-word, .timeline-sync-pending')].map(
+    (word) => word.getAttribute('aria-label') ?? word.dataset.timingLabel ?? null,
   )
 }
 
@@ -224,7 +258,7 @@ describe('mounted first-time workflow', () => {
     container.remove()
     Object.defineProperty(window, 'studio', { configurable: true, value: undefined })
     vi.restoreAllMocks()
-    vi.unstubAllGlobals()
+    vi.stubGlobal('__OKS_TEST_SYNC_MATERIALIZATION_FAILURE__', undefined)
   })
 
   async function prepareVideoExportProject() {
@@ -361,6 +395,7 @@ describe('mounted first-time workflow', () => {
     const blockedSync = buttonContaining('Add lyrics first')
     expect(blockedSync.disabled).toBe(true)
     await act(async () => blockedSync.click())
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
     expect(document.querySelector('.transport')?.classList.contains('is-syncing')).toBe(false)
     expect(document.querySelector('[role="dialog"]')).not.toBeNull()
 
@@ -853,7 +888,7 @@ describe('mounted first-time workflow', () => {
       expect(down.defaultPrevented).toBe(false)
       expect(up.defaultPrevented).toBe(false)
     }
-    expect(document.querySelectorAll('.timeline-word')).toHaveLength(0)
+    expect(document.querySelectorAll('.timeline-word, .timeline-sync-pending')).toHaveLength(0)
 
     const bareDown = new KeyboardEvent('keydown', {
       bubbles: true,
@@ -874,7 +909,7 @@ describe('mounted first-time workflow', () => {
 
     expect(bareDown.defaultPrevented).toBe(true)
     expect(bareUp.defaultPrevented).toBe(true)
-    expect(document.querySelectorAll('.timeline-word')).toHaveLength(1)
+    expect(document.querySelectorAll('.timeline-word, .timeline-sync-pending')).toHaveLength(1)
   })
 
   it('uses a lightweight sync cue and backfills adjacent word timing from live onsets', async () => {
@@ -927,9 +962,9 @@ describe('mounted first-time workflow', () => {
     await press('ArrowRight', { shiftKey: true })
     await releaseSpace()
 
-    const labels = [...document.querySelectorAll<HTMLElement>('.timeline-word')].map((word) =>
-      word.getAttribute('aria-label'),
-    )
+    const labels = [
+      ...document.querySelectorAll<HTMLElement>('.timeline-word, .timeline-sync-pending'),
+    ].map((word) => word.getAttribute('aria-label') ?? word.dataset.timingLabel)
     expect(labels).toEqual(
       expect.arrayContaining([
         'First timing block, 0:00.000–0:01.000',
@@ -953,7 +988,7 @@ describe('mounted first-time workflow', () => {
     ])
 
     await act(async () => harness.sendMenuAction('undo'))
-    expect(document.querySelectorAll('.timeline-word')).toHaveLength(0)
+    expect(document.querySelectorAll('.timeline-word, .timeline-sync-pending')).toHaveLength(0)
   })
 
   it('times a complete line with Right and undoes the armed session once', async () => {
@@ -974,9 +1009,10 @@ describe('mounted first-time workflow', () => {
       'One timing block, 0:00.000–0:00.100',
       'two timing block, 0:00.100–0:00.200',
     ])
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
     expect(document.querySelector('.transport')?.classList.contains('is-syncing')).toBe(false)
     await act(async () => harness.sendMenuAction('undo'))
-    expect(document.querySelectorAll('.timeline-word')).toHaveLength(0)
+    expect(document.querySelectorAll('.timeline-word, .timeline-sync-pending')).toHaveLength(0)
   })
 
   it('preserves Down-ended gaps before later Right and Space onsets', async () => {
@@ -1191,7 +1227,7 @@ describe('mounted first-time workflow', () => {
 
     await pressKey('ArrowRight', { repeat: true })
     await pressKey('ArrowRight', { ctrlKey: true })
-    expect(document.querySelectorAll('.timeline-word')).toHaveLength(0)
+    expect(document.querySelectorAll('.timeline-word, .timeline-sync-pending')).toHaveLength(0)
     expect(document.querySelector('.time-readout strong')?.textContent).toBe('0:00.250')
 
     const editText = buttonContaining('Edit text')
@@ -1206,7 +1242,7 @@ describe('mounted first-time workflow', () => {
         }),
       ),
     )
-    expect(document.querySelectorAll('.timeline-word')).toHaveLength(0)
+    expect(document.querySelectorAll('.timeline-word, .timeline-sync-pending')).toHaveLength(0)
     editText.blur()
 
     await pressKey('ArrowRight')
@@ -1215,13 +1251,13 @@ describe('mounted first-time workflow', () => {
     await pressKey('ArrowDown')
     await releaseKey('Space')
 
-    expect(document.querySelectorAll('.timeline-word')).toHaveLength(2)
+    expect(document.querySelectorAll('.timeline-word, .timeline-sync-pending')).toHaveLength(2)
     expect(document.querySelector('.sync-cue__line.is-current')?.textContent).toContain('third')
     await pressKey('Space')
     await act(async () => window.dispatchEvent(new Event('blur')))
     await releaseKey('Space')
     await pressKey('ArrowDown')
-    expect(document.querySelectorAll('.timeline-word')).toHaveLength(3)
+    expect(document.querySelectorAll('.timeline-word, .timeline-sync-pending')).toHaveLength(3)
     expect(document.querySelector('.sync-cue__line.is-current')?.textContent).toContain('third')
   })
 
@@ -1307,7 +1343,7 @@ describe('mounted first-time workflow', () => {
     await tapSyncWord()
     await pressKey('ArrowRight', { shiftKey: true })
     await tapSyncWord()
-    expect(document.querySelectorAll('.timeline-word')).toHaveLength(2)
+    expect(document.querySelectorAll('.timeline-word, .timeline-sync-pending')).toHaveLength(2)
     expect(document.querySelector('.transport')?.classList.contains('is-syncing')).toBe(true)
 
     await act(async () => {
@@ -1315,13 +1351,13 @@ describe('mounted first-time workflow', () => {
     })
     expect(document.querySelector('.transport')?.classList.contains('is-syncing')).toBe(false)
     expect(document.querySelector('.sync-cue')).toBeNull()
-    expect(document.querySelectorAll('.timeline-word')).toHaveLength(0)
+    expect(document.querySelectorAll('.timeline-word, .timeline-sync-pending')).toHaveLength(0)
 
     await act(async () => {
       document.querySelector<HTMLButtonElement>('[aria-label="Redo"]')!.click()
     })
     expect(document.querySelector('.transport')?.classList.contains('is-syncing')).toBe(false)
-    expect(document.querySelectorAll('.timeline-word')).toHaveLength(2)
+    expect(document.querySelectorAll('.timeline-word, .timeline-sync-pending')).toHaveLength(2)
     const restoredTimings = timelineTimingLabels()
 
     await tapSyncWord()
@@ -1330,7 +1366,7 @@ describe('mounted first-time workflow', () => {
     await act(async () => {
       document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')!.click()
     })
-    expect(document.querySelectorAll('.timeline-word')).toHaveLength(0)
+    expect(document.querySelectorAll('.timeline-word, .timeline-sync-pending')).toHaveLength(0)
   })
 
   it('ends a sync session before an unrelated Inspector edit and preserves both undo boundaries', async () => {
@@ -1340,7 +1376,7 @@ describe('mounted first-time workflow', () => {
     await clickButton('Start sync')
 
     await tapSyncWord()
-    expect(document.querySelectorAll('.timeline-word')).toHaveLength(1)
+    expect(document.querySelectorAll('.timeline-word, .timeline-sync-pending')).toHaveLength(1)
     expect(document.querySelector('.transport')?.classList.contains('is-syncing')).toBe(true)
 
     await replaceProjectTitle('Retitled after one tap')
@@ -1350,14 +1386,14 @@ describe('mounted first-time workflow', () => {
     expect(document.querySelector('.transport')?.classList.contains('is-syncing')).toBe(false)
 
     await tapSyncWord()
-    expect(document.querySelectorAll('.timeline-word')).toHaveLength(1)
+    expect(document.querySelectorAll('.timeline-word, .timeline-sync-pending')).toHaveLength(1)
 
     await act(async () => harness.sendMenuAction('undo'))
     expect(document.querySelector('.topbar__document')?.textContent).toContain('Untitled Song')
-    expect(document.querySelectorAll('.timeline-word')).toHaveLength(1)
+    expect(document.querySelectorAll('.timeline-word, .timeline-sync-pending')).toHaveLength(1)
 
     await act(async () => harness.sendMenuAction('undo'))
-    expect(document.querySelectorAll('.timeline-word')).toHaveLength(0)
+    expect(document.querySelectorAll('.timeline-word, .timeline-sync-pending')).toHaveLength(0)
   })
 
   it('keeps a changed re-sync retry undoable as one session', async () => {
@@ -1416,7 +1452,7 @@ describe('mounted first-time workflow', () => {
 
     await pressKey('ArrowRight')
     await pressKey('ArrowDown')
-    expect(document.querySelectorAll('.timeline-word')).toHaveLength(0)
+    expect(document.querySelectorAll('.timeline-word, .timeline-sync-pending')).toHaveLength(0)
 
     await act(async () => {
       window.dispatchEvent(
@@ -1437,7 +1473,7 @@ describe('mounted first-time workflow', () => {
       )
     })
 
-    expect(document.querySelectorAll('.timeline-word')).toHaveLength(0)
+    expect(document.querySelectorAll('.timeline-word, .timeline-sync-pending')).toHaveLength(0)
     expect(document.querySelector('[role="status"]')?.textContent).toContain(
       'lyric clock has not reached 0:00',
     )
@@ -1471,7 +1507,7 @@ describe('mounted first-time workflow', () => {
         }),
       )
     })
-    expect(document.querySelectorAll('.timeline-word')).toHaveLength(1)
+    expect(document.querySelectorAll('.timeline-word, .timeline-sync-pending')).toHaveLength(1)
   })
 
   it('uses V-L-O for sync, refuses pre-opening taps, and records the accepted tap immediately', async () => {
@@ -1519,7 +1555,7 @@ describe('mounted first-time workflow', () => {
 
     await clickButton('Start sync')
     await tapSyncWord()
-    expect(document.querySelectorAll('.timeline-word')).toHaveLength(0)
+    expect(document.querySelectorAll('.timeline-word, .timeline-sync-pending')).toHaveLength(0)
     expect(document.querySelector('[role="status"]')?.textContent).toContain(
       'lyric clock has not reached 0:00',
     )
@@ -1542,7 +1578,7 @@ describe('mounted first-time workflow', () => {
     expect(saved.tracks[0].lines[0].words[0]).toMatchObject({ startMs: 3_500, endMs: 3_600 })
 
     await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')!.click())
-    expect(document.querySelectorAll('.timeline-word')).toHaveLength(0)
+    expect(document.querySelectorAll('.timeline-word, .timeline-sync-pending')).toHaveLength(0)
   })
 
   it('does not wrap synchronization to the first word after the last timed word', async () => {
@@ -1569,7 +1605,7 @@ describe('mounted first-time workflow', () => {
         }),
       )
     })
-    const firstTiming = document.querySelector('.timeline-word')?.getAttribute('aria-label')
+    const firstTiming = timelineTimingLabels()[0]
     expect(firstTiming).toContain('Only timing block')
 
     const stop = document.querySelector<HTMLButtonElement>('[aria-label="Stop"]')!
@@ -1687,8 +1723,12 @@ describe('mounted first-time workflow', () => {
     const retainedLeadWords = lead.lines
       .slice(0, 2)
       .reduce((total, line) => total + line.words.length, 0)
-    expect(leadLane.querySelectorAll('.timeline-word')).toHaveLength(totalLeadWords)
-    expect(duetLane.querySelectorAll('.timeline-word')).toHaveLength(totalLeadWords)
+    expect(leadLane.querySelectorAll('.timeline-word, .timeline-sync-pending')).toHaveLength(
+      totalLeadWords,
+    )
+    expect(duetLane.querySelectorAll('.timeline-word, .timeline-sync-pending')).toHaveLength(
+      totalLeadWords,
+    )
 
     const forward = document.querySelector<HTMLButtonElement>(
       '[aria-label="Skip forward five seconds"]',
@@ -1709,14 +1749,22 @@ describe('mounted first-time workflow', () => {
     expect(document.querySelector('.time-readout strong')?.textContent).toBe('0:11.000')
 
     await clickButton('Clear from cursor')
-    expect(leadLane.querySelectorAll('.timeline-word')).toHaveLength(retainedLeadWords)
-    expect(duetLane.querySelectorAll('.timeline-word')).toHaveLength(totalLeadWords)
+    expect(leadLane.querySelectorAll('.timeline-word, .timeline-sync-pending')).toHaveLength(
+      retainedLeadWords,
+    )
+    expect(duetLane.querySelectorAll('.timeline-word, .timeline-sync-pending')).toHaveLength(
+      totalLeadWords,
+    )
     const undo = document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')!
     expect(undo.disabled).toBe(false)
 
     await act(async () => undo.click())
-    expect(leadLane.querySelectorAll('.timeline-word')).toHaveLength(totalLeadWords)
-    expect(duetLane.querySelectorAll('.timeline-word')).toHaveLength(totalLeadWords)
+    expect(leadLane.querySelectorAll('.timeline-word, .timeline-sync-pending')).toHaveLength(
+      totalLeadWords,
+    )
+    expect(duetLane.querySelectorAll('.timeline-word, .timeline-sync-pending')).toHaveLength(
+      totalLeadWords,
+    )
     expect(document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')?.disabled).toBe(true)
     expect(document.querySelector<HTMLButtonElement>('[aria-label="Redo"]')?.disabled).toBe(false)
   })
@@ -2025,7 +2073,9 @@ describe('mounted first-time workflow', () => {
     expect(document.querySelector('[role="status"]')?.textContent).toContain(
       'Desktop project dialog failed',
     )
-    expect(window.confirm).not.toHaveBeenCalled()
+    expect(window.confirm).toHaveBeenCalledWith(
+      'Discard the unsaved changes and open another project?',
+    )
     expect(harness.studio.releaseAudio).not.toHaveBeenCalled()
     expect(document.querySelector('.topbar__document')?.textContent).toContain('First unsaved edit')
     expect(document.querySelector('[title="Unsaved changes"]')).not.toBeNull()
@@ -2056,6 +2106,247 @@ describe('mounted first-time workflow', () => {
       'Project could not be opened.',
     )
     expect(document.body.textContent).not.toContain('private IPC detail')
+  })
+
+  it('materializes a pending sync session before approving native close', async () => {
+    await clickButton('Edit text')
+    await replaceTextarea('One two')
+    await clickButton('Apply lyrics')
+    await clickButton('Start sync')
+    await tapSyncWord()
+
+    const closeRequest = {
+      requestId: '11111111-1111-4111-8111-111111111111',
+      action: 'window',
+    } as const
+    await act(async () => {
+      harness.emitClose(closeRequest)
+    })
+
+    expect(harness.resolveWindowClose).toHaveBeenCalledWith(closeRequest.requestId, true)
+    expect(document.querySelector('.sync-cue')).not.toBeNull()
+    expect(timelineTimingLabels()).toContain('One timing block, 0:00.000–0:00.100')
+  })
+
+  it('declines native close while a sync session is pending and preserves the unsaved timeline', async () => {
+    ;(window.confirm as ReturnType<typeof vi.fn>).mockReturnValueOnce(false)
+    await clickButton('Edit text')
+    await replaceTextarea('One two')
+    await clickButton('Apply lyrics')
+    await clickButton('Start sync')
+    await tapSyncWord()
+
+    const closeRequest = {
+      requestId: '22222222-2222-4222-8222-222222222222',
+      action: 'window',
+    } as const
+    await act(async () => {
+      harness.emitClose(closeRequest)
+    })
+
+    expect(harness.resolveWindowClose).toHaveBeenCalledWith(closeRequest.requestId, false)
+    expect(timelineTimingLabels()).toContain('One timing block, 0:00.000–0:00.100')
+    expect(document.querySelector('.sync-cue')).not.toBeNull()
+  })
+
+  it('holds the native close request open when authorization cannot be granted', async () => {
+    const closeRequest = {
+      requestId: '33333333-3333-4333-8333-333333333333',
+      action: 'window',
+    } as const
+    harness.resolveWindowClose.mockImplementation(async () => false)
+
+    await clickButton('Edit text')
+    await replaceTextarea('One two')
+    await clickButton('Apply lyrics')
+    await clickButton('Start sync')
+    await tapSyncWord()
+
+    await act(async () => {
+      harness.emitClose(closeRequest)
+    })
+
+    expect(harness.resolveWindowClose).toHaveBeenCalledWith(closeRequest.requestId, true)
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(
+      'The close request is still pending. Keep editing to cancel it.',
+    )
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      'The native close request remains active.',
+    )
+    expect(timelineTimingLabels()).toContain('One timing block, 0:00.000–0:00.100')
+    expect(document.querySelector('.sync-cue')).not.toBeNull()
+  })
+
+  it('materializes sync timing before creating Enhanced LRC', async () => {
+    await clickButton('Edit text')
+    await replaceTextarea('One two')
+    await clickButton('Apply lyrics')
+    await clickButton('Start sync')
+    await tapSyncWord()
+
+    await clickButton('Workflow')
+    await clickButton('Choose export')
+    const exportDialog = document.querySelector<HTMLElement>('[role="dialog"]')
+    const exportOption = (label: string) =>
+      [...exportDialog!.querySelectorAll<HTMLButtonElement>('button')].find((button) =>
+        button.textContent?.includes(label),
+      )
+    await clickButton(exportOption('Enhanced LRC')!.textContent ?? 'Enhanced LRC')
+
+    const exported = harness.exportText.mock.calls.at(-1)?.[0]
+    expect(exported).toMatchObject({ format: 'lrc' })
+    expect(exported.contents).toContain('[00:00.000]')
+    expect(timelineTimingLabels()).toContain('One timing block, 0:00.000–0:00.100')
+  })
+
+  it('materializes sync timing before creating ASS', async () => {
+    await clickButton('Edit text')
+    await replaceTextarea('One two')
+    await clickButton('Apply lyrics')
+    await clickButton('Start sync')
+    await tapSyncWord()
+
+    await clickButton('Workflow')
+    await clickButton('Choose export')
+    const exportDialog = document.querySelector<HTMLElement>('[role="dialog"]')
+    const exportOption = (label: string) =>
+      [...exportDialog!.querySelectorAll<HTMLButtonElement>('button')].find((button) =>
+        button.textContent?.includes(label),
+      )
+    await clickButton(exportOption('ASS karaoke subtitles')!.textContent ?? 'ASS karaoke subtitles')
+
+    const exported = harness.exportText.mock.calls.at(-1)?.[0]
+    expect(exported).toMatchObject({ format: 'ass' })
+    expect(exported.contents).toContain('Dialogue:')
+    expect(timelineTimingLabels()).toContain('One timing block, 0:00.000–0:00.100')
+  })
+
+  it('materializes sync timing before creating a Karaoke video export', async () => {
+    await prepareVideoExportProject()
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[aria-label="Close dialog"]')?.click(),
+    )
+    await clickButton('Start sync')
+    await tapSyncWord()
+
+    await clickButton('Workflow')
+    await clickButton('Choose export')
+    await clickButton('Karaoke video')
+
+    const exported = harness.exportVideo.mock.calls.at(-1)?.[0]
+    const exportedProject = parseProject(exported.projectJson)
+    expect(exported).toMatchObject({
+      suggestedName: 'unknown-artist-untitled-song.mp4',
+      audioPath: '/music/backing.mp3',
+    })
+    expect(exportedProject).toMatchObject({
+      tracks: [
+        {
+          lines: [
+            {
+              words: [
+                { startMs: 0, endMs: 100 },
+                { startMs: null, endMs: null },
+                { startMs: null, endMs: null },
+              ],
+            },
+          ],
+        },
+      ],
+    })
+  })
+
+  it('keeps a pending-only sync dirty through declined New and Open, then replaces on approval', async () => {
+    await clickButton('Edit text')
+    await replaceTextarea('One two')
+    await clickButton('Apply lyrics')
+    await act(async () => harness.sendMenuAction('save'))
+    expect(document.querySelector('[title="Unsaved changes"]')).toBeNull()
+
+    await clickButton('Start sync')
+    await pressKey('ArrowRight')
+    expect(document.querySelector('.sync-cue .is-target')?.textContent).toBe('two')
+    expect(document.querySelector('[title="Unsaved changes"]')).not.toBeNull()
+
+    ;(window.confirm as ReturnType<typeof vi.fn>)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(false)
+    await clickButton('Workflow')
+    await clickButton('New project')
+    await clickButton('Workflow')
+    await clickButton('Open .oks')
+    expect(harness.resetProjectScope).not.toHaveBeenCalled()
+    expect(harness.openProject).not.toHaveBeenCalled()
+    expect(document.querySelector('.sync-cue .is-target')?.textContent).toBe('two')
+    expect(timelineTimingLabels()).toContain('One timing block, 0:00.000–0:00.100')
+    expect(document.querySelector('[title="Unsaved changes"]')).not.toBeNull()
+
+    ;(window.confirm as ReturnType<typeof vi.fn>).mockReturnValueOnce(true)
+    await clickButton('Workflow')
+    await clickButton('New project')
+    expect(harness.resetProjectScope).toHaveBeenCalledOnce()
+    expect(document.querySelector('.sync-cue')).toBeNull()
+    expect(document.querySelector('[title="Unsaved changes"]')).toBeNull()
+  })
+
+  it.each([
+    ['Clear timing', 'Cleared active-track timing'],
+    ['Clear from cursor', 'Cleared active-track timing from the playhead'],
+  ])('materializes pending timing before %s and restores it through Undo', async (action) => {
+    await clickButton('Edit text')
+    await replaceTextarea('One two')
+    await clickButton('Apply lyrics')
+    await clickButton('Start sync')
+    await pressKey('ArrowRight')
+
+    await clickButton(action)
+    expect(timelineTimingLabels()).toHaveLength(0)
+    expect(document.querySelector('[role="status"]')?.textContent).toContain('Cleared')
+    await act(async () => harness.sendMenuAction('save'))
+    expect(
+      parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents).tracks[0].lines[0].words[0],
+    ).toMatchObject({ startMs: null, endMs: null })
+
+    await act(async () => harness.sendMenuAction('undo'))
+    expect(timelineTimingLabels()).toContain('One timing block, 0:00.000–0:00.100')
+  })
+
+  it('materializes a pending session on track switch, then keeps it as one Undo step after rearm and Save', async () => {
+    const project = createDemoProject()
+    const lead = createVocalTrack({
+      id: 'lead-reused',
+      name: 'Lead',
+      lines: [createLyricLine('One two', { id: 'lead-line' })],
+    })
+    const duet = createVocalTrack({
+      id: 'duet-reused',
+      name: 'Duet',
+      lines: [createLyricLine('Three', { id: 'duet-line' })],
+    })
+    harness.openProject.mockResolvedValueOnce({
+      requestId: 'two-track-project',
+      path: '/opened/two-track.oks',
+      contents: serializeProject({ ...project, tracks: [lead, duet] }),
+    })
+    await clickButton('Workflow')
+    await clickButton('Open .oks')
+    await clickButton('Start sync')
+    await pressKey('ArrowRight')
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[aria-label="Select Duet vocal track"]')?.click(),
+    )
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[aria-label="Select Lead vocal track"]')?.click(),
+    )
+    await clickButton('Start sync')
+    await act(async () => harness.sendMenuAction('save'))
+
+    const saved = parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents)
+    expect(saved.tracks[0].lines[0].words[0]).toMatchObject({ startMs: 0, endMs: 100 })
+    await act(async () => harness.sendMenuAction('undo'))
+    expect(timelineTimingLabels()).toHaveLength(0)
+    await act(async () => harness.sendMenuAction('redo'))
+    expect(timelineTimingLabels()).toContain('One timing block, 0:00.000–0:00.100')
   })
 
   it('does not replace A until main acknowledges B and blocks lifecycle actions meanwhile', async () => {
@@ -2133,7 +2424,9 @@ describe('mounted first-time workflow', () => {
     await clickButton('Workflow')
     await clickButton('Open .oks')
     expect(harness.settleProjectOpen).toHaveBeenLastCalledWith('malformed-project-b', false)
-    expect(window.confirm).not.toHaveBeenCalled()
+    expect(window.confirm).toHaveBeenCalledWith(
+      'Discard the unsaved changes and open another project?',
+    )
     expect(document.querySelector('.topbar__document')?.textContent).toContain('Dirty Project A')
     expect(document.querySelector('[title="Unsaved changes"]')).not.toBeNull()
 
@@ -2146,7 +2439,8 @@ describe('mounted first-time workflow', () => {
     await clickButton('Workflow')
     await clickButton('Open .oks')
 
-    expect(harness.settleProjectOpen).toHaveBeenLastCalledWith('declined-project-b', false)
+    expect(harness.settleProjectOpen).toHaveBeenCalledTimes(1)
+    expect(harness.openProject).toHaveBeenCalledTimes(1)
     expect(document.querySelector('.topbar__document')?.textContent).toContain('Dirty Project A')
     expect(document.querySelector('[title="Unsaved changes"]')).not.toBeNull()
     expect(harness.studio.releaseAudio).not.toHaveBeenCalled()
@@ -2455,5 +2749,325 @@ describe('mounted first-time workflow', () => {
       'Edited while save was pending',
     )
     expect(document.querySelector('[title="Unsaved changes"]')).not.toBeNull()
+  })
+
+  it('keeps a materialized timing transaction and its later edit recoverable across a failed save', async () => {
+    await clickButton('Edit text')
+    await replaceTextarea('One two')
+    await clickButton('Apply lyrics')
+    await clickButton('Start sync')
+    await tapSyncWord()
+    await replaceProjectTitle('Latest save snapshot')
+
+    harness.saveProject.mockRejectedValueOnce(new Error('disk full'))
+    await act(async () => harness.sendMenuAction('save'))
+
+    const attempted = parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents)
+    expect(attempted).toMatchObject({ title: 'Latest save snapshot' })
+    expect(attempted.tracks[0].lines[0].words[0]).toMatchObject({ startMs: 0, endMs: 100 })
+    expect(document.querySelector('[role="status"]')?.textContent).toContain('disk full')
+    expect(document.querySelector('[title="Unsaved changes"]')).not.toBeNull()
+    expect(timelineTimingLabels()).toContain('One timing block, 0:00.000–0:00.100')
+
+    await act(async () => harness.sendMenuAction('save'))
+    const retried = parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents)
+    expect(retried).toMatchObject({ title: 'Latest save snapshot' })
+    expect(retried.tracks[0].lines[0].words[0]).toMatchObject({ startMs: 0, endMs: 100 })
+    expect(document.querySelector('[title="Unsaved changes"]')).toBeNull()
+  })
+
+  it('restores drained timing patches when the real materialization boundary faults', async () => {
+    await clickButton('Edit text')
+    await replaceTextarea('One two')
+    await clickButton('Apply lyrics')
+    await act(async () => harness.sendMenuAction('save'))
+    await clickButton('Start sync')
+    await tapSyncWord()
+
+    vi.stubGlobal('__OKS_TEST_SYNC_MATERIALIZATION_FAILURE__', () => {
+      throw new Error('test materialization fault')
+    })
+    await act(async () => harness.sendMenuAction('save'))
+
+    expect(harness.saveProject).toHaveBeenCalledOnce()
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(
+      'test materialization fault',
+    )
+    expect(document.querySelector('[title="Unsaved changes"]')).not.toBeNull()
+    expect(document.querySelector('.sync-cue .is-target')?.textContent).toBe('two')
+    expect(timelineTimingLabels()).toContain('One timing block, 0:00.000–0:00.100')
+
+    await pressKey('Escape')
+    expect(document.querySelector('.transport')?.classList.contains('is-syncing')).toBe(true)
+    expect(document.querySelector('.sync-cue .is-target')?.textContent).toBe('two')
+
+    vi.stubGlobal('__OKS_TEST_SYNC_MATERIALIZATION_FAILURE__', undefined)
+    await act(async () => harness.sendMenuAction('save'))
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+    const saved = parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents)
+    expect(saved.tracks[0].lines[0].words[0]).toMatchObject({ startMs: 0, endMs: 100 })
+    expect(document.querySelector('[role="status"]')?.textContent).toContain('Project saved')
+  })
+
+  it('does not request a replacement audio capability until pending timing materializes', async () => {
+    MetadataAudio.instances = []
+    vi.stubGlobal('Audio', MetadataAudio)
+    vi.stubGlobal(
+      'AudioContext',
+      class {
+        async close() {}
+        async decodeAudioData() {
+          return { getChannelData: () => new Float32Array([0]) }
+        }
+      },
+    )
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ arrayBuffer: async () => new ArrayBuffer(0) })),
+    )
+    harness.importAudio
+      .mockResolvedValueOnce({
+        path: '/music/linked-before-fault.mp3',
+        name: 'linked-before-fault.mp3',
+        url: 'studio-media://asset/linked-before-fault.mp3',
+      })
+      .mockResolvedValueOnce({
+        path: '/music/linked-after-retry.mp3',
+        name: 'linked-after-retry.mp3',
+        url: 'studio-media://asset/linked-after-retry.mp3',
+      })
+    await clickButton('Workflow')
+    await clickButton('Attach audio')
+    const linkedAudio = MetadataAudio.instances[0]
+
+    await clickButton('Edit text')
+    await replaceTextarea('One two')
+    await clickButton('Apply lyrics')
+    await clickButton('Start sync')
+    await tapSyncWord()
+    vi.stubGlobal('__OKS_TEST_SYNC_MATERIALIZATION_FAILURE__', () => {
+      throw new Error('audio materialization fault')
+    })
+
+    await clickButton('Workflow')
+    await clickButton('Attach audio')
+    expect(harness.importAudio).toHaveBeenCalledOnce()
+    expect(MetadataAudio.instances).toEqual([linkedAudio])
+    expect(timelineTimingLabels()).toContain('One timing block, 0:00.000–0:00.100')
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(
+      'audio materialization fault',
+    )
+
+    vi.stubGlobal('__OKS_TEST_SYNC_MATERIALIZATION_FAILURE__', undefined)
+    await act(async () => harness.sendMenuAction('save'))
+    const savedBeforeRetry = parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents)
+    expect(savedBeforeRetry.audioPath).toBe('/music/linked-before-fault.mp3')
+    expect(savedBeforeRetry.tracks[0].lines[0].words[0]).toMatchObject({ startMs: 0, endMs: 100 })
+    await clickButton('Workflow')
+    await clickButton('Attach audio')
+    expect(harness.importAudio).toHaveBeenCalledTimes(2)
+    await act(async () => harness.sendMenuAction('save'))
+    expect(parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents)).toMatchObject({
+      audioPath: '/music/linked-after-retry.mp3',
+    })
+  })
+
+  it('does not request LRC contents until pending timing materializes, then retries cleanly', async () => {
+    await clickButton('Edit text')
+    await replaceTextarea('One two')
+    await clickButton('Apply lyrics')
+    await clickButton('Start sync')
+    await tapSyncWord()
+    harness.importLrc.mockResolvedValueOnce({ contents: '[00:01.000]<00:01.000>replacement' })
+    vi.stubGlobal('__OKS_TEST_SYNC_MATERIALIZATION_FAILURE__', () => {
+      throw new Error('LRC materialization fault')
+    })
+
+    await clickButton('Workflow')
+    await clickButton('Import LRC')
+    expect(harness.importLrc).not.toHaveBeenCalled()
+    expect(document.querySelector('.sync-cue .is-target')?.textContent).toBe('two')
+    expect(timelineTimingLabels()).toContain('One timing block, 0:00.000–0:00.100')
+
+    vi.stubGlobal('__OKS_TEST_SYNC_MATERIALIZATION_FAILURE__', undefined)
+    await clickButton('Workflow')
+    await clickButton('Import LRC')
+    expect(harness.importLrc).toHaveBeenCalledOnce()
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+    expect(document.querySelector('[role="status"]')?.textContent).toContain('Imported LRC')
+    await act(async () => harness.sendMenuAction('save'))
+    expect(
+      parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents).tracks[0].lines[0].words[0],
+    ).toMatchObject({ text: 'replacement' })
+  })
+
+  it.each([
+    ['lrc', 'Enhanced LRC', 'LRC bridge failed', '[ti:Latest export snapshot]'],
+    ['ass', 'ASS karaoke subtitles', 'ASS bridge failed', 'Title: Latest export snapshot'],
+  ] as const)(
+    'keeps the sync session through a failed $0 export, then exports the latest $0 snapshot as one undo step',
+    async (format, label, failure, latestSnapshot) => {
+      await clickButton('Edit text')
+      await replaceTextarea('One two three')
+      await clickButton('Apply lyrics')
+      await clickButton('Start sync')
+      await tapSyncWord()
+
+      harness.exportText.mockRejectedValueOnce(new Error(failure))
+      await clickButton('Workflow')
+      await clickButton('Choose export')
+      await clickButton(label)
+      expect(harness.exportText.mock.calls.at(-1)?.[0]).toMatchObject({ format })
+      expect(document.querySelector('[role="status"]')?.textContent).toContain(failure)
+      expect(document.querySelector('.sync-cue .is-target')?.textContent).toBe('two')
+      expect(document.querySelector('[title="Unsaved changes"]')).not.toBeNull()
+
+      await act(async () =>
+        document.querySelector<HTMLButtonElement>('[aria-label="Close dialog"]')?.click(),
+      )
+      await tapSyncWord()
+      await clickButton('Workflow')
+      await clickButton('Choose export')
+      await clickButton(label)
+      const intermediate = harness.exportText.mock.calls.at(-1)?.[0]
+      expect(intermediate.contents).toMatch(
+        format === 'lrc' ? /<00:00\.000>One <00:00\.100>two/u : /\{\\kf10\}One \{\\kf10\}two/u,
+      )
+
+      await act(async () => harness.sendMenuAction('undo'))
+      expect(timelineTimingLabels()).toHaveLength(0)
+      await act(async () => harness.sendMenuAction('redo'))
+      expect(timelineTimingLabels()).toHaveLength(2)
+
+      await replaceProjectTitle('Latest export snapshot')
+      await clickButton('Workflow')
+      await clickButton('Choose export')
+      await clickButton(label)
+      expect(harness.exportText.mock.calls.at(-1)?.[0].contents).toContain(latestSnapshot)
+    },
+  )
+
+  it('keeps MP4 timing recoverable through a bridge failure and later exports one undoable session', async () => {
+    await prepareVideoExportProject()
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[aria-label="Close dialog"]')?.click(),
+    )
+    await clickButton('Start sync')
+    await tapSyncWord()
+    harness.exportVideo.mockRejectedValueOnce(new Error('MP4 bridge failed'))
+
+    await clickButton('Workflow')
+    await clickButton('Choose export')
+    await clickButton('Karaoke video')
+    expect(document.querySelector('[role="status"]')?.textContent).toContain('MP4 bridge failed')
+    expect(document.querySelector('.sync-cue .is-target')?.textContent).toBe('to')
+    expect(document.querySelector('[title="Unsaved changes"]')).not.toBeNull()
+
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[aria-label="Close dialog"]')?.click(),
+    )
+    await tapSyncWord()
+    await clickButton('Workflow')
+    await clickButton('Choose export')
+    await clickButton('Karaoke video')
+    const intermediate = parseProject(harness.exportVideo.mock.calls.at(-1)?.[0].projectJson)
+    expect(intermediate.tracks[0].lines[0].words.slice(0, 2)).toEqual([
+      expect.objectContaining({ startMs: 0, endMs: 100 }),
+      expect.objectContaining({ startMs: 100, endMs: 200 }),
+    ])
+    await act(async () => harness.sendMenuAction('undo'))
+    expect(timelineTimingLabels()).toHaveLength(0)
+    await act(async () => harness.sendMenuAction('redo'))
+    expect(timelineTimingLabels()).toHaveLength(2)
+
+    await replaceProjectTitle('Latest MP4 snapshot')
+    await clickButton('Karaoke video')
+    const exported = parseProject(harness.exportVideo.mock.calls.at(-1)?.[0].projectJson)
+    expect(exported).toMatchObject({ title: 'Latest MP4 snapshot' })
+    expect(exported.tracks[0].lines[0].words[0]).toMatchObject({ startMs: 0, endMs: 100 })
+  })
+
+  it('keeps a failed native-close approval recoverable and retries the same current session', async () => {
+    await clickButton('Edit text')
+    await replaceTextarea('One two')
+    await clickButton('Apply lyrics')
+    await act(async () => harness.sendMenuAction('save'))
+    await clickButton('Start sync')
+    await tapSyncWord()
+    const closeRequest = {
+      requestId: '55555555-5555-4555-8555-555555555555',
+      action: 'window',
+    } as const
+    harness.resolveWindowClose.mockImplementationOnce(async () => false)
+
+    await act(async () => harness.emitClose(closeRequest))
+    expect(harness.resolveWindowClose).toHaveBeenCalledWith(closeRequest.requestId, true)
+    expect(document.querySelector('[title="Unsaved changes"]')).not.toBeNull()
+    expect(document.querySelector('.sync-cue .is-target')?.textContent).toBe('two')
+
+    await act(async () => harness.emitClose(closeRequest))
+    expect(harness.resolveWindowClose).toHaveBeenLastCalledWith(closeRequest.requestId, true)
+    expect(timelineTimingLabels()).toContain('One timing block, 0:00.000–0:00.100')
+  })
+
+  it('rejects an old armed session after New and Open replace it with a project that reuses every timing ID', async () => {
+    const projectA = createDemoProject()
+    const reusableTrack = createVocalTrack({
+      id: 'reused-track',
+      name: 'Lead',
+      lines: [
+        createLyricLine('One two', {
+          id: 'reused-line',
+          words: [
+            { id: 'reused-one', text: 'One', startMs: null, endMs: null },
+            { id: 'reused-two', text: 'two', startMs: null, endMs: null },
+          ],
+        }),
+      ],
+    })
+    const projectWithReusableIds = { ...projectA, id: 'reused-project', tracks: [reusableTrack] }
+    harness.openProject.mockResolvedValueOnce({
+      requestId: 'project-a-reused-ids',
+      path: '/opened/a.oks',
+      contents: serializeProject({ ...projectWithReusableIds, title: 'Project A' }),
+    })
+    await clickButton('Workflow')
+    await clickButton('Open .oks')
+    await clickButton('Start sync')
+    expect(document.querySelector('.is-sync-target')).not.toBeNull()
+    await tapSyncWord()
+    await clickButton('Workflow')
+    await clickButton('New project')
+    expect(document.querySelector('.topbar__document')?.textContent).toContain('Untitled Song')
+    expect(document.querySelector('.is-sync-target')).toBeNull()
+
+    const settlement = deferred<boolean>()
+    harness.settleProjectOpen.mockImplementationOnce(() => settlement.promise)
+    harness.openProject.mockResolvedValueOnce({
+      requestId: 'project-b-reused-ids',
+      path: '/opened/b.oks',
+      contents: serializeProject({ ...projectWithReusableIds, title: 'Project B' }),
+    })
+    await clickButton('Workflow')
+    await clickButton('Open .oks')
+    expect(document.querySelector('.topbar__document')?.textContent).toContain('Untitled Song')
+    expect(document.querySelector('.is-sync-target')).toBeNull()
+    await pressKey('Space')
+
+    await act(async () => {
+      settlement.resolve(true)
+      await settlement.promise
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
+    })
+    expect(document.querySelector('.topbar__document')?.textContent).toContain('Project B')
+    expect(timelineTimingLabels()).toHaveLength(0)
+    expect(document.querySelector('.is-sync-target')).toBeNull()
+    await act(async () => harness.sendMenuAction('save'))
+    const savedB = parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents)
+    expect(savedB).toMatchObject({ title: 'Project B', id: 'reused-project' })
+    expect(savedB.tracks[0].lines[0].words).toEqual([
+      expect.objectContaining({ id: 'reused-one', startMs: null, endMs: null }),
+      expect.objectContaining({ id: 'reused-two', startMs: null, endMs: null }),
+    ])
   })
 })

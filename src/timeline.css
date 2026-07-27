@@ -341,6 +341,21 @@
   user-select: none;
 }
 
+.timeline-sync-pending {
+  position: absolute;
+  z-index: 2;
+  display: block;
+  min-width: 1px;
+  overflow: visible;
+  border: 1px solid color-mix(in srgb, var(--track-color) 58%, #25312b);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--track-color) 17%, #16201b);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.16);
+  cursor: default;
+  touch-action: none;
+  user-select: none;
+}
+
 .timeline-word:hover {
   z-index: 3;
   border-color: var(--track-color);
@@ -693,6 +708,12 @@
   background: color-mix(in srgb, var(--track-color) 17%, white);
   box-shadow: 0 3px 8px rgba(76, 55, 101, 0.1);
   color: var(--text);
+}
+
+.timeline-sync-pending {
+  border-color: color-mix(in srgb, var(--track-color) 55%, #d4c8df);
+  background: color-mix(in srgb, var(--track-color) 17%, white);
+  box-shadow: 0 3px 8px rgba(76, 55, 101, 0.1);
 }
 
 .timeline-word:hover {

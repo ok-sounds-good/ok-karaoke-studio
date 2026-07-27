@@ -9,12 +9,14 @@ import {
   Type,
   Undo2,
 } from 'lucide-react'
-import type { FocusEvent } from 'react'
+import { useSyncExternalStore, type FocusEvent } from 'react'
+import type { SyncSession } from '../lib/sync-session'
 import { Button, IconButton, LogoMark } from './ui'
 
 interface TopBarProps {
   title: string
   dirty: boolean
+  syncSession: SyncSession | null
   canUndo: boolean
   canRedo: boolean
   issueCount: number
@@ -36,6 +38,7 @@ interface TopBarProps {
 export function TopBar({
   title,
   dirty,
+  syncSession,
   canUndo,
   canRedo,
   issueCount,
@@ -92,7 +95,7 @@ export function TopBar({
 
       <div className="topbar__document">
         <span>{title || 'Untitled song'}</span>
-        {dirty && <i title="Unsaved changes" />}
+        <DirtyIndicator dirty={dirty} syncSession={syncSession} />
         <small>EDITING</small>
       </div>
 
@@ -147,4 +150,14 @@ export function TopBar({
       </nav>
     </header>
   )
+}
+
+function DirtyIndicator({ dirty, syncSession }: Pick<TopBarProps, 'dirty' | 'syncSession'>) {
+  const presentation = useSyncExternalStore(
+    syncSession ? syncSession.subscribe.bind(syncSession) : () => () => undefined,
+    syncSession ? syncSession.getSnapshot : () => null,
+    () => null,
+  )
+  if (!dirty && !presentation?.hasPending) return null
+  return <i title="Unsaved changes" />
 }

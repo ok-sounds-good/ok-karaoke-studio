@@ -235,16 +235,16 @@ describe('Timeline and Sync Focus styling regressions', () => {
     for (const selector of [
       '.sync-cue__line.is-current > span',
       '.sync-cue__line.is-next > span',
-      '.sync-cue__line.is-current b',
-      '.sync-cue__line.is-current b.is-timed',
-      '.sync-cue__line.is-next b',
-      '.sync-cue__line.is-next b.is-timed',
+      '.sync-cue__line.is-current .sync-cue__token',
+      '.sync-cue__line.is-current .sync-cue__token.is-timed',
+      '.sync-cue__line.is-next .sync-cue__token',
+      '.sync-cue__line.is-next .sync-cue__token.is-timed',
       '.sync-cue__help',
     ]) {
       expect(cssContrast(colorFor(selector), '#fff'), selector).toBeGreaterThanOrEqual(4.5)
     }
     expect(identity).toMatch(
-      /\.sync-cue__line b\.is-target,[\s\S]*?background:\s*#70469e;[\s\S]*?color:\s*#fff;/,
+      /\.sync-cue__line \.sync-cue__token\.is-target,[\s\S]*?background:\s*#70469e;[\s\S]*?color:\s*#fff;/,
     )
     expect(cssContrast('#fff', '#70469e')).toBeGreaterThanOrEqual(4.5)
   })
