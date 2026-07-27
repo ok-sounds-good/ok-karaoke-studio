@@ -2,15 +2,19 @@ import { memo, useMemo } from 'react'
 import { FileAudio2, Import, Mic2, Music2, SlidersHorizontal, UsersRound } from 'lucide-react'
 import type { KaraokeProject, VocalTrack } from '../lib/model'
 import { formatTime } from '../lib/model'
+import { openingLeadInMaximum } from '../lib/project-validation'
 import { resolveVocalSungColor } from '../lib/video-style'
 import { effectiveDuration, flattenProject, flattenTrack } from '../utils'
+import { OpeningTimingControl } from './OpeningTimingControl'
 import { Button } from './ui'
 
 interface InspectorPanelProps {
   project: KaraokeProject
   activeTrackId: string
   onSelectTrack: (trackId: string) => void
-  onUpdateProject: (patch: Partial<Pick<KaraokeProject, 'title' | 'artist' | 'offsetMs'>>) => void
+  onUpdateProject: (
+    patch: Partial<Pick<KaraokeProject, 'title' | 'artist' | 'offsetMs' | 'opening'>>,
+  ) => void
   onUpdateTrack: (
     trackId: string,
     patch: Partial<Pick<VocalTrack, 'name' | 'vocalStyle' | 'muted' | 'solo'>>,
@@ -46,6 +50,7 @@ export const InspectorPanel = memo(function InspectorPanel({
     [project.tracks],
   )
   const untimed = allWords.filter(({ word }) => word.startMs === null).length
+  const openingMaximumMs = useMemo(() => openingLeadInMaximum(project), [project])
   return (
     <aside className="inspector panel" aria-label="Project inspector">
       <div className="inspector__scroll">
@@ -82,6 +87,11 @@ export const InspectorPanel = memo(function InspectorPanel({
               <em>ms</em>
             </div>
           </label>
+          <OpeningTimingControl
+            maximumMs={openingMaximumMs}
+            opening={project.opening}
+            onChange={(opening) => onUpdateProject({ opening })}
+          />
         </section>
 
         <section className="inspector-section">

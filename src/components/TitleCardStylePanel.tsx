@@ -1,7 +1,9 @@
 import { useId, useState } from 'react'
 import type { InstalledFontState } from '../hooks/useInstalledFonts'
 import type { StageStyleDraftChange } from '../hooks/useProjectStyleSession'
+import type { OpeningTiming } from '../lib/model'
 import type { StageStyle, VisibleTextStyle } from '../lib/video-style'
+import { OpeningTimingControl } from './OpeningTimingControl'
 import { VisibleTextRoleEditor } from './VisibleTextRoleEditor'
 
 const TITLE_CARD_ROLES = [
@@ -20,6 +22,9 @@ interface TitleCardStylePanelProps {
   id: string
   labelledBy: string
   onDraftChange: (change: StageStyleDraftChange) => void
+  openingMaximumMs: number
+  opening: OpeningTiming
+  onOpeningChange: (opening: OpeningTiming) => void
   onRetryFonts: () => void
   onSelectedRoleChange: (role: TitleCardRole) => void
 }
@@ -32,6 +37,9 @@ export function TitleCardStylePanel({
   id,
   labelledBy,
   onDraftChange,
+  openingMaximumMs,
+  opening,
+  onOpeningChange,
   onRetryFonts,
   onSelectedRoleChange,
 }: TitleCardStylePanelProps) {
@@ -56,6 +64,11 @@ export function TitleCardStylePanel({
       className={className}
     >
       <h3 className="style-destination-heading">Title card</h3>
+      <OpeningTimingControl
+        maximumMs={openingMaximumMs}
+        opening={opening}
+        onChange={onOpeningChange}
+      />
       <fieldset className="title-card-role-selector">
         <legend>Title card role</legend>
         <div role="radiogroup" aria-label="Title card role">

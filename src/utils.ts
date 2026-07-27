@@ -55,12 +55,14 @@ export function effectiveDuration(project: KaraokeProject): number {
       })
     })
   })
-  const adjustedLatest = latestTiming > 0 ? latestTiming + Math.max(0, project.offsetMs) : 0
+  const openingMs = project.opening.leadInMs
+  const adjustedLatest =
+    latestTiming > 0 ? openingMs + latestTiming + Math.max(0, project.offsetMs) : 0
   const paddedLatest = Math.min(
     MAX_PROJECT_DURATION_MS,
     adjustedLatest > 0 ? adjustedLatest + 4_000 : 0,
   )
-  return Math.max(project.durationMs ?? 0, paddedLatest, 30_000)
+  return Math.max((project.durationMs ?? 0) + openingMs, paddedLatest, 30_000)
 }
 
 export function getActiveLine(track: VocalTrack, timeMs: number): LyricLine | null {
@@ -209,7 +211,21 @@ function effectiveWordEnd(word: LyricWord): number | null {
 }
 
 function projectRawTimingCeiling(project: KaraokeProject): number {
-  const offsetLimit = Math.max(0, MAX_PROJECT_DURATION_MS - Math.max(0, project.offsetMs))
+  if (
+    !Number.isSafeInteger(project.opening.leadInMs) ||
+    project.opening.leadInMs < 0 ||
+    project.opening.leadInMs > MAX_PROJECT_DURATION_MS ||
+    !Number.isSafeInteger(project.offsetMs) ||
+    Math.abs(project.offsetMs) > MAX_PROJECT_DURATION_MS ||
+    (project.durationMs !== null &&
+      (!Number.isSafeInteger(project.durationMs) ||
+        project.durationMs < 0 ||
+        project.durationMs > MAX_PROJECT_DURATION_MS))
+  ) {
+    return 0
+  }
+  const absoluteTimingBudget = MAX_PROJECT_DURATION_MS - project.opening.leadInMs
+  const offsetLimit = Math.max(0, absoluteTimingBudget - project.offsetMs)
   const durationLimit =
     project.durationMs === null
       ? MAX_PROJECT_DURATION_MS

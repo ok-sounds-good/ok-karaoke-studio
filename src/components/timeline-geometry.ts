@@ -71,8 +71,8 @@ function assignNonOverlappingRows(words: Omit<TimelineWordLayout, 'top'>[]) {
   return { rowCount: Math.max(1, rowEnds.length), rows }
 }
 
-export function timelineTime(rawTimingMs: number, offsetMs: number) {
-  return rawTimingMs + offsetMs
+export function timelineTime(rawTimingMs: number, offsetMs: number, leadInMs = 0) {
+  return leadInMs + rawTimingMs + offsetMs
 }
 
 export function buildTimelineTrackLayout(
@@ -80,6 +80,7 @@ export function buildTimelineTrackLayout(
   offsetMs: number,
   pixelsPerSecond: number,
   timingDraft: ProjectTimingDraft | null = null,
+  leadInMs = 0,
 ): TimelineTrackLayout {
   const candidates = track.lines
     .flatMap((line, lineIndex) => {
@@ -87,8 +88,8 @@ export function buildTimelineTrackLayout(
         if (word.startMs === null) return []
         const endMs = word.endMs ?? word.startMs + 360
         const draftTiming = timingDraft?.get(word.id)
-        const adjustedStart = timelineTime(draftTiming?.startMs ?? word.startMs, offsetMs)
-        const adjustedEnd = timelineTime(draftTiming?.endMs ?? endMs, offsetMs)
+        const adjustedStart = timelineTime(draftTiming?.startMs ?? word.startMs, offsetMs, leadInMs)
+        const adjustedEnd = timelineTime(draftTiming?.endMs ?? endMs, offsetMs, leadInMs)
         if (adjustedEnd <= 0) return []
         const visibleStart = Math.max(0, adjustedStart)
         const left = (visibleStart / 1000) * pixelsPerSecond

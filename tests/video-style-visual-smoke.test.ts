@@ -96,6 +96,7 @@ function fakeWindow(
         .mockResolvedValueOnce(displayScale)
         .mockImplementationOnce(async () => observation())
         .mockResolvedValueOnce(layoutReachabilityState({ height: 720, width: 1280 }))
+        .mockResolvedValueOnce(timelineLeadInGeometryState())
         .mockImplementationOnce(async () => observation())
         .mockResolvedValueOnce({
           bridgeFrozen: true,
@@ -139,7 +140,7 @@ function projectLyricsState(width: number, height: number) {
   }
 }
 
-function styleActionTarget(action: string) {
+function styleActionTarget(action: string, overrides: Record<string, unknown> = {}) {
   return {
     action,
     boundsHeight: 24,
@@ -150,6 +151,29 @@ function styleActionTarget(action: string) {
     width: 1280,
     x: 120,
     y: 20,
+    ...overrides,
+  }
+}
+
+function openingTimingStyleTarget(overrides: Record<string, unknown> = {}) {
+  return {
+    ...styleActionTarget('opening-timing', {
+      x: 200,
+      y: 200,
+      openingTimingBelowFooterBoundary: true,
+      openingTimingCenterInViewport: true,
+      openingTimingInDestinationPanel: true,
+      openingTimingPanelTopBoundary: 60,
+      openingTimingPanelTop: 60,
+      openingTimingPanelLeft: 20,
+      openingTimingPanelRight: 1000,
+      openingTimingPanelBottom: 520,
+      openingTimingPanelId: 'project-style-title-card-panel',
+      openingTimingCenterX: 200,
+      openingTimingCenterY: 200,
+      openingTimingTitleTabSelected: true,
+      ...overrides,
+    }),
   }
 }
 
@@ -339,11 +363,23 @@ function layoutReachabilityState(
   }
 }
 
+function timelineLeadInGeometryState() {
+  return {
+    leadHeight: 76,
+    leadTop: 128,
+    rulerBottom: 128,
+    valid: true,
+    waveformBottom: 204,
+    waveformTop: 128,
+  }
+}
+
 function fakeStyleSessionWindow(
   options: {
     clockPending?: boolean
     displayScale?: number
     leadState?: unknown
+    openingTimingTarget?: unknown
     lyricsTarget?: unknown
     readiness?: Promise<never>
     templateFormState?: unknown
@@ -356,6 +392,7 @@ function fakeStyleSessionWindow(
   const captures = [
     { height: 720, width: 1280 },
     { height: 900, width: 1440 },
+    { height: 720, width: 1280 },
     { height: 720, width: 1280 },
     { height: 720, width: 1280 },
     { height: 720, width: 1280 },
@@ -506,6 +543,8 @@ function fakeStyleSessionWindow(
           width: 1280,
         },
       )
+      .mockResolvedValueOnce(styleActionTarget('title'))
+      .mockResolvedValueOnce(options.openingTimingTarget ?? openingTimingStyleTarget())
   }
   return window
 }
@@ -781,6 +820,7 @@ describe('production-window visual smoke', () => {
         '14-stage-frame-applied-1280x720.png',
         '15-lead-vocal-destination-1280x720.png',
         '16-templates-saved-1280x720.png',
+        '17-title-card-opening-timing-1280x720.png',
         'result.json',
       ])
     })
@@ -798,8 +838,8 @@ describe('production-window visual smoke', () => {
       ),
     ).resolves.toEqual({ ok: true })
     const inputEvents = window.webContents.sendInputEvent.mock.calls.map(([event]) => event)
-    expect(inputEvents).toHaveLength(179)
-    expect(inputEvents.filter(({ type }) => type === 'mouseDown')).toHaveLength(34)
+    expect(inputEvents).toHaveLength(185)
+    expect(inputEvents.filter(({ type }) => type === 'mouseDown')).toHaveLength(36)
     const expectedKeys = [
       'Tab',
       'Tab',
@@ -884,6 +924,8 @@ describe('production-window visual smoke', () => {
       'templates',
       'template-name',
       'save-template',
+      'title',
+      'opening-timing',
     ])
     const lyricsReset = scripts.findIndex((script) => script.includes('const action = "lyrics"'))
     const resizedLyricsReadiness = scripts.findIndex(
@@ -904,7 +946,7 @@ describe('production-window visual smoke', () => {
     }
     expect(window.setContentSize.mock.calls).toContainEqual([1280, 720, false])
     expect(window.setContentSize.mock.calls).toContainEqual([1440, 900, false])
-    expect(window.webContents.capturePage).toHaveBeenCalledTimes(32)
+    expect(window.webContents.capturePage).toHaveBeenCalledTimes(34)
     expect(smoke.STYLE_TARGET_SCRIPT).not.toContain('.click(')
     expect(smoke.STYLE_TARGET_SCRIPT).not.toContain('setTimeout')
     const readinessScript = smoke.projectLyricsReadinessScript({ height: 720, width: 1280 })
@@ -1007,7 +1049,7 @@ describe('production-window visual smoke', () => {
       ),
     ).resolves.toEqual({ ok: true })
 
-    expect(window.webContents.sendInputEvent).toHaveBeenCalledTimes(179)
+    expect(window.webContents.sendInputEvent).toHaveBeenCalledTimes(185)
     expect(window.webContents.sendInputEvent.mock.calls[0][0]).toEqual({
       type: 'mouseMove',
       x: 61,
@@ -1016,7 +1058,7 @@ describe('production-window visual smoke', () => {
     expect(window.webContents.setZoomFactor).toHaveBeenCalledWith(0.5)
     expect(window.setContentSize.mock.calls).toContainEqual([640, 360, false])
     expect(window.setContentSize.mock.calls).toContainEqual([720, 450, false])
-    expect(window.webContents.capturePage).toHaveBeenCalledTimes(32)
+    expect(window.webContents.capturePage).toHaveBeenCalledTimes(34)
     expect(publish).toHaveBeenCalledOnce()
   })
 
@@ -1059,6 +1101,7 @@ describe('production-window visual smoke', () => {
         {
           captureSettle: settleCaptureImmediately,
           focus: vi.fn(async () => true),
+          readinessTimeoutMs: 250,
           publish,
           writeFailure,
         },
@@ -1206,6 +1249,51 @@ describe('production-window visual smoke', () => {
     expect(writeFailure).toHaveBeenCalledOnce()
   })
 
+  it('rejects an unreachable Opening lead-in action before capturing its frame', async () => {
+    const window = fakeStyleSessionWindow({
+      openingTimingTarget: {
+        action: 'opening-timing',
+      },
+    })
+    let now = 0
+    const dateNow = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    const captureSettle = vi.fn(async () => {
+      now += 50
+    })
+    const publish = vi.fn()
+    const writeFailure = vi.fn(async () => undefined)
+
+    try {
+      await expect(
+        smoke.runVisualSmoke(
+          {
+            app: {},
+            config: { output: '/safe/evidence', scenario: smoke.STYLE_SESSION_SCENARIO },
+            window,
+          },
+          {
+            captureSettle,
+            focus: vi.fn(async () => true),
+            readinessTimeoutMs: 250,
+            publish,
+            writeFailure,
+          },
+        ),
+      ).resolves.toEqual({ ok: false })
+    } finally {
+      dateNow.mockRestore()
+    }
+
+    expect(window.webContents.capturePage).toHaveBeenCalledTimes(32)
+    const openingTargetQueries = window.webContents.executeJavaScript.mock.calls.filter(
+      ([script]) => script.includes('const action = "opening-timing"'),
+    )
+    expect(openingTargetQueries).toHaveLength(6)
+    expect(captureSettle).toHaveBeenCalledTimes(22)
+    expect(publish).not.toHaveBeenCalled()
+    expect(writeFailure).toHaveBeenCalledOnce()
+  })
+
   it('waits for the settled template form before focusing or typing its name', async () => {
     const window = fakeStyleSessionWindow({
       templateFormState: { height: 720, resourcesReady: true, width: 1280 },
@@ -1290,7 +1378,7 @@ describe('production-window visual smoke', () => {
         },
       ),
     ).resolves.toEqual({ ok: false })
-    expect(window.webContents.capturePage).toHaveBeenCalledTimes(32)
+    expect(window.webContents.capturePage).toHaveBeenCalledTimes(34)
     expect(publish).not.toHaveBeenCalled()
     expect(writeFailure).toHaveBeenCalledOnce()
   })

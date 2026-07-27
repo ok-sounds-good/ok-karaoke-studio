@@ -11,6 +11,7 @@ import type {
 } from '../src/hooks/useProjectStyleSession'
 import { createProjectStyleDraft } from '../src/hooks/useProjectStyleSession'
 import { createProject } from '../src/lib/model'
+import { MAX_PROJECT_DURATION_MS } from '../src/lib/project-validation'
 import type { StyleTemplate } from '../src/lib/style-template-codec'
 import {
   FONT_SIZE_OPTIONS,
@@ -837,6 +838,57 @@ describe('ProjectStyleEditor', () => {
     expect(draft.titleCard.artist.color).toBe('#123456')
     expect(draft.titleCard.eyebrow.visible).toBe(false)
     expect(project).toEqual(snapshot)
+  })
+
+  it('keeps Opening Timing in the Title Card draft until the Style session applies it', async () => {
+    const project = createProject({
+      id: 'opening-title-draft',
+      durationMs: MAX_PROJECT_DURATION_MS - 1_000,
+    })
+    const originalOpening = structuredClone(project.opening)
+    const onDraftChange = vi.fn<ProjectStyleSession['change']>()
+    let draft = createProjectStyleDraft(
+      project.stageStyle,
+      project.tracks,
+      project.lyricDisplay,
+      undefined,
+      project.opening,
+    )
+    await renderEditor({ project, draft, onDraftChange })
+    await act(async () => findButton(container, 'Title card').click())
+    const input = container.querySelector<HTMLInputElement>(
+      '[aria-label="Opening lead-in seconds"]',
+    )!
+    await act(async () => input.focus())
+    await act(async () => replaceInput(input, '1'))
+    await act(async () => keyDown(input, { code: 'Enter', key: 'Enter', cancelable: true }))
+
+    draft = applyDraftChange(onDraftChange.mock.calls.at(-1)?.[0], draft)
+    expect(draft.opening).toEqual({ leadInMs: 1_000, titleTiming: { mode: 'until-lyrics' } })
+    expect(project.opening).toEqual(originalOpening)
+
+    await renderEditor({ project, draft, onDraftChange })
+    const acceptedInput = container.querySelector<HTMLInputElement>(
+      '[aria-label="Opening lead-in seconds"]',
+    )!
+    await act(async () => replaceInput(acceptedInput, '1.1'))
+    await act(async () => {
+      acceptedInput.focus()
+      acceptedInput.blur()
+    })
+    expect(acceptedInput.value).toBe('1')
+    expect(onDraftChange).toHaveBeenCalledTimes(1)
+
+    await act(async () => replaceInput(acceptedInput, '2'))
+    const escape = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Escape',
+    })
+    await act(async () => acceptedInput.dispatchEvent(escape))
+    expect(escape.defaultPrevented).toBe(true)
+    expect(acceptedInput.value).toBe('1')
+    expect(onDraftChange).toHaveBeenCalledTimes(1)
   })
 
   it('patches only the selected background field and preserves latent colors and image path', async () => {

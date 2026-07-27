@@ -1,5 +1,6 @@
 import { decodeStageStyle, decodeVocalStyle } from './video-style-codec'
 import {
+  MAX_OPENING_LEAD_IN_MS,
   MAX_PROJECT_LINES,
   MAX_PROJECT_TRACKS,
   MAX_PROJECT_WORDS,
@@ -9,6 +10,7 @@ import {
 } from './project-validation'
 import type {
   KaraokeProject,
+  OpeningTiming,
   LyricDisplaySettings,
   LyricLine,
   LyricWord,
@@ -161,6 +163,21 @@ function decodeCurrentLyricDisplay(value: unknown): LyricDisplaySettings {
   }
 }
 
+function decodeCurrentOpening(value: unknown): OpeningTiming {
+  const record = requireCurrentRecord(value, 'project.opening')
+  requireExactKeys(record, ['leadInMs', 'titleTiming'], 'project.opening')
+  const leadInMs = requireCurrentInteger(record, 'leadInMs', 'project.opening')
+  if (leadInMs < 0 || leadInMs > MAX_OPENING_LEAD_IN_MS) {
+    throw new TypeError('project.opening.leadInMs must be between zero and four hours.')
+  }
+  const titleTiming = requireCurrentRecord(record.titleTiming, 'project.opening.titleTiming')
+  requireExactKeys(titleTiming, ['mode'], 'project.opening.titleTiming')
+  if (requireCurrentString(titleTiming, 'mode', 'project.opening.titleTiming') !== 'until-lyrics') {
+    throw new TypeError('project.opening.titleTiming.mode must be until-lyrics.')
+  }
+  return { leadInMs, titleTiming: { mode: 'until-lyrics' } }
+}
+
 function decodeCurrentProject(value: Record<string, unknown>): KaraokeProject {
   requireExactKeys(
     value,
@@ -175,6 +192,7 @@ function decodeCurrentProject(value: Record<string, unknown>): KaraokeProject {
       'createdAt',
       'updatedAt',
       'lyricDisplay',
+      'opening',
       'stageStyle',
       'tracks',
     ],
@@ -204,6 +222,7 @@ function decodeCurrentProject(value: Record<string, unknown>): KaraokeProject {
     createdAt: requireCurrentString(value, 'createdAt', 'project'),
     updatedAt: requireCurrentString(value, 'updatedAt', 'project'),
     lyricDisplay: decodeCurrentLyricDisplay(value.lyricDisplay),
+    opening: decodeCurrentOpening(value.opening),
     stageStyle: decodeStageStyle(value.stageStyle),
     tracks: rawTracks.map((track, index) =>
       decodeCurrentTrack(track, `project.tracks[${index}]`, cardinality),

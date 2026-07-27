@@ -6,6 +6,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import App from '../src/App'
 import { createDemoProject, parseProject, serializeProject } from '../src/lib/model'
+import {
+  MAX_PROJECT_DURATION_MS,
+  hasValidationErrors,
+  validateProject,
+} from '../src/lib/project-validation'
 import { DEFAULT_VOCAL_STYLE } from '../src/lib/video-style'
 
 interface StudioHarness {
@@ -421,6 +426,185 @@ describe('mounted first-time workflow', () => {
       contents: savedContents,
       format: 'oks',
     })
+  })
+
+  it('clamps opening lead-in atomically when audio metadata reduces its combined budget', async () => {
+    MetadataAudio.instances = []
+    vi.stubGlobal('Audio', MetadataAudio)
+    vi.stubGlobal(
+      'AudioContext',
+      class {
+        async close() {}
+        async decodeAudioData() {
+          return { getChannelData: () => new Float32Array([0]) }
+        }
+      },
+    )
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ arrayBuffer: async () => new ArrayBuffer(0) })),
+    )
+    harness.importAudio.mockResolvedValueOnce({
+      path: '/music/short.mp3',
+      name: 'short.mp3',
+      url: 'studio-media://asset/00000000-0000-0000-0000-000000000000/short.mp3',
+    })
+    const opening = document.querySelector<HTMLInputElement>(
+      '[aria-label="Opening lead-in seconds"]',
+    )!
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      setter?.call(opening, '2')
+      opening.dispatchEvent(new InputEvent('input', { bubbles: true, data: '2' }))
+      opening.dispatchEvent(
+        new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter' }),
+      )
+    })
+    expect(opening.value).toBe('2')
+
+    await clickButton('Workflow')
+    await clickButton('Save .oks')
+    expect(parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents).opening.leadInMs).toBe(
+      2_000,
+    )
+
+    await clickButton('Workflow')
+    await clickButton('Attach audio')
+    await act(async () => {
+      await Promise.resolve()
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
+    })
+    const audio = MetadataAudio.instances[0]!
+    audio.duration = (MAX_PROJECT_DURATION_MS - 1_000) / 1_000
+    await act(async () => audio.dispatchEvent(new Event('loadedmetadata')))
+
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(
+      'Opening lead-in was shortened to fit the audio duration.',
+    )
+    expect(
+      document.querySelector<HTMLInputElement>('[aria-label="Opening lead-in seconds"]')?.value,
+    ).toBe('1')
+    await clickButton('Workflow')
+    await clickButton('Save .oks')
+    const saved = parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents)
+    expect(saved).toMatchObject({
+      durationMs: MAX_PROJECT_DURATION_MS - 1_000,
+      opening: { leadInMs: 1_000, titleTiming: { mode: 'until-lyrics' } },
+    })
+    expect(hasValidationErrors(validateProject(saved))).toBe(false)
+  })
+
+  it('retains an authored project when replacement metadata is shorter than its lyric timing', async () => {
+    MetadataAudio.instances = []
+    vi.stubGlobal('Audio', MetadataAudio)
+    vi.stubGlobal(
+      'AudioContext',
+      class {
+        async close() {}
+        async decodeAudioData() {
+          return { getChannelData: () => new Float32Array([0]) }
+        }
+      },
+    )
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ arrayBuffer: async () => new ArrayBuffer(0) })),
+    )
+    const project = createDemoProject()
+    project.opening = { leadInMs: 2_000, titleTiming: { mode: 'until-lyrics' } }
+    const originalTracks = structuredClone(project.tracks)
+    harness.openProject.mockResolvedValueOnce({
+      requestId: 'short-replacement-open',
+      path: '/opened/authored.oks',
+      contents: serializeProject(project),
+    })
+    harness.importAudio.mockResolvedValueOnce({
+      path: '/music/short-replacement.mp3',
+      name: 'short-replacement.mp3',
+      url: 'studio-media://asset/00000000-0000-0000-0000-000000000000/short-replacement.mp3',
+    })
+
+    await clickButton('Workflow')
+    await clickButton('Open .oks')
+    await clickButton('Workflow')
+    await clickButton('Attach audio')
+    await act(async () => {
+      await Promise.resolve()
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
+    })
+    const audio = MetadataAudio.instances[0]!
+    audio.duration = 10
+    await act(async () => audio.dispatchEvent(new Event('loadedmetadata')))
+
+    const warning = document.querySelector<HTMLElement>('.toast--warning[role="status"]')
+    expect(warning?.textContent).toContain(
+      'Audio is shorter than existing lyric timing; project timing was left unchanged.',
+    )
+    await clickButton('Workflow')
+    await clickButton('Save .oks')
+    const saved = parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents)
+    expect(saved).toMatchObject({
+      durationMs: project.durationMs,
+      opening: project.opening,
+      tracks: originalTracks,
+    })
+    expect(hasValidationErrors(validateProject(saved))).toBe(false)
+  })
+
+  it('caps over-four-hour metadata without altering authored project data', async () => {
+    MetadataAudio.instances = []
+    vi.stubGlobal('Audio', MetadataAudio)
+    vi.stubGlobal(
+      'AudioContext',
+      class {
+        async close() {}
+        async decodeAudioData() {
+          return { getChannelData: () => new Float32Array([0]) }
+        }
+      },
+    )
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ arrayBuffer: async () => new ArrayBuffer(0) })),
+    )
+    const project = createDemoProject()
+    const originalTracks = structuredClone(project.tracks)
+    harness.openProject.mockResolvedValueOnce({
+      requestId: 'long-replacement-open',
+      path: '/opened/authored.oks',
+      contents: serializeProject(project),
+    })
+    harness.importAudio.mockResolvedValueOnce({
+      path: '/music/long-replacement.mp3',
+      name: 'long-replacement.mp3',
+      url: 'studio-media://asset/00000000-0000-0000-0000-000000000000/long-replacement.mp3',
+    })
+
+    await clickButton('Workflow')
+    await clickButton('Open .oks')
+    await clickButton('Workflow')
+    await clickButton('Attach audio')
+    await act(async () => {
+      await Promise.resolve()
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
+    })
+    const audio = MetadataAudio.instances[0]!
+    audio.duration = MAX_PROJECT_DURATION_MS / 1_000 + 1
+    await act(async () => audio.dispatchEvent(new Event('loadedmetadata')))
+
+    const warning = document.querySelector<HTMLElement>('.toast--warning[role="status"]')
+    expect(warning?.textContent).toContain(
+      'Audio duration was capped at the four-hour project limit.',
+    )
+    await clickButton('Workflow')
+    await clickButton('Save .oks')
+    const saved = parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents)
+    expect(saved).toMatchObject({
+      durationMs: MAX_PROJECT_DURATION_MS,
+      opening: project.opening,
+      tracks: originalTracks,
+    })
+    expect(hasValidationErrors(validateProject(saved))).toBe(false)
   })
 
   it('persists the shared preview and video lyric-display options', async () => {
@@ -1288,6 +1472,77 @@ describe('mounted first-time workflow', () => {
       )
     })
     expect(document.querySelectorAll('.timeline-word')).toHaveLength(1)
+  })
+
+  it('uses V-L-O for sync, refuses pre-opening taps, and records the accepted tap immediately', async () => {
+    MetadataAudio.instances = []
+    vi.stubGlobal('Audio', MetadataAudio)
+    vi.stubGlobal(
+      'AudioContext',
+      class {
+        async close() {}
+        async decodeAudioData() {
+          return { getChannelData: () => new Float32Array([0]) }
+        }
+      },
+    )
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ arrayBuffer: async () => new ArrayBuffer(0) })),
+    )
+    harness.importAudio.mockResolvedValueOnce({
+      path: '/music/live-clock.mp3',
+      name: 'live-clock.mp3',
+      url: 'studio-media://asset/00000000-0000-0000-0000-000000000000/live-clock.mp3',
+    })
+    await clickButton('Edit text')
+    await replaceTextarea('Lead follow')
+    await clickButton('Apply lyrics')
+    const offsetInput = document.querySelector<HTMLInputElement>('.field--inline input')!
+    const openingInput = document.querySelector<HTMLInputElement>(
+      '[aria-label="Opening lead-in seconds"]',
+    )!
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      setter?.call(offsetInput, '500')
+      offsetInput.dispatchEvent(new InputEvent('input', { bubbles: true, data: '500' }))
+      setter?.call(openingInput, '1')
+      openingInput.dispatchEvent(new InputEvent('input', { bubbles: true, data: '1' }))
+      openingInput.dispatchEvent(
+        new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter' }),
+      )
+    })
+
+    await clickButton('Workflow')
+    await clickButton('Attach audio')
+    const audio = MetadataAudio.instances[0]!
+
+    await clickButton('Start sync')
+    await tapSyncWord()
+    expect(document.querySelectorAll('.timeline-word')).toHaveLength(0)
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(
+      'lyric clock has not reached 0:00',
+    )
+
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[aria-label="Skip forward five seconds"]')!.click()
+      // React has not painted the seek yet. The global key handler must read
+      // the live media clock: V=5,000, L=1,000, O=500 => lyric=3,500 ms.
+      audio.currentTime = 4
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { bubbles: true, cancelable: true, code: 'Space', key: ' ' }),
+      )
+      window.dispatchEvent(
+        new KeyboardEvent('keyup', { bubbles: true, cancelable: true, code: 'Space', key: ' ' }),
+      )
+    })
+    expect(timelineTimingLabels()).toContain('Lead timing block, 0:05.000–0:05.100')
+    await act(async () => harness.sendMenuAction('save'))
+    const saved = parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents)
+    expect(saved.tracks[0].lines[0].words[0]).toMatchObject({ startMs: 3_500, endMs: 3_600 })
+
+    await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')!.click())
+    expect(document.querySelectorAll('.timeline-word')).toHaveLength(0)
   })
 
   it('does not wrap synchronization to the first word after the last timed word', async () => {

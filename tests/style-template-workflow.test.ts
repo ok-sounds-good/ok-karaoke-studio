@@ -37,6 +37,7 @@ describe('style template workflow helpers', () => {
       },
       videoExportDefaults: { resolution: '1080p', fps: 60 },
     })
+    expect(preferences).not.toHaveProperty('opening')
     preferences.stageStyle.background.solidColor = '#010203'
     preferences.lyricDisplay.lineCount = 1
     preferences.vocalStyle.syncAid.enabled = true

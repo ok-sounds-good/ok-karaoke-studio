@@ -84,11 +84,11 @@ function rawLineRange(line) {
   return { startMs, endMs }
 }
 
-function adjustedLineRange(line, offsetMs) {
+function adjustedLineRange(line, offsetMs, leadInMs = 0) {
   const range = rawLineRange(line)
   if (!range) return null
-  const startMs = Math.max(0, range.startMs + offsetMs)
-  const endMs = range.endMs + offsetMs
+  const startMs = Math.max(0, leadInMs + range.startMs + offsetMs)
+  const endMs = leadInMs + range.endMs + offsetMs
   if (endMs <= startMs) return null
   return { startMs, endMs }
 }
@@ -101,13 +101,18 @@ function visibleTracks(project) {
 function effectiveVideoDurationForProject(project, requestedDurationMs) {
   const latestLyricMs = visibleTracks(project).reduce((latestTrack, track) => {
     const latestLine = track.lines.reduce((latest, line) => {
-      const range = adjustedLineRange(line, project.offsetMs)
+      const range = adjustedLineRange(line, project.offsetMs, project.opening.leadInMs)
       return range ? Math.max(latest, range.endMs) : latest
     }, 0)
     return Math.max(latestTrack, latestLine)
   }, 0)
   const requested = finiteInteger(requestedDurationMs)
-  const durationMs = Math.max(project.durationMs, requested, latestLyricMs, 1_000)
+  const durationMs = Math.max(
+    (project.durationMs ?? 0) + project.opening.leadInMs,
+    requested,
+    latestLyricMs,
+    1_000,
+  )
   if (durationMs > MAX_VIDEO_DURATION_MS) {
     throw new RangeError('Video export is limited to thirty minutes')
   }
@@ -121,7 +126,7 @@ function effectiveVideoDuration(projectValue, requestedDurationMs) {
   )
 }
 
-function createTrackDisplayIndex(track, offsetMs) {
+function createTrackDisplayIndex(track, offsetMs, leadInMs = 0) {
   const positions = []
   let section = []
   const appendSection = () => {
@@ -142,7 +147,7 @@ function createTrackDisplayIndex(track, offsetMs) {
     return rawRange ? [{ position, rawRange }] : []
   })
   const adjustedLines = timedPositions.flatMap(({ position, rawRange }) => {
-    const range = adjustedLineRange(position.line, offsetMs)
+    const range = adjustedLineRange(position.line, offsetMs, leadInMs)
     return range ? [{ line: position.line, range, rawRange }] : []
   })
   return { track, timedPositions, adjustedLines }
@@ -150,7 +155,7 @@ function createTrackDisplayIndex(track, offsetMs) {
 
 function createVideoIndex(project) {
   const tracks = visibleTracks(project).map((track) =>
-    createTrackDisplayIndex(track, project.offsetMs),
+    createTrackDisplayIndex(track, project.offsetMs, project.opening.leadInMs),
   )
   const upcomingLines = tracks
     .flatMap(({ track, adjustedLines }) => adjustedLines.map((entry) => ({ ...entry, track })))
@@ -220,12 +225,14 @@ function plannedTrackLines(trackIndex, lyricMs, settings, cursorPosition) {
 
 function frameStateAtIndex(index, playbackMs, cursor) {
   const { project } = index
-  const lyricMs = playbackMs - project.offsetMs
+  const lyricMs = playbackMs - project.opening.leadInMs - project.offsetMs
   const showTitle =
-    !Number.isFinite(index.firstStart) || playbackMs < Math.max(0, index.firstStart - 1_500)
+    !Number.isFinite(index.firstStart) ||
+    playbackMs < Math.max(project.opening.leadInMs, index.firstStart - 1_500)
   const lines = []
 
-  const trackWindows = index.tracks.map((trackIndex, trackPosition) => {
+  const trackWindows = (playbackMs < project.opening.leadInMs ? [] : index.tracks).map(
+    (trackIndex, trackPosition) => {
     let timedPosition
     if (cursor) {
       timedPosition = cursor.trackPositions[trackPosition]
@@ -241,7 +248,8 @@ function frameStateAtIndex(index, playbackMs, cursor) {
       track: trackIndex.track,
       lines: plannedTrackLines(trackIndex, lyricMs, project.lyricDisplay, timedPosition),
     }
-  })
+    },
+  )
   for (
     let lineIndex = 0;
     lineIndex < project.lyricDisplay.lineCount && lines.length < project.lyricDisplay.lineCount;
@@ -769,7 +777,7 @@ async function renderVideoFrames(
   }
 }
 
-function buildFfmpegArguments(audioPath, outputPath, durationMs, settings = {}) {
+function buildFfmpegArguments(audioPath, outputPath, durationMs, settings = {}, leadInMs = 0) {
   const { fps } = normalizeVideoSettings(settings)
   return [
     '-y',
@@ -813,7 +821,7 @@ function buildFfmpegArguments(audioPath, outputPath, durationMs, settings = {}) 
     '-b:a',
     '192k',
     '-af',
-    'apad',
+    leadInMs > 0 ? `adelay=${leadInMs}:all=1,apad` : 'apad',
     '-t',
     (durationMs / 1000).toFixed(3),
     '-movflags',
@@ -868,7 +876,13 @@ async function exportKaraokeVideo({
     onProgress?.({ phase: 'preparing', completed: 0, total: 1 })
     await runProcess(
       executable,
-      buildFfmpegArguments(resolvedAudioPath, partialPath, timeline.durationMs, settings),
+      buildFfmpegArguments(
+        resolvedAudioPath,
+        partialPath,
+        timeline.durationMs,
+        settings,
+        project.opening.leadInMs,
+      ),
       {
         signal,
         inputWriter: async (stream) => {

@@ -15,6 +15,14 @@ function manifest() {
     ok: true,
     fixture: { audioSeconds: 0.5, videoSeconds: 1 },
     cancellationPartialPreserved: true,
+    openingAudioEvidence: {
+      leadInMs: 300,
+      firstAudibleMs: 320,
+      preLeadPeak: 0,
+      bytes: 1_024,
+      sha256: 'b'.repeat(64),
+      pcmSha256: 'c'.repeat(64),
+    },
     cases: launcher.EXPECTED_MATRIX.map((entry, index) => ({
       ordinal: index + 1,
       preset: entry.value,

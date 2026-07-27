@@ -17,10 +17,53 @@ const PROBE_HTML = `<!doctype html>
     <style>
       html, body, #root { height: 100%; margin: 0; width: 100%; }
       .topbar__actions { display: flex; gap: 8px; overflow-x: auto; width: 100%; }
+      .unified-workspace > .play-button,
+      .unified-workspace > select,
+      .unified-workspace > input { position: fixed; top: 30px; }
+      .unified-workspace {
+        --workspace-divider-size: 7px;
+        --workspace-timing-min: 235px;
+        --workspace-top-min: 245px;
+        box-sizing: border-box;
+        display: grid;
+        grid-template-rows:
+          minmax(var(--workspace-top-min), var(--workspace-top-height, 43%))
+          var(--workspace-divider-size)
+          minmax(var(--workspace-timing-min), 1fr);
+        height: calc(100% - 21px);
+        min-height: 0;
+        overflow: hidden;
+        padding: 7px;
+      }
+      #workspace-timing-region,
+      .timeline-panel,
+      .timeline-viewport { height: 100%; min-height: 0; }
+      .timeline-ruler,
+      .timeline-lead-in,
+      .timeline-waveform { box-sizing: border-box; }
+      .timeline-canvas { position: relative; }
+      .timeline-ruler { height: 28px; }
+      .timeline-waveform { height: 76px; margin-left: 96px; }
+      .timeline-lead-in { height: 76px; left: 0; position: absolute; top: 28px; width: 96px; }
     </style>
   </head>
   <body>
     <div id="root">
+      <aside aria-label="Project inspector" style="
+        background: #fff;
+        border: 1px solid #000;
+        left: 8px;
+        padding: 6px;
+        position: fixed;
+        top: 8px;
+        width: 260px;
+        z-index: 10;
+      ">
+        <label>
+          Opening lead-in seconds
+          <input aria-label="Opening lead-in seconds" type="number" value="0" />
+        </label>
+      </aside>
       <nav class="topbar__actions" aria-label="Project actions">
         <button class="style-button" aria-label="Edit project Style">Style</button>
         <button aria-label="New project">New</button>
@@ -47,7 +90,14 @@ const PROBE_HTML = `<!doctype html>
         ></div>
         <div id="workspace-timing-region" style="overflow:hidden">
           <section class="timeline-panel" aria-label="Lyric Timing">
-            <div class="timeline-viewport" style="overflow:auto">Lyric Timing</div>
+            <div class="timeline-viewport" style="overflow:auto">
+              <div class="timeline-canvas">
+                <div class="timeline-lead-in" aria-hidden="true"></div>
+                <div class="timeline-ruler" aria-hidden="true"></div>
+                <div class="timeline-waveform">
+                </div>
+              </div>
+            </div>
           </section>
         </div>
       </main>

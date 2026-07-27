@@ -122,6 +122,13 @@ const LAYOUT_REACHABILITY_SELECTORS = Object.freeze({
       requiredInViewport: true,
       focusScroll: false,
     },
+    {
+      name: 'openingTiming',
+      selector: 'aside[aria-label="Project inspector"] [aria-label="Opening lead-in seconds"]',
+      required: true,
+      requiredInViewport: true,
+      focusScroll: false,
+    },
   ]),
   style: Object.freeze([
     {
@@ -1232,6 +1239,7 @@ function styleSessionActionScript(action) {
     const clockFace = document.querySelector('[aria-label="Clock face Bold"]')
     const footerVisibility = document.querySelector('[aria-label="Show Footer in output"]')
     const syncAid = document.querySelector('[aria-label="Enable Lead Vocal Sync Aid"]')
+    const openingTiming = workspace?.querySelector('[aria-label="Opening lead-in seconds"]')
     const cancel = workspace?.querySelector('[data-style-action="cancel"]')
     const templateName = document.querySelector('input[aria-label="New template name"]')
     const saveTemplate = [...(workspace?.querySelectorAll('button') ?? [])].find(
@@ -1244,12 +1252,47 @@ function styleSessionActionScript(action) {
       'artist-visibility': artistVisibility, 'apply-title': apply, stage: stageTab,
       'stage-off': stageMaster, 'stage-on': stageMaster, clock, 'clock-face': clockFace,
       footer, 'footer-visibility': footerVisibility, 'apply-stage': apply, 'sync-aid': syncAid,
+      'opening-timing': openingTiming,
       templates: templatesTab, 'template-name': templateName, 'save-template': saveTemplate }
     targets['move-selected'] = selectedDisplayObject
     const target = targets[action]
-    if (['sync-aid', 'template-name', 'save-template'].includes(action) && target instanceof HTMLElement) {
+    if (
+      ['opening-timing', 'sync-aid', 'template-name', 'save-template'].includes(action) &&
+      target instanceof HTMLElement
+    ) {
       target.scrollIntoView({ block: 'center' })
     }
+    const openingPanel = openingTiming instanceof HTMLElement
+      ? openingTiming.closest('.style-destination-panel')
+      : null
+    const styleEditorActions = workspace?.querySelector('.style-editor__actions')
+    const footerTop = styleEditorActions?.getBoundingClientRect()?.top
+    const footerBoundary = Number.isFinite(footerTop) ? Math.round(footerTop) : null
+    const openingPanelRect = openingPanel?.getBoundingClientRect()
+    const roundRect = (rect) =>
+      rect
+        ? {
+            bottom: Math.round(rect.bottom),
+            left: Math.round(rect.left),
+            right: Math.round(rect.right),
+            top: Math.round(rect.top),
+          }
+        : null
+    const roundBounds = (bounds) =>
+      bounds
+        ? {
+            bottom: Math.round(bounds.bottom),
+            left: Math.round(bounds.left),
+            right: Math.round(bounds.right),
+            top: Math.round(bounds.top),
+          }
+        : null
+    const contains = (rectA, rectB) =>
+      rectA && rectB &&
+      rectA.left >= rectB.left &&
+      rectA.top >= rectB.top &&
+      rectA.right <= rectB.right &&
+      rectA.bottom <= rectB.bottom
     const semantic = ({
       background: workspace instanceof HTMLElement && backgroundTab?.getAttribute('aria-selected') === 'false',
       cancel: workspace instanceof HTMLElement && cancel instanceof HTMLButtonElement && !cancel.disabled,
@@ -1272,6 +1315,9 @@ function styleSessionActionScript(action) {
       'footer-visibility': footer?.checked && footerVisibility?.checked,
       'apply-stage': stageTab?.getAttribute('aria-selected') === 'true' &&
         stageMaster?.checked && footer?.checked && !footerVisibility?.checked,
+      'opening-timing':
+        titleTab?.getAttribute('aria-selected') === 'true' &&
+        openingTiming instanceof HTMLInputElement,
       templates: workspace instanceof HTMLElement &&
         templatesTab?.getAttribute('aria-selected') === 'false',
       'template-name': templatesTab?.getAttribute('aria-selected') === 'true' &&
@@ -1288,7 +1334,50 @@ function styleSessionActionScript(action) {
     const style = getComputedStyle(target)
     if (bounds.width <= 0 || bounds.height <= 0 || style.display === 'none' ||
       style.pointerEvents === 'none' || style.visibility !== 'visible') return null
+    const centerX = Math.round(bounds.left + bounds.width / 2)
+    const centerY = Math.round(bounds.top + bounds.height / 2)
+    const openingTimingPanelBounds = roundRect(openingPanelRect)
+    const openingTimingBounds = roundBounds(bounds)
+    const openingTimingMeta = action === 'opening-timing'
+      ? {
+          openingTimingBelowFooterBoundary:
+            Number.isFinite(footerTop) &&
+            Number.isFinite(openingTimingBounds?.bottom) &&
+            Number.isFinite(footerBoundary) &&
+            openingTimingBounds.bottom <= footerBoundary,
+          openingTimingCenterInViewport:
+            Number.isFinite(openingTimingBounds?.left) &&
+            Number.isFinite(openingTimingBounds?.right) &&
+            Number.isFinite(openingTimingBounds?.top) &&
+            Number.isFinite(openingTimingBounds?.bottom) &&
+            openingTimingBounds.left >= 0 &&
+            openingTimingBounds.right <= document.documentElement.clientWidth &&
+            openingTimingBounds.top >= 0 &&
+            openingTimingBounds.bottom <= document.documentElement.clientHeight,
+          openingTimingInDestinationPanel:
+            openingTimingPanelBounds &&
+            contains(openingTimingBounds, openingTimingPanelBounds),
+          openingTimingPanelId: openingPanel?.getAttribute('id') ?? '',
+          openingTimingCenterX: centerX,
+          openingTimingCenterY: centerY,
+          openingTimingTitleTabSelected: titleTab?.getAttribute('aria-selected') === 'true',
+          openingTimingPanelTopBoundary:
+            Number.isFinite(openingTimingPanelBounds?.top) ? openingTimingPanelBounds.top : NaN,
+          openingTimingPanelTop:
+            Number.isFinite(openingTimingPanelBounds?.top) ? openingTimingPanelBounds.top : NaN,
+          openingTimingPanelLeft:
+            Number.isFinite(openingTimingPanelBounds?.left) ? openingTimingPanelBounds.left : NaN,
+          openingTimingPanelRight:
+            Number.isFinite(openingTimingPanelBounds?.right) ? openingTimingPanelBounds.right : NaN,
+          openingTimingPanelBottom:
+            Number.isFinite(openingTimingPanelBounds?.bottom) ? openingTimingPanelBounds.bottom : NaN,
+        }
+      : {}
+    if (openingTimingMeta.openingTimingBelowFooterBoundary === false ||
+      openingTimingMeta.openingTimingCenterInViewport === false ||
+      openingTimingMeta.openingTimingInDestinationPanel === false) return null
     return { action, boundsHeight: bounds.height, boundsWidth: bounds.width,
+      ...openingTimingMeta,
       height: document.documentElement.clientHeight, href: window.location.href,
       readyState: document.readyState, width: document.documentElement.clientWidth,
       x: Math.round(bounds.left + bounds.width / 2), y: Math.round(bounds.top + bounds.height / 2) }
@@ -1560,7 +1649,37 @@ function validStyleTarget(value) {
 }
 
 function validStyleActionTarget(value, action) {
-  return validStyleTarget(value) && value.action === action
+  if (!validStyleTarget(value) || value.action !== action) return false
+  if (action !== 'opening-timing') return true
+  const {
+    openingTimingBelowFooterBoundary,
+    openingTimingCenterInViewport,
+    openingTimingInDestinationPanel,
+    openingTimingPanelId,
+    openingTimingPanelBottom,
+    openingTimingPanelLeft,
+    openingTimingPanelRight,
+    openingTimingPanelTop,
+    openingTimingPanelTopBoundary,
+    openingTimingCenterX,
+    openingTimingCenterY,
+    openingTimingTitleTabSelected,
+  } = value
+  return Boolean(
+    openingTimingBelowFooterBoundary === true &&
+    openingTimingCenterInViewport === true &&
+    openingTimingInDestinationPanel === true &&
+    typeof openingTimingPanelId === 'string' &&
+    openingTimingPanelId.endsWith('title-card-panel') &&
+    openingTimingTitleTabSelected === true &&
+    Number.isFinite(openingTimingCenterX) &&
+    Number.isFinite(openingTimingCenterY) &&
+    Number.isFinite(openingTimingPanelLeft) &&
+    Number.isFinite(openingTimingPanelTop) &&
+    Number.isFinite(openingTimingPanelRight) &&
+    Number.isFinite(openingTimingPanelBottom) &&
+    Number.isFinite(openingTimingPanelTopBoundary),
+  )
 }
 
 function validBackgroundState(value, viewport, mode, colors = null, applied = false) {
@@ -1733,6 +1852,59 @@ function validStyleDestinationLayout(value, destination, expectedScrollTop) {
   )
 }
 
+function timelineLeadInGeometryScript() {
+  return `(() => {
+    const readGeometry = () => {
+      const lead = document.querySelector('.timeline-lead-in')
+      const ruler = document.querySelector('.timeline-ruler')
+      const waveform = document.querySelector('.timeline-waveform')
+      const rect = (node) => node instanceof HTMLElement ? node.getBoundingClientRect() : null
+      const leadBounds = rect(lead)
+      const rulerBounds = rect(ruler)
+      const waveformBounds = rect(waveform)
+      return {
+        leadHeight: leadBounds ? Math.round(leadBounds.height) : null,
+        leadTop: leadBounds ? Math.round(leadBounds.top) : null,
+        rulerBottom: rulerBounds ? Math.round(rulerBounds.bottom) : null,
+        valid: true,
+        waveformBottom: waveformBounds ? Math.round(waveformBounds.bottom) : null,
+        waveformTop: waveformBounds ? Math.round(waveformBounds.top) : null,
+      }
+    }
+    const settleGeometry = () => new Promise((resolve) => requestAnimationFrame(() => {
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        resolve(readGeometry())
+      }))
+    }))
+    if (document.querySelector('.timeline-lead-in') instanceof HTMLElement) return settleGeometry()
+    const input = document.querySelector('aside[aria-label="Project inspector"] [aria-label="Opening lead-in seconds"]')
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+    if (!(input instanceof HTMLInputElement) || typeof setter !== 'function') return { valid: false }
+    setter.call(input, '1')
+    input.dispatchEvent(new InputEvent('input', { bubbles: true, data: '1' }))
+    return new Promise((resolve) => requestAnimationFrame(() => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter' }))
+      settleGeometry().then(resolve)
+    }))
+  })()`
+}
+
+function validTimelineLeadInGeometryState(value) {
+  return Boolean(
+    value &&
+    value.valid === true &&
+    Number.isSafeInteger(value.leadHeight) &&
+    value.leadHeight > 0 &&
+    Number.isSafeInteger(value.leadTop) &&
+    Number.isSafeInteger(value.rulerBottom) &&
+    Number.isSafeInteger(value.waveformTop) &&
+    Number.isSafeInteger(value.waveformBottom) &&
+    Math.abs(value.leadTop - value.waveformTop) <= 1 &&
+    value.leadTop >= value.rulerBottom &&
+    Math.abs(value.leadTop + value.leadHeight - value.waveformBottom) <= 1,
+  )
+}
+
 function executeBeforeDeadline(operation, timeoutMs) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
     throw readinessError()
@@ -1773,6 +1945,7 @@ module.exports = {
   styleSessionActionScript,
   styleTemplateFormReadinessScript,
   styleTemplateReadinessScript,
+  timelineLeadInGeometryScript,
   validBackgroundState,
   validLeadVocalState,
   validProjectLyricsState,
@@ -1785,4 +1958,5 @@ module.exports = {
   validStyleTemplateFormState,
   validStyleTemplateState,
   validStyleTarget,
+  validTimelineLeadInGeometryState,
 }

@@ -12,6 +12,9 @@ const { countSungPixels } = require('./video-export-smoke-evidence.cjs')
 const ROOT_ENVIRONMENT_KEY = 'OKS_VIDEO_SMOKE_ROOT'
 const FIXTURE_DURATION_MS = 1_000
 const AUDIO_DURATION_SECONDS = 0.5
+const OPENING_AUDIO_DURATION_SECONDS = 1
+const OPENING_LEAD_IN_MS = 300
+const OPENING_VIDEO_DURATION_MS = OPENING_LEAD_IN_MS + OPENING_AUDIO_DURATION_SECONDS * 1_000
 const CASE_TIMEOUT_MS = 2 * 60 * 1_000
 const PROCESS_TIMEOUT_MS = 30_000
 const MAX_DIAGNOSTIC_CHARACTERS = 400
@@ -41,6 +44,17 @@ function silentWav(durationSeconds, sampleRate = 48_000) {
   wav.writeUInt16LE(bytesPerSample * 8, 34)
   wav.write('data', 36)
   wav.writeUInt32LE(dataLength, 40)
+  return wav
+}
+
+function toneWav(durationSeconds, sampleRate = 48_000) {
+  const wav = silentWav(durationSeconds, sampleRate)
+  for (let sample = 0; sample < durationSeconds * sampleRate; sample += 1) {
+    const value = Math.round(Math.sin((sample * Math.PI * 2 * 440) / sampleRate) * 12_000)
+    const offset = 44 + sample * 4
+    wav.writeInt16LE(value, offset)
+    wav.writeInt16LE(value, offset + 2)
+  }
   return wav
 }
 
@@ -167,6 +181,57 @@ function lyricPresenceEvidence({ ffmpegPath, videoPath, fps, root }) {
   if (countSungPixels(before) !== countSungPixels(blank) || lyricPixels < 8)
     throw new Error(`decoded lyric evidence absent (${lyricPixels})`)
   return { observedFrame: (900 * fps) / 1_000, lyricPixels }
+}
+
+function decodedOpeningAudioEvidence({ ffmpegPath, videoPath, root }) {
+  const sampleRate = 48_000
+  const decoded = checkedSpawn(
+    ffmpegPath,
+    [
+      '-v',
+      'error',
+      '-i',
+      videoPath,
+      '-vn',
+      '-ac',
+      '1',
+      '-ar',
+      String(sampleRate),
+      '-f',
+      'f32le',
+      'pipe:1',
+    ],
+    { maxBuffer: 512 * 1_024 },
+    'decode opening audio',
+    root,
+  ).stdout
+  if (!Buffer.isBuffer(decoded) || decoded.length < sampleRate * 4 * 0.6) {
+    throw new Error('decoded opening audio is incomplete')
+  }
+  let firstAudible = -1
+  let preLeadPeak = 0
+  const leadSamples = (OPENING_LEAD_IN_MS * sampleRate) / 1_000
+  const toleranceSamples = (50 * sampleRate) / 1_000
+  for (let sample = 0; sample < decoded.length / 4; sample += 1) {
+    const amplitude = Math.abs(decoded.readFloatLE(sample * 4))
+    if (sample < leadSamples - toleranceSamples) preLeadPeak = Math.max(preLeadPeak, amplitude)
+    if (firstAudible < 0 && amplitude >= 0.02) firstAudible = sample
+  }
+  if (
+    preLeadPeak > 0.002 ||
+    firstAudible < leadSamples ||
+    firstAudible > leadSamples + toleranceSamples
+  ) {
+    throw new Error(
+      `opening audio onset mismatch pre=${preLeadPeak.toFixed(4)} onset=${firstAudible}`,
+    )
+  }
+  return {
+    leadInMs: OPENING_LEAD_IN_MS,
+    firstAudibleMs: (firstAudible * 1_000) / sampleRate,
+    preLeadPeak,
+    pcmSha256: createHash('sha256').update(decoded).digest('hex'),
+  }
 }
 
 function projectFixture(project, audioPath) {
@@ -374,6 +439,47 @@ async function verifyCancellation(context) {
   return { cancellationPartialPreserved: true }
 }
 
+async function verifyOpeningAudio(context) {
+  const outputPath = path.join(context.root, 'opening-audio.mp4')
+  const project = JSON.parse(context.projectJson)
+  project.opening = { leadInMs: OPENING_LEAD_IN_MS, titleTiming: { mode: 'until-lyrics' } }
+  project.durationMs = OPENING_AUDIO_DURATION_SECONDS * 1_000
+  project.tracks[0].lines[0].startMs = 0
+  project.tracks[0].lines[0].endMs = OPENING_AUDIO_DURATION_SECONDS * 1_000
+  project.tracks[0].lines[0].words.forEach((word, index) => {
+    word.startMs = index * 200
+    word.endMs = index * 200 + 100
+  })
+  const exported = await exportKaraokeVideo({
+    BrowserWindow,
+    projectJson: JSON.stringify(project),
+    durationMs: OPENING_VIDEO_DURATION_MS,
+    audioPath: context.toneAudioPath,
+    outputPath,
+    ffmpegPath: context.ffmpegPath,
+    resolution: '240p',
+    fps: 30,
+  })
+  if (exported.durationMs !== OPENING_VIDEO_DURATION_MS || exported.frameCount !== 39) {
+    throw failCase(
+      null,
+      'opening-export',
+      new Error('opening duration was not counted exactly once'),
+    )
+  }
+  const audio = decodedOpeningAudioEvidence({
+    ffmpegPath: context.ffmpegPath,
+    videoPath: outputPath,
+    root: context.root,
+  })
+  const file = await fs.readFile(outputPath)
+  return {
+    ...audio,
+    bytes: file.length,
+    sha256: createHash('sha256').update(file).digest('hex'),
+  }
+}
+
 async function writeJson(root, name, value) {
   const temporary = path.join(root, `${name}.partial`)
   await fs.writeFile(temporary, `${JSON.stringify(value)}\n`, { flag: 'wx' })
@@ -387,7 +493,9 @@ app.whenReady().then(async () => {
   try {
     if (!root || !path.isAbsolute(root)) throw failCase(null, 'setup', new Error('invalid root'))
     const audioPath = path.join(root, 'silence.wav')
+    const toneAudioPath = path.join(root, 'tone.wav')
     await fs.writeFile(audioPath, silentWav(AUDIO_DURATION_SECONDS), { flag: 'wx' })
+    await fs.writeFile(toneAudioPath, toneWav(OPENING_AUDIO_DURATION_SECONDS), { flag: 'wx' })
     const ffmpegPath = await findFfmpeg()
     const fixture = JSON.parse(
       await fs.readFile(path.join(__dirname, '..', 'tests', 'fixtures', 'current-project-v0.json')),
@@ -395,16 +503,19 @@ app.whenReady().then(async () => {
     const context = {
       root,
       audioPath,
+      toneAudioPath,
       ffmpegPath,
       projectJson: JSON.stringify(projectFixture(fixture, audioPath)),
     }
     const cases = []
     for (const entry of MATRIX) cases.push(await exportCase(entry, context))
     const cancellation = await verifyCancellation(context)
+    const openingAudioEvidence = await verifyOpeningAudio(context)
     await writeJson(root, 'result.json', {
       ok: true,
       fixture: { audioSeconds: AUDIO_DURATION_SECONDS, videoSeconds: FIXTURE_DURATION_MS / 1_000 },
       cases,
+      openingAudioEvidence,
       ...cancellation,
     })
   } catch (error) {

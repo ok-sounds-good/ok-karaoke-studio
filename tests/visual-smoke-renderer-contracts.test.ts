@@ -41,6 +41,31 @@ function styleTarget(overrides: Record<string, unknown> = {}) {
   }
 }
 
+function openingTimingStyleTarget(overrides: Record<string, unknown> = {}) {
+  return {
+    ...styleTarget({
+      boundsHeight: 24,
+      boundsWidth: 80,
+      x: 200,
+      y: 200,
+    }),
+    action: 'opening-timing',
+    openingTimingBelowFooterBoundary: true,
+    openingTimingCenterInViewport: true,
+    openingTimingInDestinationPanel: true,
+    openingTimingPanelTopBoundary: 60,
+    openingTimingPanelTop: 60,
+    openingTimingPanelLeft: 20,
+    openingTimingPanelRight: 900,
+    openingTimingPanelBottom: 500,
+    openingTimingPanelId: 'project-style-title-card-panel',
+    openingTimingCenterX: 200,
+    openingTimingCenterY: 200,
+    openingTimingTitleTabSelected: true,
+    ...overrides,
+  }
+}
+
 function layoutReachabilityState(
   viewport: { height: number; width: number } = { height: 720, width: 1280 },
   includeStyleTargets = false,
@@ -61,6 +86,7 @@ function layoutReachabilityState(
         focusedInViewport: true,
         inViewport: true,
         optional: target.optional,
+        required: target.required,
         visible: true,
       },
     ]),
@@ -143,6 +169,29 @@ function preloadBridgeKeys() {
 }
 
 describe('visual smoke renderer contracts', () => {
+  it('requires a lead-in region to fill the responsive waveform below the ruler', () => {
+    for (const leadHeight of [76, 62, 48]) {
+      const valid = {
+        leadHeight,
+        leadTop: 128,
+        rulerBottom: 128,
+        valid: true,
+        waveformBottom: 128 + leadHeight,
+        waveformTop: 128,
+      }
+      expect(contracts.validTimelineLeadInGeometryState(valid)).toBe(true)
+      expect(
+        contracts.validTimelineLeadInGeometryState({ ...valid, leadHeight: leadHeight - 2 }),
+      ).toBe(false)
+    }
+    expect(contracts.timelineLeadInGeometryScript()).toContain('timeline-lead-in')
+    const timelineCss = source('src/timeline.css')
+    expect(timelineCss).toContain('--timeline-waveform-height: 76px')
+    expect(timelineCss).toContain('--timeline-waveform-height: 62px')
+    expect(timelineCss).toContain('--timeline-waveform-height: 48px')
+    expect(timelineCss).toContain('height: var(--timeline-waveform-height)')
+  })
+
   it('matches the bridge contract to the real preload API', () => {
     expect(preloadBridgeKeys()).toEqual(contracts.STUDIO_BRIDGE_KEYS)
   })
@@ -593,6 +642,76 @@ describe('visual smoke renderer contracts', () => {
     )
   })
 
+  it('targets the Opening lead-in control only when the title tab is selected', () => {
+    const action = contracts.styleSessionActionScript('opening-timing')
+    expect(action).toContain('Opening lead-in seconds')
+    expect(action).toContain("'opening-timing'")
+    expect(action).toContain('titleTab?.getAttribute')
+    expect(action).toContain('openingTiming instanceof HTMLInputElement')
+    expect(action).toContain('.style-destination-panel')
+    expect(action).toContain('.style-editor__actions')
+    expect(action).toContain('openingTimingPanel')
+    expect(action).toContain('openingTimingBelowFooterBoundary')
+    expect(action).toContain('openingTimingInDestinationPanel')
+  })
+
+  it('fails invalid opening timing action state shapes in validator', () => {
+    expect(contracts.validStyleActionTarget(openingTimingStyleTarget(), 'opening-timing')).toBe(
+      true,
+    )
+    expect(
+      contracts.validStyleActionTarget(
+        { ...openingTimingStyleTarget(), boundsHeight: 0 },
+        'opening-timing',
+      ),
+    ).toBe(false)
+    expect(
+      contracts.validStyleActionTarget(
+        {
+          ...openingTimingStyleTarget(),
+          openingTimingTitleTabSelected: false,
+        },
+        'opening-timing',
+      ),
+    ).toBe(false)
+    expect(
+      contracts.validStyleActionTarget(
+        {
+          ...openingTimingStyleTarget(),
+          openingTimingInDestinationPanel: false,
+        },
+        'opening-timing',
+      ),
+    ).toBe(false)
+    expect(
+      contracts.validStyleActionTarget(
+        {
+          ...openingTimingStyleTarget(),
+          openingTimingPanelId: 'project-style-lyrics-panel',
+        },
+        'opening-timing',
+      ),
+    ).toBe(false)
+    expect(
+      contracts.validStyleActionTarget(
+        {
+          ...openingTimingStyleTarget(),
+          openingTimingBelowFooterBoundary: false,
+        },
+        'opening-timing',
+      ),
+    ).toBe(false)
+    expect(
+      contracts.validStyleActionTarget(
+        {
+          ...openingTimingStyleTarget(),
+          openingTimingCenterInViewport: false,
+        },
+        'opening-timing',
+      ),
+    ).toBe(false)
+  })
+
   it('uses the unified lyric design preview while editing background style', () => {
     expect(
       contracts.projectLyricsReadinessScript(
@@ -704,5 +823,27 @@ describe('visual smoke renderer contracts', () => {
         },
       ),
     ).toBe(true)
+  })
+
+  it('requires the baseline Opening lead-in control to be reachable', () => {
+    const missing = layoutReachabilityState({ width: 1280, height: 720 })
+    if (!missing.controls.openingTiming || !missing.controls.openingTiming.required) {
+      throw new Error('openingTiming control fixture should be required')
+    }
+    missing.controls.openingTiming = {
+      ...missing.controls.openingTiming,
+      clippedByOverflow: false,
+      clippedByOverflowAfterFocus: false,
+      exists: false,
+      visible: false,
+      inViewport: false,
+    }
+
+    expect(
+      contracts.validLayoutReachabilityState(missing, {
+        width: 1280,
+        height: 720,
+      }),
+    ).toBe(false)
   })
 })

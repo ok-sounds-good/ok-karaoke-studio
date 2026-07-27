@@ -14,6 +14,11 @@ import {
   createVocalTrack,
 } from '../src/lib/karaoke'
 import {
+  MAX_PROJECT_DURATION_MS,
+  hasValidationErrors,
+  validateProject,
+} from '../src/lib/project-validation'
+import {
   applyTimingDraft,
   constrainWordResizeTiming,
   constrainWordShiftDelta,
@@ -165,6 +170,54 @@ describe('live timeline timing drafts', () => {
     const negative = projectAtOffset(-100)
     expect(constrainWordShiftDelta(positive, new Set(['word-100']), 10_000)).toBe(800)
     expect(constrainWordShiftDelta(negative, new Set(['word--100']), 10_000)).toBe(1_000)
+  })
+
+  it('keeps accepted shifts and resizes within the remaining opening-adjusted timing budget', () => {
+    const openingMs = 1_000
+    const offsetMs = 500
+    const timingCeiling = MAX_PROJECT_DURATION_MS - openingMs - offsetMs
+    const project = createProject({
+      opening: { leadInMs: openingMs, titleTiming: { mode: 'until-lyrics' } },
+      offsetMs,
+      tracks: [
+        createVocalTrack({
+          id: 'opening-bounded-lead',
+          lines: [
+            createLyricLine('Bounded', {
+              id: 'opening-bounded-line',
+              startMs: timingCeiling - 200,
+              endMs: timingCeiling - 100,
+              words: [
+                createLyricWord('Bounded', {
+                  id: 'opening-bounded-word',
+                  startMs: timingCeiling - 200,
+                  endMs: timingCeiling - 100,
+                }),
+              ],
+            }),
+          ],
+        }),
+      ],
+    })
+
+    expect(constrainWordShiftDelta(project, new Set(['opening-bounded-word']), 1_000)).toBe(100)
+    expect(
+      hasValidationErrors(
+        validateProject(shiftWords(project, new Set(['opening-bounded-word']), 1_000)),
+      ),
+    ).toBe(false)
+
+    const resize = constrainWordResizeTiming(
+      project,
+      'opening-bounded-word',
+      'end',
+      timingCeiling - 200,
+      timingCeiling + 1_000,
+    )
+    expect(resize).toEqual({ startMs: timingCeiling - 200, endMs: timingCeiling })
+    expect(
+      hasValidationErrors(validateProject(patchWord(project, 'opening-bounded-word', resize!))),
+    ).toBe(false)
   })
 
   it('clamps both resize edges to the nearest timed words across line boundaries', () => {

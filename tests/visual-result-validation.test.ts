@@ -204,6 +204,11 @@ describe('visual result validation', () => {
           name: '16-templates-saved-1280x720.png',
           width: 1280,
         },
+        {
+          height: 720,
+          name: '17-title-card-opening-timing-1280x720.png',
+          width: 1280,
+        },
       ],
       ok: true,
       schemaVersion: 1,

@@ -12,6 +12,7 @@ import {
   ignoredCaptureIds,
   initialProject,
   mountTimeline,
+  unmountTimelineRoot,
   rejectedCaptureIds,
   renderKeyboardSelectionHarness,
   renderShortBlockHarness,
@@ -19,6 +20,88 @@ import {
 } from './support/timeline-mounted-harness'
 
 describe('mounted Timeline live-preview wiring', () => {
+  it('renders and seeks the opening lead-in separately from the source waveform', () => {
+    const project = initialProject()
+    project.opening = { leadInMs: 1_000, titleTiming: { mode: 'until-lyrics' } }
+    project.durationMs = 2_000
+    project.tracks[0]!.lines[0]!.startMs = 10_000
+    project.tracks[0]!.lines[0]!.endMs = 11_000
+    project.tracks[0]!.lines[0]!.words[0]!.startMs = 10_000
+    project.tracks[0]!.lines[0]!.words[0]!.endMs = 10_500
+    project.tracks[0]!.lines[0]!.words[1]!.startMs = 10_500
+    project.tracks[0]!.lines[0]!.words[1]!.endMs = 11_000
+    const onSeek = vi.fn()
+    const scope = mountTimeline(
+      <Timeline
+        project={project}
+        peaks={[0, 0.5, 1]}
+        isAnalyzing={false}
+        durationMs={20_000}
+        currentMs={1_000}
+        zoom={1}
+        activeTrackId="lead"
+        selectedWordIds={new Set()}
+        syncWordId={null}
+        syncMode={false}
+        onSeek={onSeek}
+        onZoom={() => undefined}
+        onSelectWord={() => undefined}
+        onSelectWords={() => undefined}
+        onShiftWords={() => undefined}
+        onResizeWord={() => undefined}
+        onTimingDraftChange={() => undefined}
+        onToggleSync={() => undefined}
+        onClearTiming={() => undefined}
+        onClearTimingAfterCursor={() => undefined}
+      />,
+    )
+
+    const opening = scope.querySelector<HTMLElement>('.timeline-lead-in')!
+    const waveform = scope.querySelector<HTMLElement>('.timeline-waveform')!
+    expect(opening.getAttribute('aria-label')).toBe('Opening lead-in, 0:00 to 00:01.000')
+    expect(opening.style.width).toBe('72px')
+    expect(opening.style.top).toBe('')
+    expect(opening.style.height).toBe('')
+    expect(waveform.style.marginLeft).toBe('72px')
+    expect(waveform.style.width).toBe('144px')
+
+    dispatchPointer(scope.querySelector('.timeline-ruler')!, 'pointerdown', 31, 144)
+    dispatchPointer(waveform, 'pointerdown', 32, 72)
+    expect(onSeek).toHaveBeenNthCalledWith(1, 2_000)
+    expect(onSeek).toHaveBeenNthCalledWith(2, 2_000)
+
+    unmountTimelineRoot()
+    project.opening = { leadInMs: 0, titleTiming: { mode: 'until-lyrics' } }
+    const noOpeningScope = mountTimeline(
+      <Timeline
+        project={project}
+        peaks={[]}
+        isAnalyzing={false}
+        durationMs={20_000}
+        currentMs={0}
+        zoom={1}
+        activeTrackId="lead"
+        selectedWordIds={new Set()}
+        syncWordId={null}
+        syncMode={false}
+        onSeek={() => undefined}
+        onZoom={() => undefined}
+        onSelectWord={() => undefined}
+        onSelectWords={() => undefined}
+        onShiftWords={() => undefined}
+        onResizeWord={() => undefined}
+        onTimingDraftChange={() => undefined}
+        onToggleSync={() => undefined}
+        onClearTiming={() => undefined}
+        onClearTimingAfterCursor={() => undefined}
+      />,
+    )
+    expect(noOpeningScope.querySelector('.timeline-lead-in')).toBeNull()
+    expect(noOpeningScope.querySelector<HTMLElement>('.timeline-waveform')?.style.marginLeft).toBe(
+      '0px',
+    )
+  })
+
   it('selects and toggles a timed word from the keyboard without starting a pointer gesture', () => {
     const scope = renderKeyboardSelectionHarness()
     let word = timelineWord(scope)
