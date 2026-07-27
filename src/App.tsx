@@ -581,11 +581,6 @@ export default function App() {
     refreshIntervalMs: syncMode ? 50 : 16,
   })
   const waveform = useWaveform(audioUrl)
-  const lyricTimeMs = lyricTimeAtPlayback(
-    playback.currentMs,
-    project.offsetMs,
-    project.opening.leadInMs,
-  )
   const previewProject = useMemo(
     () => projectForTimingPreview(project, history.revision, timingDraft),
     [history.revision, project, timingDraft],
@@ -2137,7 +2132,7 @@ export default function App() {
       {styleSession.draft ? (
         <ProjectStyleEditor
           project={project}
-          playbackMs={playback.currentMs}
+          clock={playback.clock}
           draft={styleSession.draft}
           initialSingerTrackId={activeTrack?.id ?? null}
           fonts={installedFonts}
@@ -2173,8 +2168,7 @@ export default function App() {
                 <KaraokePreview
                   activeVocalTrackId={activeTrack?.id}
                   project={previewProject}
-                  playbackMs={playback.currentMs}
-                  lyricMs={lyricTimeMs}
+                  clock={playback.clock}
                   selectedWordIds={selectedWordIds}
                   onVocalPositionChange={updateVocalPosition}
                   onTitlePositionChange={updateTitlePosition}
@@ -2190,7 +2184,7 @@ export default function App() {
                 peaks={waveform.peaks}
                 isAnalyzing={waveform.isAnalyzing}
                 durationMs={playback.durationMs}
-                currentMs={playback.currentMs}
+                clock={playback.clock}
                 zoom={zoom}
                 activeTrackId={activeTrackId}
                 selectedWordIds={selectedWordIds}
@@ -2220,7 +2214,7 @@ export default function App() {
       )}
 
       <TransportBar
-        currentMs={playback.currentMs}
+        clock={playback.clock}
         durationMs={playback.durationMs}
         isPlaying={playback.isPlaying}
         rate={playback.rate}

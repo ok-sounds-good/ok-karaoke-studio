@@ -2,7 +2,7 @@
  * @vitest-environment happy-dom
  */
 
-import { act } from 'react'
+import { act, StrictMode, useSyncExternalStore } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { usePlayback } from '../src/hooks/usePlayback'
@@ -257,5 +257,96 @@ describe('authoritative playback clock', () => {
 
     await act(async () => third.reject(new Error('current rejection')))
     expect(playback.isPlaying).toBe(false)
+  })
+
+  it('keeps one clock capability through StrictMode and cleans isolated subscribers on unmount', async () => {
+    let firstClock: typeof playback.clock | null = null
+    let subscribeCount = 0
+    let unsubscribeCount = 0
+
+    function ClockProbe() {
+      const clock = playback.clock
+      useSyncExternalStore((listener) => {
+        subscribeCount += 1
+        const unsubscribe = clock.subscribe(listener)
+        return () => {
+          unsubscribeCount += 1
+          unsubscribe()
+        }
+      }, clock.getSnapshot)
+      return null
+    }
+
+    function StrictHarness() {
+      playback = usePlayback({ durationMs: 30_000, audioUrl: null, refreshIntervalMs: 50 })
+      firstClock ??= playback.clock
+      return <ClockProbe />
+    }
+
+    await act(async () =>
+      root.render(
+        <StrictMode>
+          <StrictHarness />
+        </StrictMode>,
+      ),
+    )
+    expect(playback.clock).toBe(firstClock)
+    expect(subscribeCount).toBeGreaterThan(0)
+
+    await act(async () => root.render(<></>))
+    expect(unsubscribeCount).toBe(subscribeCount)
+  })
+
+  it('keeps sub-threshold fallback samples live but unpublished until one clock notification', async () => {
+    const frames: FrameRequestCallback[] = []
+    let parentRenders = 0
+    let clockConsumerRenders = 0
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback)
+      return frames.length
+    })
+
+    function ClockConsumer({ clock }: { clock: typeof playback.clock }) {
+      const currentMs = useSyncExternalStore(clock.subscribe, clock.getSnapshot)
+      clockConsumerRenders += 1
+      return <output data-testid="isolated-clock">{currentMs}</output>
+    }
+
+    function IsolatedHarness() {
+      playback = usePlayback({ durationMs: 30_000, audioUrl: null, refreshIntervalMs: 50 })
+      parentRenders += 1
+      return <ClockConsumer clock={playback.clock} />
+    }
+
+    await act(async () => root.render(<IsolatedHarness />))
+    await act(async () => playback.play())
+    const parentRendersAfterPlay = parentRenders
+    const clockConsumerRendersAfterPlay = clockConsumerRenders
+    let notifications = 0
+    const unsubscribe = playback.clock.subscribe(() => {
+      notifications += 1
+    })
+
+    await act(async () => frames.shift()!(0))
+    notifications = 0
+    for (const timestamp of [10, 20, 30, 40]) {
+      await act(async () => frames.shift()!(timestamp))
+    }
+
+    expect(playback.getCurrentMs()).toBe(40)
+    expect(playback.clock.getSnapshot()).toBe(0)
+    expect(container.querySelector('[data-testid="isolated-clock"]')?.textContent).toBe('0')
+    expect(notifications).toBe(0)
+    expect(parentRenders).toBe(parentRendersAfterPlay)
+    expect(clockConsumerRenders).toBe(clockConsumerRendersAfterPlay)
+
+    await act(async () => frames.shift()!(50))
+
+    expect(container.querySelector('[data-testid="isolated-clock"]')?.textContent).toBe('50')
+    expect(playback.clock.getSnapshot()).toBe(50)
+    expect(notifications).toBe(1)
+    expect(parentRenders).toBe(parentRendersAfterPlay)
+    expect(clockConsumerRenders).toBe(clockConsumerRendersAfterPlay + 1)
+    unsubscribe()
   })
 })

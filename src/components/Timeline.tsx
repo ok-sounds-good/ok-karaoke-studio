@@ -10,6 +10,7 @@ import {
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
+  type RefObject,
 } from 'react'
 import {
   AudioWaveform,
@@ -24,6 +25,7 @@ import {
   ZoomIn,
 } from 'lucide-react'
 import type { KaraokeProject, LyricWord } from '../lib/model'
+import type { PlaybackClock } from '../hooks/usePlayback'
 import type { SyncSession } from '../lib/sync-session'
 import { formatTime } from '../lib/model'
 import { resolveVocalSungColor } from '../lib/video-style'
@@ -55,7 +57,9 @@ interface TimelineProps {
   peaks: number[]
   isAnalyzing: boolean
   durationMs: number
-  currentMs: number
+  clock?: PlaybackClock
+  /** Static time is retained for deterministic mounted timeline tests. */
+  currentMs?: number
   zoom: number
   activeTrackId: string
   selectedWordIds: Set<string>
@@ -99,6 +103,70 @@ export function pendingLineLayoutAt(
   lineIndex: number,
 ) {
   return lineLayoutsBySourceIndex.get(lineIndex)
+}
+
+function hasTimingStartingAtOrAfter(starts: readonly number[], boundaryMs: number) {
+  let low = 0
+  let high = starts.length
+  while (low < high) {
+    const middle = low + Math.floor((high - low) / 2)
+    if (starts[middle]! < boundaryMs) low = middle + 1
+    else high = middle
+  }
+  return low < starts.length
+}
+
+function TimelineWaveformProgress({
+  clock,
+  pixelsPerSecond,
+  waveformLeft,
+}: {
+  clock: PlaybackClock
+  pixelsPerSecond: number
+  waveformLeft: number
+}) {
+  const currentMs = useSyncExternalStore(clock.subscribe, clock.getSnapshot, clock.getSnapshot)
+  const playheadLeft = (currentMs / 1000) * pixelsPerSecond
+  return (
+    <div className="waveform-played" style={{ width: Math.max(0, playheadLeft - waveformLeft) }} />
+  )
+}
+
+function TimelinePlayhead({
+  clock,
+  pixelsPerSecond,
+  viewportRef,
+}: {
+  clock: PlaybackClock
+  pixelsPerSecond: number
+  viewportRef: RefObject<HTMLDivElement | null>
+}) {
+  const currentMs = useSyncExternalStore(clock.subscribe, clock.getSnapshot, clock.getSnapshot)
+  const followBucket = Math.floor(currentMs / 500)
+
+  useEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport) return
+    const left = ((followBucket * 500) / 1000) * pixelsPerSecond
+    const margin = 130
+    if (
+      left < viewport.scrollLeft + margin ||
+      left > viewport.scrollLeft + viewport.clientWidth - margin
+    ) {
+      viewport.scrollTo({
+        left: Math.max(0, left - viewport.clientWidth * 0.32),
+        behavior: 'auto',
+      })
+    }
+  }, [followBucket, pixelsPerSecond, viewportRef])
+
+  const playheadLeft = (currentMs / 1000) * pixelsPerSecond
+  return (
+    <div className="timeline-playhead" style={{ left: playheadLeft }} aria-hidden="true">
+      <span>{formatTime(currentMs, true)}</span>
+      <i />
+    </div>
+  )
 }
 
 function PendingSyncBlocks({
@@ -162,7 +230,8 @@ export function Timeline({
   peaks,
   isAnalyzing,
   durationMs,
-  currentMs,
+  clock,
+  currentMs = 0,
   zoom,
   activeTrackId,
   selectedWordIds,
@@ -182,6 +251,17 @@ export function Timeline({
   onClearTiming,
   onClearTimingAfterCursor,
 }: TimelineProps) {
+  const staticCurrentMsRef = useRef(currentMs)
+  staticCurrentMsRef.current = currentMs
+  const staticClockRef = useRef<PlaybackClock | null>(null)
+  if (!staticClockRef.current) {
+    staticClockRef.current = {
+      subscribe: () => () => undefined,
+      getSnapshot: () => staticCurrentMsRef.current,
+      getCurrentMs: () => staticCurrentMsRef.current,
+    }
+  }
+  const playbackClock = clock ?? staticClockRef.current
   const viewportRef = useRef<HTMLDivElement>(null)
   const syncTargetNodesRef = useRef(new Map<string, Map<HTMLElement, string>>())
   const syncTargetCallbacksRef = useRef(new Map<string, (node: HTMLElement | null) => void>())
@@ -315,13 +395,10 @@ export function Timeline({
     (durationMs / 1000) * pixelsPerSecond,
     ...trackLayouts.map((layout) => layout.maxRight + 24),
   )
-  const playheadLeft = (currentMs / 1000) * pixelsPerSecond
   const waveformLeft = (project.opening.leadInMs / 1000) * pixelsPerSecond
   const waveformWidth =
     ((project.durationMs ?? Math.max(0, durationMs - project.opening.leadInMs)) / 1000) *
     pixelsPerSecond
-  const waveformPlayedWidth = Math.max(0, playheadLeft - waveformLeft)
-  const followBucket = Math.floor(currentMs / 500)
   const tickStepSeconds = zoom < 0.8 ? 5 : zoom < 1.7 ? 2 : 1
   const labelStepSeconds = zoom < 0.8 ? 10 : zoom < 1.7 ? 5 : 2
   const activeTrack = project.tracks.find((track) => track.id === activeTrackId)
@@ -330,7 +407,6 @@ export function Timeline({
     [activeTrack, activeTrackId, project.id],
   )
   const activeTrackWords = activeTrack ? flattenTrack(activeTrack) : []
-  const clearBoundaryMs = Math.max(0, currentMs - project.opening.leadInMs - project.offsetMs)
   const activeHasMaterializedTiming = Boolean(
     activeTrack?.lines.some(
       (line) =>
@@ -339,18 +415,18 @@ export function Timeline({
         line.words.some((word) => word.startMs !== null || word.endMs !== null),
     ),
   )
-  const activeHasTiming = activeHasMaterializedTiming || Boolean(syncSession?.hasPending)
-  const canClearAfterCursor =
-    clearBoundaryMs === 0
-      ? activeHasTiming
-      : Boolean(
-          activeTrack?.lines.some(
-            (line) =>
-              (line.words.every((word) => word.startMs === null && word.endMs === null) &&
-                (line.startMs ?? -1) >= clearBoundaryMs) ||
-              line.words.some((word) => (word.startMs ?? -1) >= clearBoundaryMs),
-          ),
-        )
+  const clearableTimingStarts = useMemo(
+    () =>
+      (
+        activeTrack?.lines.flatMap((line) => {
+          const wordStarts = line.words.flatMap((word) =>
+            word.startMs === null ? [] : [word.startMs],
+          )
+          return wordStarts.length || line.startMs === null ? wordStarts : [line.startMs]
+        }) ?? []
+      ).sort((left, right) => left - right),
+    [activeTrack],
+  )
   const gestureContextRef = useRef<TimelineGestureContext | null>(null)
   const gestureActiveCallbackRef = useRef(onGestureActiveChange)
   gestureActiveCallbackRef.current = onGestureActiveChange
@@ -425,22 +501,6 @@ export function Timeline({
       .join(' L ')
     return `M 0,${mid} L ${top} L ${bottom} Z`
   }, [peaks])
-
-  useEffect(() => {
-    const viewport = viewportRef.current
-    if (!viewport) return
-    const left = ((followBucket * 500) / 1000) * pixelsPerSecond
-    const margin = 130
-    if (
-      left < viewport.scrollLeft + margin ||
-      left > viewport.scrollLeft + viewport.clientWidth - margin
-    ) {
-      viewport.scrollTo({
-        left: Math.max(0, left - viewport.clientWidth * 0.32),
-        behavior: 'auto',
-      })
-    }
-  }, [followBucket, pixelsPerSecond])
 
   useLayoutEffect(() => {
     if (
@@ -711,10 +771,12 @@ export function Timeline({
               <Zap size={13} fill="currentColor" /> {syncMode ? 'Exit sync' : 'Start sync'}
             </Button>
             <SyncClearButtons
+              clock={playbackClock}
               syncSession={syncSession ?? null}
               activeHasMaterializedTiming={activeHasMaterializedTiming}
-              canClearAfterCursor={canClearAfterCursor}
-              clearBoundaryMs={clearBoundaryMs}
+              clearableTimingStarts={clearableTimingStarts}
+              leadInMs={project.opening.leadInMs}
+              offsetMs={project.offsetMs}
               onClearTiming={onClearTiming}
               onClearTimingAfterCursor={onClearTimingAfterCursor}
             />
@@ -843,7 +905,11 @@ export function Timeline({
               >
                 <path d={waveformPath} />
               </svg>
-              <div className="waveform-played" style={{ width: waveformPlayedWidth }} />
+              <TimelineWaveformProgress
+                clock={playbackClock}
+                pixelsPerSecond={pixelsPerSecond}
+                waveformLeft={waveformLeft}
+              />
             </div>
 
             <div className="timeline-lanes">
@@ -1010,11 +1076,11 @@ export function Timeline({
                 )
               })}
             </div>
-
-            <div className="timeline-playhead" style={{ left: playheadLeft }} aria-hidden="true">
-              <span>{formatTime(currentMs, true)}</span>
-              <i />
-            </div>
+            <TimelinePlayhead
+              clock={playbackClock}
+              pixelsPerSecond={pixelsPerSecond}
+              viewportRef={viewportRef}
+            />
           </div>
         </div>
       </div>
@@ -1052,27 +1118,37 @@ export function Timeline({
 }
 
 function SyncClearButtons({
+  clock,
   syncSession,
   activeHasMaterializedTiming,
-  canClearAfterCursor,
-  clearBoundaryMs,
+  clearableTimingStarts,
+  leadInMs,
+  offsetMs,
   onClearTiming,
   onClearTimingAfterCursor,
 }: {
+  clock: PlaybackClock
   syncSession: SyncSession | null
   activeHasMaterializedTiming: boolean
-  canClearAfterCursor: boolean
-  clearBoundaryMs: number
+  clearableTimingStarts: readonly number[]
+  leadInMs: number
+  offsetMs: number
   onClearTiming: () => void
   onClearTimingAfterCursor: () => void
 }) {
+  const currentMs = useSyncExternalStore(clock.subscribe, clock.getSnapshot, clock.getSnapshot)
   const snapshot = useSyncExternalStore(
     syncSession ? syncSession.subscribe.bind(syncSession) : () => () => undefined,
     syncSession ? syncSession.getSnapshot : () => null,
     () => null,
   )
+  const clearBoundaryMs = Math.max(0, currentMs - leadInMs - offsetMs)
   const hasTiming = activeHasMaterializedTiming || Boolean(snapshot?.hasPending)
   const canClearPendingAfterCursor = Boolean(snapshot?.hasPending) && clearBoundaryMs === 0
+  const canClearAfterCursor =
+    clearBoundaryMs === 0
+      ? activeHasMaterializedTiming
+      : hasTimingStartingAtOrAfter(clearableTimingStarts, clearBoundaryMs)
   return (
     <>
       <Button
