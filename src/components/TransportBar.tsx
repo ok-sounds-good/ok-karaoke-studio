@@ -10,12 +10,13 @@ import {
   Zap,
 } from 'lucide-react'
 import { useSyncExternalStore } from 'react'
+import type { PlaybackClock } from '../hooks/usePlayback'
 import { formatTime } from '../lib/model'
 import type { SyncSession } from '../lib/sync-session'
 import { KeyboardKey } from './ui'
 
 interface TransportBarProps {
-  currentMs: number
+  clock: PlaybackClock
   durationMs: number
   isPlaying: boolean
   rate: number
@@ -35,7 +36,7 @@ interface TransportBarProps {
 }
 
 export function TransportBar({
-  currentMs,
+  clock,
   durationMs,
   isPlaying,
   rate,
@@ -53,6 +54,7 @@ export function TransportBar({
   onVolume,
   onToggleSync,
 }: TransportBarProps) {
+  const currentMs = useSyncExternalStore(clock.subscribe, clock.getSnapshot, clock.getSnapshot)
   const presentation = useSyncExternalStore(
     syncSession ? syncSession.subscribe.bind(syncSession) : () => () => undefined,
     syncSession ? syncSession.getSnapshot : () => null,

@@ -6,6 +6,7 @@ import { act } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
 import { Timeline } from '../src/components/Timeline'
+import type { PlaybackClock } from '../src/hooks/usePlayback'
 import {
   captures,
   dispatchPointer,
@@ -20,6 +21,60 @@ import {
 } from './support/timeline-mounted-harness'
 
 describe('mounted Timeline live-preview wiring', () => {
+  it('keeps the dense Timeline render isolated while its playhead stays fresh', () => {
+    let currentMs = 0
+    const listeners = new Set<() => void>()
+    const clock: PlaybackClock = {
+      subscribe(listener) {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+      getSnapshot: () => currentMs,
+      getCurrentMs: () => currentMs,
+    }
+    let wrapperRenders = 0
+    const project = initialProject()
+
+    function Harness() {
+      wrapperRenders += 1
+      return (
+        <Timeline
+          project={project}
+          peaks={[]}
+          isAnalyzing={false}
+          durationMs={30_000}
+          clock={clock}
+          zoom={1}
+          activeTrackId="lead"
+          selectedWordIds={new Set()}
+          syncWordId={null}
+          syncMode={false}
+          onSeek={() => undefined}
+          onZoom={() => undefined}
+          onSelectWord={() => undefined}
+          onSelectWords={() => undefined}
+          onShiftWords={() => undefined}
+          onResizeWord={() => undefined}
+          onTimingDraftChange={() => undefined}
+          onToggleSync={() => undefined}
+          onClearTiming={() => undefined}
+          onClearTimingAfterCursor={() => undefined}
+        />
+      )
+    }
+
+    const scope = mountTimeline(<Harness />)
+    const rendersBeforeClock = wrapperRenders
+    act(() => {
+      currentMs = 1_250
+      listeners.forEach((listener) => listener())
+    })
+
+    expect(scope.querySelector('.timeline-playhead span')?.textContent).toBe('0:01.250')
+    expect(scope.querySelector<HTMLElement>('.waveform-played')?.style.width).toBe('90px')
+    expect(wrapperRenders).toBe(rendersBeforeClock)
+  })
+
   it('renders and seeks the opening lead-in separately from the source waveform', () => {
     const project = initialProject()
     project.opening = { leadInMs: 1_000, titleTiming: { mode: 'until-lyrics' } }

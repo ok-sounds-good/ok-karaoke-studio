@@ -27,6 +27,7 @@ import {
 } from '../lib/video-style'
 import '../video-style.css'
 import { KaraokePreview } from './KaraokePreview'
+import type { PlaybackClock } from '../hooks/usePlayback'
 import { LeadVocalStylePanel } from './LeadVocalStylePanel'
 import { StageFrameStylePanel, type StageFrameRole } from './StageFrameStylePanel'
 import { StyleTemplatesPanel } from './StyleTemplatesPanel'
@@ -37,7 +38,8 @@ import { Button } from './ui'
 
 export interface ProjectStyleEditorProps {
   project: KaraokeProject
-  playbackMs: number
+  clock?: PlaybackClock
+  playbackMs?: number
   draft: ProjectStyleDraft
   initialSingerTrackId: string | null
   fonts: InstalledFontState
@@ -102,7 +104,8 @@ function StyleColorField({
 
 export function ProjectStyleEditor({
   project,
-  playbackMs,
+  clock,
+  playbackMs = 0,
   draft,
   initialSingerTrackId,
   fonts,
@@ -475,6 +478,7 @@ export function ProjectStyleEditor({
 
       <KaraokePreview
         project={previewProject}
+        clock={clock}
         playbackMs={playbackMs}
         lyricMs={playbackMs - draft.opening.leadInMs - project.offsetMs}
         selectedWordIds={new Set()}

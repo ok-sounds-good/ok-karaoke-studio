@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
   type KeyboardEvent,
   type PointerEvent,
@@ -54,6 +55,7 @@ import type {
   BackgroundImagePreviewSource,
 } from '../hooks/useProjectBackgroundImage'
 import { Button } from './ui'
+import type { PlaybackClock } from '../hooks/usePlayback'
 
 export type KaraokePreviewDesignMode =
   | { target: 'project-lyrics' | 'background'; stageStyle: StageStyle }
@@ -91,8 +93,10 @@ const NO_CENTER_SNAP: CenterSnapAxes = { x: false, y: false }
 interface KaraokePreviewProps {
   activeVocalTrackId?: string
   project: KaraokeProject
-  playbackMs: number
-  lyricMs: number
+  clock?: PlaybackClock
+  /** Static preview values are retained for deterministic design/test renders. */
+  playbackMs?: number
+  lyricMs?: number
   selectedWordIds: Set<string>
   onVocalPositionChange?: (trackId: string, position: DisplayPosition) => void
   onTitlePositionChange?: (role: TitleCardRole, position: DisplayPosition) => void
@@ -638,8 +642,9 @@ function SyncAidCue({ line, progress }: { line: StageFrameLine; progress: number
 export function KaraokePreview({
   activeVocalTrackId,
   project,
-  playbackMs,
-  lyricMs,
+  clock,
+  playbackMs: staticPlaybackMs,
+  lyricMs: staticLyricMs,
   selectedWordIds,
   onVocalPositionChange,
   onTitlePositionChange,
@@ -648,6 +653,26 @@ export function KaraokePreview({
   designMode,
   backgroundImage,
 }: KaraokePreviewProps) {
+  const staticPlaybackMsRef = useRef(staticPlaybackMs ?? 0)
+  staticPlaybackMsRef.current = staticPlaybackMs ?? 0
+  const staticClockRef = useRef<PlaybackClock | null>(null)
+  if (!staticClockRef.current) {
+    staticClockRef.current = {
+      subscribe: () => () => undefined,
+      getSnapshot: () => staticPlaybackMsRef.current,
+      getCurrentMs: () => staticPlaybackMsRef.current,
+    }
+  }
+  const playbackClock = clock ?? staticClockRef.current
+  const playbackSnapshot = useSyncExternalStore(
+    playbackClock.subscribe,
+    playbackClock.getSnapshot,
+    playbackClock.getSnapshot,
+  )
+  const playbackMs = clock ? playbackSnapshot : (staticPlaybackMs ?? 0)
+  const lyricMs = clock
+    ? playbackMs - project.opening.leadInMs - project.offsetMs
+    : (staticLyricMs ?? playbackMs - project.opening.leadInMs - project.offsetMs)
   const stageRef = useRef<HTMLDivElement>(null)
   const [viewMode, setViewMode] = useState<PreviewViewMode>('auto')
   const [selectedTitleRole, setSelectedTitleRole] = useState<TitleCardRole>('title')
