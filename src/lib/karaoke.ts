@@ -92,6 +92,16 @@ export interface LyricDisplaySettings {
   advanceMode: LyricAdvanceMode
 }
 
+export interface OpeningTiming {
+  leadInMs: number
+  titleTiming: { mode: 'until-lyrics' }
+}
+
+export const DEFAULT_OPENING_TIMING: OpeningTiming = {
+  leadInMs: 0,
+  titleTiming: { mode: 'until-lyrics' },
+}
+
 export const DEFAULT_LYRIC_DISPLAY_SETTINGS: LyricDisplaySettings = {
   lineCount: 3,
   advanceMode: 'clear',
@@ -108,6 +118,7 @@ export interface KaraokeProject {
   createdAt: string
   updatedAt: string
   lyricDisplay: LyricDisplaySettings
+  opening: OpeningTiming
   stageStyle: StageStyle
   tracks: VocalTrack[]
 }
@@ -145,6 +156,7 @@ export interface CreateProjectOptions {
   createdAt?: string
   updatedAt?: string
   lyricDisplay?: LyricDisplaySettings
+  opening?: OpeningTiming
   stageStyle?: StageStyle
   tracks?: VocalTrack[]
 }
@@ -264,6 +276,10 @@ export function createProject(options: CreateProjectOptions = {}): KaraokeProjec
     updatedAt: options.updatedAt ?? now,
     lyricDisplay: {
       ...(options.lyricDisplay ?? DEFAULT_LYRIC_DISPLAY_SETTINGS),
+    },
+    opening: {
+      leadInMs: options.opening?.leadInMs ?? DEFAULT_OPENING_TIMING.leadInMs,
+      titleTiming: { mode: 'until-lyrics' },
     },
     stageStyle: cloneStageStyle(options.stageStyle ?? DEFAULT_STAGE_STYLE),
     tracks: options.tracks?.map(cloneTrack) ?? [

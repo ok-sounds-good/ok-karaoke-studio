@@ -34,6 +34,21 @@ function validateManifest(value) {
   ) {
     throw new Error('invalid manifest envelope')
   }
+  const opening = value.openingAudioEvidence
+  if (
+    opening?.leadInMs !== 300 ||
+    !Number.isFinite(opening.firstAudibleMs) ||
+    opening.firstAudibleMs < 300 ||
+    opening.firstAudibleMs > 350 ||
+    !Number.isFinite(opening.preLeadPeak) ||
+    opening.preLeadPeak > 0.002 ||
+    !Number.isSafeInteger(opening.bytes) ||
+    opening.bytes < 1 ||
+    !/^[0-9a-f]{64}$/u.test(opening.sha256) ||
+    !/^[0-9a-f]{64}$/u.test(opening.pcmSha256)
+  ) {
+    throw new Error('invalid opening audio evidence')
+  }
   value.cases.forEach((item, index) => {
     const expected = EXPECTED_MATRIX[index]
     if (

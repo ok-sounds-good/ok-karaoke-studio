@@ -8,6 +8,7 @@ import type {
 } from './karaoke'
 
 export const MAX_PROJECT_DURATION_MS = 4 * 60 * 60 * 1_000
+export const MAX_OPENING_LEAD_IN_MS = MAX_PROJECT_DURATION_MS
 export const MAX_PROJECT_TRACKS = 8
 export const MAX_PROJECT_LINES = 20_000
 export const MAX_PROJECT_WORDS = 150_000
@@ -85,6 +86,55 @@ function validateRange(
   return true
 }
 
+/**
+ * Returns the largest lead-in that can coexist with the project's current
+ * source duration and validated lyric timing.  This is deliberately a
+ * fail-closed projection: an incomplete or malformed timing range does not
+ * give an editor permission to create a project that validation would reject.
+ */
+export function openingLeadInMaximum(project: KaraokeProject): number {
+  if (
+    !Number.isSafeInteger(project.offsetMs) ||
+    Math.abs(project.offsetMs) > MAX_PROJECT_DURATION_MS ||
+    (project.durationMs !== null &&
+      (!Number.isSafeInteger(project.durationMs) ||
+        project.durationMs < 0 ||
+        project.durationMs > MAX_PROJECT_DURATION_MS)) ||
+    !Array.isArray(project.tracks)
+  ) {
+    return 0
+  }
+
+  let latestAdjustedEndMs = 0
+  for (const track of project.tracks) {
+    if (!Array.isArray(track.lines)) return 0
+    for (const line of track.lines) {
+      const ranges = [line, ...(Array.isArray(line.words) ? line.words : [])]
+      if (!Array.isArray(line.words)) return 0
+      for (const range of ranges) {
+        if (range.startMs === null && range.endMs === null) continue
+        if (
+          range.startMs === null ||
+          range.endMs === null ||
+          !Number.isSafeInteger(range.startMs) ||
+          !Number.isSafeInteger(range.endMs) ||
+          range.startMs < 0 ||
+          range.endMs < 0 ||
+          range.startMs > MAX_PROJECT_DURATION_MS ||
+          range.endMs > MAX_PROJECT_DURATION_MS ||
+          range.endMs <= range.startMs
+        ) {
+          return 0
+        }
+        latestAdjustedEndMs = Math.max(latestAdjustedEndMs, range.endMs + project.offsetMs)
+      }
+    }
+  }
+
+  const requiredDurationMs = Math.max(project.durationMs ?? 0, latestAdjustedEndMs)
+  return Math.max(0, Math.min(MAX_OPENING_LEAD_IN_MS, MAX_PROJECT_DURATION_MS - requiredDurationMs))
+}
+
 export function validateProject(project: KaraokeProject): ValidationIssue[] {
   const issues: ValidationIssue[] = []
   const ids = new Set<string>()
@@ -121,6 +171,32 @@ export function validateProject(project: KaraokeProject): ValidationIssue[] {
     )
   }
   if (
+    !isRecord(project.opening) ||
+    !Number.isSafeInteger(project.opening.leadInMs) ||
+    project.opening.leadInMs < 0 ||
+    project.opening.leadInMs > MAX_OPENING_LEAD_IN_MS
+  ) {
+    issue(
+      issues,
+      'error',
+      'opening-lead-in-invalid',
+      'Opening lead-in must be a safe integer between zero and four hours.',
+      'opening.leadInMs',
+    )
+  }
+  if (
+    !isRecord(project.opening?.titleTiming) ||
+    project.opening.titleTiming.mode !== 'until-lyrics'
+  ) {
+    issue(
+      issues,
+      'error',
+      'opening-title-timing-invalid',
+      'Opening title timing mode must be until-lyrics.',
+      'opening.titleTiming.mode',
+    )
+  }
+  if (
     !isRecord(project.lyricDisplay) ||
     (project.lyricDisplay.advanceMode !== 'clear' && project.lyricDisplay.advanceMode !== 'scroll')
   ) {
@@ -143,7 +219,9 @@ export function validateProject(project: KaraokeProject): ValidationIssue[] {
     project.durationMs !== null &&
     (!Number.isSafeInteger(project.durationMs) ||
       project.durationMs < 0 ||
-      project.durationMs > MAX_PROJECT_DURATION_MS)
+      project.durationMs +
+        (Number.isSafeInteger(project.opening?.leadInMs) ? project.opening.leadInMs : 0) >
+        MAX_PROJECT_DURATION_MS)
   ) {
     issue(
       issues,
@@ -230,7 +308,7 @@ export function validateProject(project: KaraokeProject): ValidationIssue[] {
         lineIsTimed &&
         line.endMs !== null &&
         Number.isSafeInteger(project.offsetMs) &&
-        line.endMs + project.offsetMs > MAX_PROJECT_DURATION_MS
+        line.endMs + project.offsetMs + project.opening.leadInMs > MAX_PROJECT_DURATION_MS
       ) {
         issue(
           issues,
@@ -326,7 +404,7 @@ export function validateProject(project: KaraokeProject): ValidationIssue[] {
           wordIsTimed &&
           word.endMs !== null &&
           Number.isSafeInteger(project.offsetMs) &&
-          word.endMs + project.offsetMs > MAX_PROJECT_DURATION_MS
+          word.endMs + project.offsetMs + project.opening.leadInMs > MAX_PROJECT_DURATION_MS
         ) {
           issue(
             issues,

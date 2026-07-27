@@ -123,6 +123,21 @@ Karaoke Studio identity.
 
 ### Synchronization and Lyric Timing
 
+#### Opening Clock
+
+Current v0 projects require a root-level `opening` value outside `stageStyle`:
+`{ leadInMs: number, titleTiming: { mode: 'until-lyrics' } }`. New projects use
+`leadInMs: 0`; older `.oks` formats are not accepted or migrated. Video time is
+`V`, opening lead-in is `L`, and lyric offset is `O`: source audio is `V-L`,
+lyrics and sync samples are `V-L-O`, and timeline output placement is
+`L+O+stored lyric time`. Before `L`, audio, lyrics, and sync aids are gated.
+The title remains through the first output-eligible lyric activation (never
+before `L`) and remains for the whole video when no eligible timed lyric exists.
+Export keeps absolute video timestamps, delays audio by `L`, and counts `L`
+once in duration and the 30-minute cap. Inspector edits apply immediately;
+Title Card edits are part of the Style draft and apply/cancel atomically with
+Style. Saved Style Templates deliberately exclude opening timing.
+
 - Tap-sync mode in which bare Space key-down starts the current word. The next
   same-line key-down backfills the preceding word's end to that new onset;
   key-up duration extends the final word of a line. The resulting start and end

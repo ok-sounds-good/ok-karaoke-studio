@@ -183,14 +183,35 @@ function createStageFramePlanner(project) {
     track,
   }))
   const titleHandoffMs = tracks.reduce((handoff, { windows }) => {
-    const activationMs = windows[0]?.activationMs
+    // Completion is exclusive, so a window ending exactly at the opening has
+    // no post-opening display interval and must not dismiss the title card.
+    const eligible = windows.find((window) => window.completionMs + project.offsetMs > 0)
+    const activationMs = eligible?.activationMs
     return activationMs === undefined
       ? handoff
-      : Math.min(handoff, Math.max(0, activationMs + project.offsetMs))
+      : Math.min(
+          handoff,
+          Math.max(
+            project.opening.leadInMs,
+            project.opening.leadInMs + activationMs + project.offsetMs,
+          ),
+        )
   }, Number.POSITIVE_INFINITY)
 
   return (playbackMs) => {
-    const lyricMs = playbackMs - project.offsetMs
+    if (playbackMs < project.opening.leadInMs) {
+      return {
+        title: project.title || 'Untitled song',
+        artist: project.artist || 'Unknown artist',
+        playbackMs,
+        showTitle: true,
+        lyricLineCount: project.lyricDisplay.lineCount,
+        stageStyle: project.stageStyle,
+        lines: [],
+        syncAids: [],
+      }
+    }
+    const lyricMs = playbackMs - project.opening.leadInMs - project.offsetMs
     const planned = tracks.map((entry) => ({
       ...entry,
       active: activeWindow(entry.windows, lyricMs),

@@ -26,15 +26,32 @@ class FakeAudio extends EventTarget {
   }
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, reject, resolve }
+}
+
 describe('authoritative playback clock', () => {
   let container: HTMLDivElement
   let root: Root
   let playback: ReturnType<typeof usePlayback>
 
-  function Harness({ audioUrl = 'blob:synthetic-audio' }: { audioUrl?: string }) {
+  function Harness({
+    audioUrl = 'blob:synthetic-audio',
+    leadInMs = 0,
+  }: {
+    audioUrl?: string | null
+    leadInMs?: number
+  }) {
     playback = usePlayback({
       durationMs: 30_000,
       audioUrl,
+      leadInMs,
       refreshIntervalMs: 50,
     })
     return <output data-testid="painted-clock">{playback.currentMs}</output>
@@ -87,5 +104,158 @@ describe('authoritative playback clock', () => {
     await act(async () => playback.play())
     expect(replacementAudio.currentTime).toBe(0)
     expect(playback.getCurrentMs()).toBe(0)
+  })
+
+  it('keeps the video clock synthetic through the opening and maps source audio after it', async () => {
+    await act(async () => root.render(<Harness leadInMs={1_000} />))
+    const audio = FakeAudio.instances[0]
+
+    await act(async () => playback.seek(999))
+    expect(audio.currentTime).toBe(0)
+    expect(playback.getCurrentMs()).toBe(999)
+
+    await act(async () => playback.seek(1_000))
+    expect(audio.currentTime).toBe(0)
+    expect(playback.getCurrentMs()).toBe(1_000)
+
+    // A startup-lagging media element remains at the video boundary.
+    expect(playback.getCurrentMs()).toBe(1_000)
+    audio.currentTime = 0.001
+    expect(playback.getCurrentMs()).toBe(1_001)
+  })
+
+  it('starts media exactly once when a controllable animation frame reaches the opening boundary', async () => {
+    const frames: FrameRequestCallback[] = []
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    await act(async () => root.render(<Harness leadInMs={100} />))
+    const audio = FakeAudio.instances[0]!
+    await act(async () => playback.play())
+    await act(async () => frames.shift()!(0))
+    await act(async () => frames.shift()!(100))
+
+    expect(playback.getCurrentMs()).toBe(100)
+    expect(audio.play).toHaveBeenCalledOnce()
+    expect(audio.currentTime).toBe(0)
+
+    await act(async () => frames.shift()!(116))
+    expect(playback.getCurrentMs()).toBe(100)
+    expect(audio.play).toHaveBeenCalledOnce()
+    await act(async () => playback.seek(99))
+    expect(audio.pause).toHaveBeenCalled()
+  })
+
+  it('pauses and re-arms around lead changes, rejected media starts, end, and no-audio fallback', async () => {
+    const frames: FrameRequestCallback[] = []
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    await act(async () => root.render(<Harness leadInMs={100} />))
+    const audio = FakeAudio.instances[0]!
+    await act(async () => playback.seek(120))
+    audio.play.mockRejectedValueOnce(new Error('blocked'))
+    await act(async () => playback.play())
+    await act(async () => Promise.resolve())
+    expect(playback.isPlaying).toBe(false)
+
+    await act(async () => root.render(<Harness leadInMs={200} />))
+    expect(audio.pause).toHaveBeenCalled()
+    await act(async () => playback.seek(200))
+    await act(async () => playback.play())
+    await act(async () => audio.dispatchEvent(new Event('ended')))
+    expect(playback.isPlaying).toBe(false)
+
+    await act(async () => root.render(<Harness audioUrl={null} leadInMs={100} />))
+    await act(async () => playback.play())
+    await act(async () => frames.shift()!(0))
+    await act(async () => frames.shift()!(100))
+    expect(playback.getCurrentMs()).toBe(100)
+  })
+
+  it('restarts source media after pause and after an ended seek at or beyond the opening', async () => {
+    await act(async () => root.render(<Harness leadInMs={100} />))
+    const audio = FakeAudio.instances[0]!
+
+    await act(async () => playback.seek(120))
+    await act(async () => playback.play())
+    expect(audio.play).toHaveBeenCalledOnce()
+
+    await act(async () => playback.pause())
+    expect(audio.pause).toHaveBeenCalled()
+    await act(async () => playback.play())
+    expect(audio.play).toHaveBeenCalledTimes(2)
+    audio.currentTime = 0.05
+    expect(playback.getCurrentMs()).toBe(150)
+
+    await act(async () => audio.dispatchEvent(new Event('ended')))
+    expect(playback.isPlaying).toBe(false)
+    await act(async () => playback.seek(125))
+    expect(playback.currentMs).toBe(125)
+    expect(playback.getCurrentMs()).toBe(125)
+    await act(async () => playback.play())
+    expect(audio.play).toHaveBeenCalledTimes(3)
+  })
+
+  it('remaps a paused or playing clock immediately when the opening moves across it', async () => {
+    await act(async () => root.render(<Harness leadInMs={100} />))
+    const audio = FakeAudio.instances[0]!
+
+    await act(async () => playback.seek(150))
+    expect(audio.currentTime).toBe(0.05)
+    await act(async () => root.render(<Harness leadInMs={200} />))
+    expect(audio.currentTime).toBe(0)
+    expect(playback.currentMs).toBe(150)
+    expect(playback.getCurrentMs()).toBe(150)
+    expect(audio.pause).toHaveBeenCalled()
+
+    await act(async () => root.render(<Harness leadInMs={120} />))
+    expect(audio.currentTime).toBe(0.03)
+    expect(playback.getCurrentMs()).toBe(150)
+
+    await act(async () => playback.play())
+    expect(audio.play).toHaveBeenCalledOnce()
+    await act(async () => root.render(<Harness leadInMs={200} />))
+    expect(playback.getCurrentMs()).toBe(150)
+    expect(audio.currentTime).toBe(0)
+    expect(audio.pause).toHaveBeenCalled()
+
+    await act(async () => root.render(<Harness leadInMs={120} />))
+    expect(playback.getCurrentMs()).toBe(150)
+    expect(audio.currentTime).toBe(0.03)
+    expect(audio.play).toHaveBeenCalledTimes(2)
+  })
+
+  it('ignores stale same-element play rejections after seek, pause/replay, and a newer play attempt', async () => {
+    const first = deferred<void>()
+    const second = deferred<void>()
+    const third = deferred<void>()
+    await act(async () => root.render(<Harness leadInMs={100} />))
+    const audio = FakeAudio.instances[0]!
+    audio.play
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise)
+      .mockImplementationOnce(() => third.promise)
+
+    await act(async () => playback.seek(150))
+    await act(async () => playback.play())
+    expect(audio.play).toHaveBeenCalledOnce()
+
+    await act(async () => playback.seek(160))
+    expect(audio.play).toHaveBeenCalledTimes(2)
+    await act(async () => first.reject(new Error('stale seek rejection')))
+    expect(playback.isPlaying).toBe(true)
+    expect(playback.getCurrentMs()).toBe(160)
+
+    await act(async () => playback.pause())
+    await act(async () => playback.play())
+    expect(audio.play).toHaveBeenCalledTimes(3)
+    await act(async () => second.reject(new Error('stale pause rejection')))
+    expect(playback.isPlaying).toBe(true)
+
+    await act(async () => third.reject(new Error('current rejection')))
+    expect(playback.isPlaying).toBe(false)
   })
 })

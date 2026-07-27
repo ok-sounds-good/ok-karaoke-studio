@@ -17,6 +17,7 @@ import {
   type LyricEditReconciliation,
   validateProject,
 } from './lib/model'
+import { MAX_PROJECT_DURATION_MS, openingLeadInMaximum } from './lib/project-validation'
 import {
   cloneStageStyle,
   cloneVocalStyle,
@@ -296,8 +297,8 @@ function selectAllInFocusedEditor() {
   return false
 }
 
-export function lyricTimeAtPlayback(playbackMs: number, offsetMs: number) {
-  return playbackMs - offsetMs
+export function lyricTimeAtPlayback(playbackMs: number, offsetMs: number, leadInMs = 0) {
+  return playbackMs - leadInMs - offsetMs
 }
 
 export function syncWordIndexFromLyricTime(words: LyricWord[], lyricTimeMs: number) {
@@ -379,6 +380,7 @@ export default function App() {
   const syncScopeRef = useRef<string | null>(null)
   const syncSessionHasCommitRef = useRef(false)
   const projectRestoreSequenceRef = useRef(0)
+
   const projectLifecycleSequenceRef = useRef(0)
   const acceptedProjectBackgroundPathRef = useRef<string | null>(null)
   const projectTransitionRef = useRef(false)
@@ -391,6 +393,11 @@ export default function App() {
   const lastReviewIssuesRef = useRef<ValidationIssue[]>([])
   projectRef.current = project
   const projectMutationIsBlocked = useCallback(() => projectTransitionRef.current, [])
+
+  const showToast = useCallback(
+    (message: string, tone: ToastState['tone'] = 'neutral') => setToast({ message, tone }),
+    [],
+  )
 
   // Any ordinary edit ends an armed synchronization transaction before it
   // creates its own history entry. Sync timing uses commitHistory directly so
@@ -412,17 +419,52 @@ export default function App() {
   const persistAudioDuration = useCallback(
     (nextDurationMs: number) => {
       if (projectMutationIsBlocked()) return
-      replaceCurrent((current) =>
-        current.durationMs === nextDurationMs
-          ? current
-          : { ...current, durationMs: nextDurationMs },
-      )
+      if (!Number.isSafeInteger(nextDurationMs) || nextDurationMs < 0) return
+      const durationMs = Math.min(nextDurationMs, MAX_PROJECT_DURATION_MS)
+      const projectForDuration = (currentProject: KaraokeProject) => {
+        const maximumMs = openingLeadInMaximum({ ...currentProject, durationMs })
+        const leadInMs = Math.min(currentProject.opening.leadInMs, maximumMs)
+        return {
+          ...currentProject,
+          durationMs,
+          opening: { ...currentProject.opening, leadInMs },
+        }
+      }
+      const current = projectRef.current
+      const projected = projectForDuration(current)
+      if (validateProject(projected).some((issue) => issue.severity === 'error')) {
+        showToast(
+          'Audio is shorter than existing lyric timing; project timing was left unchanged.',
+          'warning',
+        )
+        return
+      }
+      replaceCurrent((currentProject) => {
+        const nextProject = projectForDuration(currentProject)
+        if (validateProject(nextProject).some((issue) => issue.severity === 'error')) {
+          return currentProject
+        }
+        if (
+          currentProject.durationMs === nextProject.durationMs &&
+          currentProject.opening.leadInMs === nextProject.opening.leadInMs
+        ) {
+          return currentProject
+        }
+        return nextProject
+      })
+      if (current.opening.leadInMs > projected.opening.leadInMs) {
+        showToast('Opening lead-in was shortened to fit the audio duration.', 'warning')
+      } else if (durationMs !== nextDurationMs) {
+        showToast('Audio duration was capped at the four-hour project limit.', 'warning')
+      }
     },
-    [projectMutationIsBlocked, replaceCurrent],
+    [projectMutationIsBlocked, replaceCurrent, showToast],
   )
 
   const activeTrack =
     project.tracks.find((track) => track.id === activeTrackId) ?? project.tracks[0]
+  // Once armed, the session projection is stable across timing-only project
+  // writes.  In particular, do not flatten the newly cloned active track.
   const syncItems = useMemo(() => (activeTrack ? flattenTrack(activeTrack) : []), [activeTrack])
   const syncWords = useMemo(() => syncItems.map(({ word }) => word), [syncItems])
   const projectHasLyrics = useMemo(
@@ -432,12 +474,17 @@ export default function App() {
   const durationMs = useMemo(() => effectiveDuration(project), [project])
   const playback = usePlayback({
     durationMs,
+    leadInMs: project.opening.leadInMs,
     audioUrl,
     onDuration: persistAudioDuration,
     refreshIntervalMs: syncMode ? 50 : 16,
   })
   const waveform = useWaveform(audioUrl)
-  const lyricTimeMs = lyricTimeAtPlayback(playback.currentMs, project.offsetMs)
+  const lyricTimeMs = lyricTimeAtPlayback(
+    playback.currentMs,
+    project.offsetMs,
+    project.opening.leadInMs,
+  )
   const previewProject = useMemo(
     () => projectForTimingPreview(project, history.revision, timingDraft),
     [history.revision, project, timingDraft],
@@ -505,6 +552,7 @@ export default function App() {
         sameStageStyle(current.stageStyle, draft.stageStyle) &&
         current.lyricDisplay.lineCount === draft.lyricDisplay.lineCount &&
         current.lyricDisplay.advanceMode === draft.lyricDisplay.advanceMode &&
+        current.opening.leadInMs === draft.opening.leadInMs &&
         current.tracks.every((track) =>
           sameVocalStyle(track.vocalStyle, acceptedSingerStyles.get(track.id)!),
         )
@@ -528,14 +576,19 @@ export default function App() {
         const lyricDisplayChanged =
           latest.lyricDisplay.lineCount !== draft.lyricDisplay.lineCount ||
           latest.lyricDisplay.advanceMode !== draft.lyricDisplay.advanceMode
+        const openingChanged = latest.opening.leadInMs !== draft.opening.leadInMs
         const singersChanged = latest.tracks.some(
           (track) => !sameVocalStyle(track.vocalStyle, acceptedSingerStyles.get(track.id)!),
         )
-        if (!stageChanged && !lyricDisplayChanged && !singersChanged) return latest
+        if (!stageChanged && !lyricDisplayChanged && !openingChanged && !singersChanged)
+          return latest
         return {
           ...latest,
           stageStyle: stageChanged ? cloneStageStyle(acceptedStageStyle) : latest.stageStyle,
           lyricDisplay: lyricDisplayChanged ? { ...draft.lyricDisplay } : latest.lyricDisplay,
+          opening: openingChanged
+            ? { leadInMs: draft.opening.leadInMs, titleTiming: { mode: 'until-lyrics' } }
+            : latest.opening,
           tracks: singersChanged
             ? latest.tracks.map((track) => ({
                 ...track,
@@ -556,8 +609,9 @@ export default function App() {
         project.tracks,
         project.lyricDisplay,
         nextExportDefaults,
+        project.opening,
       ),
-    [nextExportDefaults, project.lyricDisplay, project.stageStyle, project.tracks],
+    [nextExportDefaults, project.lyricDisplay, project.opening, project.stageStyle, project.tracks],
   )
   const styleSession = useProjectStyleSession({
     ownerKey: {
@@ -578,7 +632,6 @@ export default function App() {
   const styleApplyBlockedReason =
     styleSession.applyBlockedReason ?? backgroundStyleSession.controls.applyBlockedReason
   const canApplyStyle = styleSession.canApply && !styleApplyBlockedReason
-
   useEffect(() => {
     if (!toast) return
     const timer = window.setTimeout(() => setToast(null), 3200)
@@ -627,11 +680,6 @@ export default function App() {
     lastReviewIssuesRef.current = issues
     return issues
   }, [reviewProject])
-
-  const showToast = useCallback(
-    (message: string, tone: ToastState['tone'] = 'neutral') => setToast({ message, tone }),
-    [],
-  )
 
   const beginProjectActionLifetime = useCallback(
     (kind: ProjectActionLifetimeKind): ProjectActionLifetimeOwner | null => {
@@ -731,7 +779,7 @@ export default function App() {
   )
 
   const updateProject = useCallback(
-    (patch: Partial<Pick<KaraokeProject, 'title' | 'artist' | 'offsetMs'>>) => {
+    (patch: Partial<Pick<KaraokeProject, 'title' | 'artist' | 'offsetMs' | 'opening'>>) => {
       commit((current) => ({ ...current, ...patch, updatedAt: new Date().toISOString() }))
     },
     [commit],
@@ -862,6 +910,7 @@ export default function App() {
         projectRestoreSequenceRef.current = restoreSequence
         projectLifecycleSequenceRef.current += 1
         acceptedProjectBackgroundPathRef.current = path
+        cancelHeldSync()
         history.reset(next, true)
         setProjectPath(path)
         setActiveTrackId(next.tracks[0]?.id ?? '')
@@ -949,6 +998,7 @@ export default function App() {
       projectLifecycleSequenceRef.current += 1
       acceptedProjectBackgroundPathRef.current = null
       const next = createProject({ title: 'Untitled Song', artist: 'Unknown Artist' })
+      cancelHeldSync()
       history.reset(next, true)
       setProjectPath(null)
       setAudioUrl(null)
@@ -1333,11 +1383,12 @@ export default function App() {
         else next.add(word.id)
         return next
       })
-      if (word.startMs !== null) playback.seek(Math.max(0, word.startMs + project.offsetMs))
+      if (word.startMs !== null)
+        playback.seek(Math.max(0, project.opening.leadInMs + word.startMs + project.offsetMs))
       const index = syncWords.findIndex((candidate) => candidate.id === word.id)
       if (index >= 0 && syncMode) setSyncCursor(index)
     },
-    [playback.seek, project.offsetMs, syncMode, syncWords],
+    [playback.seek, project.offsetMs, project.opening.leadInMs, syncMode, syncWords],
   )
 
   const abandonHeldSyncGesture = useCallback(() => {
@@ -1499,11 +1550,16 @@ export default function App() {
 
   const handleClearTimingAfterCursor = useCallback(() => {
     clearActiveTrackTimingFrom(
-      lyricTimeAtPlayback(playback.getCurrentMs(), project.offsetMs),
+      lyricTimeAtPlayback(playback.getCurrentMs(), project.offsetMs, project.opening.leadInMs),
       'Cleared active-track timing from the playhead',
       'No active-track timing starts at or after the playhead',
     )
-  }, [clearActiveTrackTimingFrom, playback.getCurrentMs, project.offsetMs])
+  }, [
+    clearActiveTrackTimingFrom,
+    playback.getCurrentMs,
+    project.offsetMs,
+    project.opening.leadInMs,
+  ])
 
   const handleStop = useCallback(() => {
     cancelHeldSync()
@@ -1524,7 +1580,11 @@ export default function App() {
       showToast('Add lyrics before starting sync', 'warning')
       return
     }
-    const lyricTimeMs = lyricTimeAtPlayback(playback.getCurrentMs(), project.offsetMs)
+    const lyricTimeMs = lyricTimeAtPlayback(
+      playback.getCurrentMs(),
+      project.offsetMs,
+      project.opening.leadInMs,
+    )
     const fromPlayhead = syncWordIndexFromLyricTime(syncWords, lyricTimeMs)
     if (fromPlayhead < 0) {
       showToast('No words remain at or after the playhead', 'neutral')
@@ -1545,6 +1605,7 @@ export default function App() {
     activeTrack?.id,
     project.id,
     project.offsetMs,
+    project.opening.leadInMs,
     showToast,
     syncMode,
     syncWords,
@@ -1560,9 +1621,9 @@ export default function App() {
 
   useEffect(() => {
     if (!syncMode) return
-    const scope = `${project.id}\0${activeTrack?.id ?? ''}\0${syncWords
-      .map((word) => word.id)
-      .join('\0')}`
+    // Ordinary edits clear the session in commit(). A changed project/track is
+    // therefore fail-closed, while a timing-only cloned track keeps its session.
+    const scope = `${project.id}\0${activeTrack?.id ?? ''}\0${syncWords.map((word) => word.id).join('\0')}`
     if (scope === syncScopeRef.current) return
     cancelHeldSync()
     syncSessionHasCommitRef.current = false
@@ -1591,7 +1652,11 @@ export default function App() {
         return false
       }
 
-      const sampledLyricMs = lyricTimeAtPlayback(playback.getCurrentMs(), project.offsetMs)
+      const sampledLyricMs = lyricTimeAtPlayback(
+        playback.getCurrentMs(),
+        project.offsetMs,
+        project.opening.leadInMs,
+      )
       if (sampledLyricMs < 0) {
         showToast('The lyric clock has not reached 0:00 yet', 'neutral')
         return false
@@ -1641,7 +1706,11 @@ export default function App() {
     const endActiveWord = () => {
       const active = syncHeldRef.current
       if (!active) return
-      const sampledLyricMs = lyricTimeAtPlayback(playback.getCurrentMs(), project.offsetMs)
+      const sampledLyricMs = lyricTimeAtPlayback(
+        playback.getCurrentMs(),
+        project.offsetMs,
+        project.opening.leadInMs,
+      )
       if (sampledLyricMs < 0 || projectMutationIsBlocked()) return
       const timing = clampTiming(active.startMs, sampledLyricMs, {
         minMs: active.startMs,
@@ -1656,16 +1725,16 @@ export default function App() {
     }
 
     const keyDown = (event: KeyboardEvent) => {
+      const exactBare = !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey
       if (document.querySelector('.modal-backdrop')) return
       if (inputHasTypingFocus()) return
-      const exactBare = !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey
       const exactShift = event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey
       const targetsControl = eventTargetsSpaceActivatableControl(event)
 
       if (event.code === 'Escape' && syncMode) {
         event.preventDefault()
-        setSyncMode(false)
         cancelHeldSync()
+        setSyncMode(false)
         syncSessionHasCommitRef.current = false
         return
       }
@@ -1741,7 +1810,11 @@ export default function App() {
         return
       }
       if (held.isLineFinal) {
-        const sampledLyricMs = lyricTimeAtPlayback(playback.getCurrentMs(), project.offsetMs)
+        const sampledLyricMs = lyricTimeAtPlayback(
+          playback.getCurrentMs(),
+          project.offsetMs,
+          project.opening.leadInMs,
+        )
         const timing = clampTiming(held.startMs, sampledLyricMs, {
           minMs: held.startMs,
           maxMs: held.nextTimedStartMs ?? Number.POSITIVE_INFINITY,
@@ -1773,6 +1846,7 @@ export default function App() {
     playback.seek,
     playback.toggle,
     project.offsetMs,
+    project.opening.leadInMs,
     projectMutationIsBlocked,
     selectAllActiveTrackWords,
     selectedWordIds,
@@ -2038,7 +2112,11 @@ export default function App() {
             const nextWords = flattenTrack(reconciliation.track).map(({ word }) => word)
             const nextSyncCursor = syncWordIndexFromLyricTime(
               nextWords,
-              lyricTimeAtPlayback(playback.getCurrentMs(), project.offsetMs),
+              lyricTimeAtPlayback(
+                playback.getCurrentMs(),
+                project.offsetMs,
+                project.opening.leadInMs,
+              ),
             )
             replaceTrack(currentTrack.id, reconciliation.track)
             setSyncCursor(nextSyncCursor >= 0 ? nextSyncCursor : nextWords.length)

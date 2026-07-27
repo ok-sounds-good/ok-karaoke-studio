@@ -13,7 +13,7 @@ import { cloneVocalStyle } from '../src/lib/video-style'
 
 const require = createRequire(import.meta.url)
 const { frameStateAt } = require('../electron/video-export.cjs') as {
-  frameStateAt(project: unknown, playbackMs: number): { showTitle: boolean }
+  frameStateAt(project: unknown, playbackMs: number): { showTitle: boolean; lines: unknown[] }
 }
 
 function projectWithLineLeadIn() {
@@ -79,5 +79,100 @@ describe('Live Preview and MP4 title-card parity', () => {
 
     expect(markup).toContain('class="title-card"')
     expect(frameStateAt(project, 0).showTitle).toBe(true)
+  })
+
+  it('gates lyrics and preserves the title at the opening boundary', () => {
+    const project = projectWithLineLeadIn()
+    project.opening = { leadInMs: 2_000, titleTiming: { mode: 'until-lyrics' } }
+    const before = frameStateAt(project, 1_999)
+    const at = frameStateAt(project, 2_000)
+
+    expect(before.lines).toEqual([])
+    expect(before.showTitle).toBe(true)
+    expect(at.showTitle).toBe(true)
+  })
+
+  it('keeps the title when every timed lyric window has expired before the opening', () => {
+    const project = createProject({
+      offsetMs: -2_000,
+      opening: { leadInMs: 1_000, titleTiming: { mode: 'until-lyrics' } },
+      lyricDisplay: { lineCount: 1, advanceMode: 'clear' },
+      tracks: [
+        createVocalTrack({
+          id: 'expired-track',
+          lines: [
+            createLyricLine('Already gone', {
+              startMs: 0,
+              endMs: 500,
+              words: [createLyricWord('Already', { startMs: 0, endMs: 500 })],
+            }),
+          ],
+        }),
+      ],
+    })
+
+    for (const playbackMs of [1_000, 3_000]) {
+      const state = frameStateAt(project, playbackMs)
+      expect(state.showTitle).toBe(true)
+      expect(state.lines).toEqual([])
+    }
+  })
+
+  it('keeps the title when the only lyric window completes exactly at the opening', () => {
+    const project = createProject({
+      offsetMs: -500,
+      opening: { leadInMs: 1_000, titleTiming: { mode: 'until-lyrics' } },
+      lyricDisplay: { lineCount: 1, advanceMode: 'clear' },
+      tracks: [
+        createVocalTrack({
+          id: 'opening-equality-track',
+          lines: [
+            createLyricLine('Exactly finished', {
+              startMs: 0,
+              endMs: 500,
+              words: [createLyricWord('Exactly', { startMs: 0, endMs: 500 })],
+            }),
+          ],
+        }),
+      ],
+    })
+
+    for (const playbackMs of [1_000, 1_001, 3_000]) {
+      const state = frameStateAt(project, playbackMs)
+      expect(state.showTitle).toBe(true)
+      expect(state.lines).toEqual([])
+    }
+  })
+
+  it('waits for the later eligible window when an earlier window is already expired', () => {
+    const vocalStyle = cloneVocalStyle()
+    vocalStyle.previewMs = 1_500
+    vocalStyle.syncAid = { enabled: false, minLeadMs: 1_000, maxLeadMs: 1_500 }
+    const project = createProject({
+      offsetMs: -2_000,
+      opening: { leadInMs: 1_000, titleTiming: { mode: 'until-lyrics' } },
+      lyricDisplay: { lineCount: 1, advanceMode: 'clear' },
+      tracks: [
+        createVocalTrack({
+          id: 'later-track',
+          vocalStyle,
+          lines: [
+            createLyricLine('Expired', {
+              startMs: 0,
+              endMs: 500,
+              words: [createLyricWord('Expired', { startMs: 0, endMs: 500 })],
+            }),
+            createLyricLine('Later', {
+              startMs: 5_000,
+              endMs: 5_500,
+              words: [createLyricWord('Later', { startMs: 5_000, endMs: 5_500 })],
+            }),
+          ],
+        }),
+      ],
+    })
+
+    expect(frameStateAt(project, 2_499).showTitle).toBe(true)
+    expect(frameStateAt(project, 2_500).showTitle).toBe(false)
   })
 })

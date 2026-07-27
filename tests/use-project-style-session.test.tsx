@@ -629,6 +629,33 @@ describe('project Style session', () => {
     expect(commitDraft).not.toHaveBeenCalled()
   })
 
+  it('commits Opening Timing only on apply and discards it on cancel', async () => {
+    await start()
+    await act(async () =>
+      currentSession.change((draft) => ({
+        ...draft,
+        opening: { leadInMs: 1_200, titleTiming: { mode: 'until-lyrics' } },
+      })),
+    )
+    await act(async () => currentSession.cancel())
+    expect(commitDraft).not.toHaveBeenCalled()
+
+    await start()
+    await act(async () =>
+      currentSession.change((draft) => ({
+        ...draft,
+        opening: { leadInMs: 1_200, titleTiming: { mode: 'until-lyrics' } },
+      })),
+    )
+    await act(async () => currentSession.apply())
+    expect(commitDraft).toHaveBeenCalledWith(
+      ownerKey,
+      expect.objectContaining({
+        opening: { leadInMs: 1_200, titleTiming: { mode: 'until-lyrics' } },
+      }),
+    )
+  })
+
   it('keeps placement edits transactional across Cancel and Apply', async () => {
     const baseline = structuredClone(source)
     await start()

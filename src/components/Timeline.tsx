@@ -115,9 +115,15 @@ export function Timeline({
   const trackLayouts = useMemo(
     () =>
       project.tracks.map((track) =>
-        buildTimelineTrackLayout(track, project.offsetMs, pixelsPerSecond, timingDraft),
+        buildTimelineTrackLayout(
+          track,
+          project.offsetMs,
+          pixelsPerSecond,
+          timingDraft,
+          project.opening.leadInMs,
+        ),
       ),
-    [pixelsPerSecond, project.offsetMs, project.tracks, timingDraft],
+    [pixelsPerSecond, project.offsetMs, project.opening.leadInMs, project.tracks, timingDraft],
   )
   const trackLayoutById = useMemo(
     () => new Map(trackLayouts.map((layout) => [layout.trackId, layout])),
@@ -129,6 +135,11 @@ export function Timeline({
     ...trackLayouts.map((layout) => layout.maxRight + 24),
   )
   const playheadLeft = (currentMs / 1000) * pixelsPerSecond
+  const waveformLeft = (project.opening.leadInMs / 1000) * pixelsPerSecond
+  const waveformWidth =
+    ((project.durationMs ?? Math.max(0, durationMs - project.opening.leadInMs)) / 1000) *
+    pixelsPerSecond
+  const waveformPlayedWidth = Math.max(0, playheadLeft - waveformLeft)
   const followBucket = Math.floor(currentMs / 500)
   const tickStepSeconds = zoom < 0.8 ? 5 : zoom < 1.7 ? 2 : 1
   const labelStepSeconds = zoom < 0.8 ? 10 : zoom < 1.7 ? 5 : 2
@@ -138,7 +149,7 @@ export function Timeline({
     [activeTrack, activeTrackId, project.id],
   )
   const activeTrackWords = activeTrack ? flattenTrack(activeTrack) : []
-  const clearBoundaryMs = Math.max(0, currentMs - project.offsetMs)
+  const clearBoundaryMs = Math.max(0, currentMs - project.opening.leadInMs - project.offsetMs)
   const activeHasTiming = Boolean(
     activeTrack?.lines.some(
       (line) =>
@@ -288,7 +299,10 @@ export function Timeline({
 
   const seekFromPointer = (event: ReactPointerEvent<HTMLElement>) => {
     const bounds = event.currentTarget.getBoundingClientRect()
-    const x = event.clientX - bounds.left
+    const x =
+      event.clientX -
+      bounds.left +
+      (event.currentTarget.classList.contains('timeline-waveform') ? waveformLeft : 0)
     onSeek(Math.round((x / pixelsPerSecond) * 1000))
   }
 
@@ -626,6 +640,13 @@ export function Timeline({
           onScroll={(event) => setTimelineScrollTop(event.currentTarget.scrollTop)}
         >
           <div className="timeline-canvas" style={{ width }}>
+            {project.opening.leadInMs > 0 && (
+              <div
+                className="timeline-lead-in"
+                aria-label={`Opening lead-in, 0:00 to ${formatTime(project.opening.leadInMs)}`}
+                style={{ width: waveformLeft }}
+              />
+            )}
             <div className="timeline-ruler" onPointerDown={seekFromPointer}>
               {ticks.map((second) => (
                 <span
@@ -638,7 +659,11 @@ export function Timeline({
               ))}
             </div>
 
-            <div className="timeline-waveform" onPointerDown={seekFromPointer}>
+            <div
+              className="timeline-waveform"
+              style={{ marginLeft: waveformLeft, width: Math.max(0, waveformWidth) }}
+              onPointerDown={seekFromPointer}
+            >
               <svg
                 viewBox={`0 0 ${Math.max(1, peaks.length - 1)} 76`}
                 preserveAspectRatio="none"
@@ -646,14 +671,20 @@ export function Timeline({
               >
                 <path d={waveformPath} />
               </svg>
-              <div className="waveform-played" style={{ width: playheadLeft }} />
+              <div className="waveform-played" style={{ width: waveformPlayedWidth }} />
             </div>
 
             <div className="timeline-lanes">
               {project.tracks.map((track) => {
                 const layout =
                   trackLayoutById.get(track.id) ??
-                  buildTimelineTrackLayout(track, project.offsetMs, pixelsPerSecond, timingDraft)
+                  buildTimelineTrackLayout(
+                    track,
+                    project.offsetMs,
+                    pixelsPerSecond,
+                    timingDraft,
+                    project.opening.leadInMs,
+                  )
                 const activeMarquee = marquee?.trackId === track.id ? marquee : null
                 return (
                   <div
@@ -716,15 +747,18 @@ export function Timeline({
                           const rawEnd = draftTiming?.endMs ?? word.endMs ?? rawStart + 360
                           const adjustedStart = Math.max(
                             0,
-                            timelineTime(rawStart, project.offsetMs),
+                            timelineTime(rawStart, project.offsetMs, project.opening.leadInMs),
                           )
-                          const adjustedEnd = timelineTime(rawEnd, project.offsetMs)
+                          const adjustedEnd = timelineTime(
+                            rawEnd,
+                            project.offsetMs,
+                            project.opening.leadInMs,
+                          )
                           const timingLabel = `${formatTime(adjustedStart, true)}–${formatTime(adjustedEnd, true)}`
                           const selected = selectedWordIds.has(word.id)
                           return (
                             <button
                               key={word.id}
-                              data-word-id={word.id}
                               className={`timeline-word ${wordLayout.width < 14 ? 'is-compact' : ''} ${selected ? 'is-selected' : ''} ${syncWordId === word.id ? 'is-sync-target' : ''}`}
                               style={
                                 {
@@ -749,7 +783,14 @@ export function Timeline({
                               onLostPointerCapture={lostPointerCapture}
                               onDoubleClick={() =>
                                 onSeek(
-                                  Math.max(0, timelineTime(word.startMs ?? 0, project.offsetMs)),
+                                  Math.max(
+                                    0,
+                                    timelineTime(
+                                      word.startMs ?? 0,
+                                      project.offsetMs,
+                                      project.opening.leadInMs,
+                                    ),
+                                  ),
                                 )
                               }
                             >

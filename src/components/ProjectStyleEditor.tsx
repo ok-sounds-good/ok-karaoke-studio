@@ -12,6 +12,7 @@ import type {
 } from '../hooks/useProjectStyleSession'
 import { canonicalSingerStyle } from '../hooks/useProjectStyleSession'
 import type { KaraokeProject } from '../lib/model'
+import { openingLeadInMaximum } from '../lib/project-validation'
 import {
   FONT_SIZE_OPTIONS,
   cloneFontFace,
@@ -128,6 +129,7 @@ export function ProjectStyleEditor({
   const previewProject = {
     ...project,
     lyricDisplay: { ...draft.lyricDisplay },
+    opening: { leadInMs: draft.opening.leadInMs, titleTiming: { mode: 'until-lyrics' as const } },
     stageStyle,
     tracks: project.tracks.map((track) => {
       const singer = draft.singers.find(({ trackId }) => trackId === track.id)
@@ -420,6 +422,9 @@ export function ProjectStyleEditor({
             id={`${titleId}-title-card-panel`}
             labelledBy={`${titleId}-title-card-tab`}
             onDraftChange={changeStageStyle}
+            openingMaximumMs={openingLeadInMaximum(project)}
+            opening={draft.opening}
+            onOpeningChange={(opening) => onDraftChange((current) => ({ ...current, opening }))}
             onRetryFonts={onRetryFonts}
             onSelectedRoleChange={setTitleCardPreviewRole}
           />
@@ -471,7 +476,7 @@ export function ProjectStyleEditor({
       <KaraokePreview
         project={previewProject}
         playbackMs={playbackMs}
-        lyricMs={playbackMs - project.offsetMs}
+        lyricMs={playbackMs - draft.opening.leadInMs - project.offsetMs}
         selectedWordIds={new Set()}
         backgroundImage={backgroundPreview}
         designMode={

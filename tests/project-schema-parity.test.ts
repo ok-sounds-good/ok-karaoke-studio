@@ -15,6 +15,7 @@ import {
   parseProject as parseCurrentV0Project,
   serializeProject as serializeCurrentV0Project,
 } from '../src/lib/project-codec'
+import { MAX_OPENING_LEAD_IN_MS } from '../src/lib/project-validation'
 
 const require = createRequire(import.meta.url)
 const projectSchema = require('../electron/project-schema.cjs') as {
@@ -204,6 +205,14 @@ describe('current project schema parity', () => {
     objectAt(outsideLine, ['tracks', 0, 'lines', 0, 'words', 0]).startMs = 500
     const badDisplay = clone()
     objectAt(badDisplay, ['lyricDisplay']).lineCount = 6
+    const negativeOpening = clone()
+    objectAt(negativeOpening, ['opening']).leadInMs = -1
+    const hugeOpening = clone()
+    hugeOpening.durationMs = null
+    hugeOpening.tracks = []
+    objectAt(hugeOpening, ['opening']).leadInMs = Number.MAX_SAFE_INTEGER
+    const unsupportedOpeningMode = clone()
+    objectAt(unsupportedOpeningMode, ['opening', 'titleTiming']).mode = 'fixed-duration'
 
     for (const invalid of [
       tooManyTracks,
@@ -212,8 +221,31 @@ describe('current project schema parity', () => {
       duplicate,
       outsideLine,
       badDisplay,
+      negativeOpening,
+      hugeOpening,
+      unsupportedOpeningMode,
     ])
       parity(JSON.stringify(invalid), false)
+  })
+
+  it('accepts the bounded opening maximum without a duration and rejects a larger lead-in', () => {
+    const maximum = clone()
+    maximum.durationMs = null
+    maximum.tracks = []
+    objectAt(maximum, ['opening']).leadInMs = MAX_OPENING_LEAD_IN_MS
+    parity(JSON.stringify(maximum), true)
+
+    const overMaximum = clone()
+    overMaximum.durationMs = null
+    overMaximum.tracks = []
+    objectAt(overMaximum, ['opening']).leadInMs = MAX_OPENING_LEAD_IN_MS + 1
+    parity(JSON.stringify(overMaximum), false)
+
+    const exceedsCombinedDurationBudget = clone()
+    exceedsCombinedDurationBudget.tracks = []
+    exceedsCombinedDurationBudget.durationMs = MAX_OPENING_LEAD_IN_MS - 1_000
+    objectAt(exceedsCombinedDurationBudget, ['opening']).leadInMs = 2_000
+    parity(JSON.stringify(exceedsCombinedDurationBudget), false)
   })
 
   it('guards main-process open/save effects behind successful parsing', () => {

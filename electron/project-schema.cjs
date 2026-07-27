@@ -6,6 +6,7 @@ const PROJECT_SCHEMA_VERSION = 0
 const UNSUPPORTED_PROJECT_FORMAT_ERROR =
   'Unsupported project format. This build accepts only the current v0 format (schemaVersion 0).'
 const MAX_PROJECT_DURATION_MS = 4 * 60 * 60 * 1_000
+const MAX_OPENING_LEAD_IN_MS = MAX_PROJECT_DURATION_MS
 const MAX_PROJECT_TRACKS = 8
 const MAX_PROJECT_LINES = 20_000
 const MAX_PROJECT_WORDS = 150_000
@@ -122,6 +123,21 @@ function decodeLyricDisplay(value) {
   }
 }
 
+function decodeOpening(value) {
+  const source = record(value, 'project.opening')
+  exactKeys(source, ['leadInMs', 'titleTiming'], 'project.opening')
+  const leadInMs = integer(source, 'leadInMs', 'project.opening')
+  if (leadInMs < 0 || leadInMs > MAX_OPENING_LEAD_IN_MS) {
+    throw new TypeError('project.opening.leadInMs must be between zero and four hours.')
+  }
+  const titleTiming = record(source.titleTiming, 'project.opening.titleTiming')
+  exactKeys(titleTiming, ['mode'], 'project.opening.titleTiming')
+  if (string(titleTiming, 'mode', 'project.opening.titleTiming') !== 'until-lyrics') {
+    throw new TypeError('project.opening.titleTiming.mode must be until-lyrics.')
+  }
+  return { leadInMs, titleTiming: { mode: 'until-lyrics' } }
+}
+
 function validateTiming(startMs, endMs, label) {
   if (startMs === null && endMs === null) return false
   if (startMs === null || endMs === null) {
@@ -168,6 +184,26 @@ function validateProject(project) {
     )
   }
   if (
+    !Number.isSafeInteger(project.opening.leadInMs) ||
+    project.opening.leadInMs < 0 ||
+    project.opening.leadInMs > MAX_OPENING_LEAD_IN_MS
+  ) {
+    throw new Error(
+      'Invalid karaoke project: Opening lead-in must be a safe integer between zero and four hours.',
+    )
+  }
+  if (project.opening.titleTiming.mode !== 'until-lyrics') {
+    throw new Error('Invalid karaoke project: Opening title timing mode must be until-lyrics.')
+  }
+  if (
+    project.durationMs !== null &&
+    project.durationMs + project.opening.leadInMs > MAX_PROJECT_DURATION_MS
+  ) {
+    throw new Error(
+      'Invalid karaoke project: Project duration including opening cannot exceed four hours.',
+    )
+  }
+  if (
     !Number.isSafeInteger(project.offsetMs) ||
     Math.abs(project.offsetMs) > MAX_PROJECT_DURATION_MS
   ) {
@@ -190,7 +226,10 @@ function validateProject(project) {
       ) {
         throw new Error('Invalid karaoke project: Line ends after the project duration.')
       }
-      if (lineTimed && line.endMs + project.offsetMs > MAX_PROJECT_DURATION_MS) {
+      if (
+        lineTimed &&
+        line.endMs + project.offsetMs + project.opening.leadInMs > MAX_PROJECT_DURATION_MS
+      ) {
         throw new Error(
           'Invalid karaoke project: Offset-adjusted line timing cannot exceed four hours.',
         )
@@ -213,7 +252,10 @@ function validateProject(project) {
         ) {
           throw new Error('Invalid karaoke project: Word ends after the project duration.')
         }
-        if (wordTimed && word.endMs + project.offsetMs > MAX_PROJECT_DURATION_MS) {
+        if (
+          wordTimed &&
+          word.endMs + project.offsetMs + project.opening.leadInMs > MAX_PROJECT_DURATION_MS
+        ) {
           throw new Error(
             'Invalid karaoke project: Offset-adjusted word timing cannot exceed four hours.',
           )
@@ -246,6 +288,7 @@ function decodeProject(value) {
       'createdAt',
       'updatedAt',
       'lyricDisplay',
+      'opening',
       'stageStyle',
       'tracks',
     ],
@@ -270,6 +313,7 @@ function decodeProject(value) {
     createdAt: string(source, 'createdAt', 'project'),
     updatedAt: string(source, 'updatedAt', 'project'),
     lyricDisplay: decodeLyricDisplay(source.lyricDisplay),
+    opening: decodeOpening(source.opening),
     stageStyle: decodeStageStyle(source.stageStyle),
     tracks: tracks.map((track, index) =>
       decodeTrack(track, `project.tracks[${index}]`, cardinality),

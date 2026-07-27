@@ -14,6 +14,7 @@ const {
   PACKAGED_APP_URL,
   STABLE_RENDERER_SCRIPT,
   layoutReachabilityScript,
+  timelineLeadInGeometryScript,
   STYLE_KEY_RECORDER_SCRIPT,
   STYLE_KEY_RESULT_SCRIPT,
   STYLE_KEY_SEQUENCE,
@@ -33,6 +34,7 @@ const {
   validProjectLyricsState,
   validRendererState,
   validLayoutReachabilityState,
+  validTimelineLeadInGeometryState,
   validStageFrameState,
   validStyleActionTarget,
   validStyleDestinationLayout,
@@ -122,7 +124,7 @@ function restoreCaptureGeometry(window, contents, state) {
 
 async function observedCssViewport(contents) {
   const value = await contents.executeJavaScript(
-    '({ devicePixelRatio: window.devicePixelRatio, height: document.documentElement.clientHeight, width: document.documentElement.clientWidth })',
+    'new Promise((resolve) => requestAnimationFrame(() => resolve({ devicePixelRatio: window.devicePixelRatio, height: document.documentElement.clientHeight, width: document.documentElement.clientWidth })))',
     false,
   )
   if (
@@ -265,6 +267,13 @@ async function captureBaseline(window, app, options, config) {
     await validateLayoutReachability(window, options, prepared.viewport, false, {
       requireInitialViewport: prepared.profile.requireInitialViewport,
     })
+    const leadInGeometry = await window.webContents.executeJavaScript(
+      timelineLeadInGeometryScript(),
+      false,
+    )
+    if (!validTimelineLeadInGeometryState(leadInGeometry)) {
+      throw smokeError('VISUAL_SMOKE_RENDERER_INVALID')
+    }
     const captureProfile = layoutSmokeProfile(prepared.nativeScale === 2 ? 'dpr2' : '100')
     await applyLayoutProfile(window, captureProfile)
     const rendererState = await window.webContents.executeJavaScript(STABLE_RENDERER_SCRIPT, false)
@@ -671,6 +680,9 @@ async function captureStyleSession(window, app, options, config) {
       options.readinessTimeoutMs,
     )
     if (!validStyleTemplateState(templateState, viewport, STYLE_TEMPLATE_NAME)) readinessInvalid()
+    pngs.push(await capture(viewport))
+    await activate('title')
+    await activate('opening-timing')
     pngs.push(await capture(viewport))
     return options.createScenarioArtifacts(STYLE_SESSION_SCENARIO, pngs, prepared.observation)
       .artifacts

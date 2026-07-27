@@ -681,6 +681,18 @@ describe('karaoke video frame planning', () => {
     },
   )
 
+  it('delays audio once while leaving frame timestamps absolute for an opening', () => {
+    const args = videoExport.buildFfmpegArguments(
+      '/music/source.wav',
+      '/exports/video.mp4',
+      7_000,
+      { resolution: '1440p', fps: 30 },
+      2_000,
+    )
+    expect(args).toContain('adelay=2000:all=1,apad')
+    expect(args).toContain('7.000')
+  })
+
   it('shares title, Clear/Scroll, section, resolved style, Preview, and sync-aid state', () => {
     const project = videoProject()
     const vocal = project.tracks[0].vocalStyle

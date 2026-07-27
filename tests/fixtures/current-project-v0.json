@@ -9,6 +9,7 @@
   "createdAt": "2026-07-14T12:00:00.000Z",
   "updatedAt": "2026-07-14T12:01:00.000Z",
   "lyricDisplay": { "lineCount": 2, "advanceMode": "scroll" },
+  "opening": { "leadInMs": 0, "titleTiming": { "mode": "until-lyrics" } },
   "stageStyle": {
     "background": {
       "mode": "image",

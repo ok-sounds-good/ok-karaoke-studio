@@ -12,7 +12,7 @@ import {
   type VisibleTextStyle,
   type VocalStyle,
 } from '../lib/video-style'
-import type { LyricDisplaySettings, VocalTrack } from '../lib/model'
+import type { LyricDisplaySettings, OpeningTiming, VocalTrack } from '../lib/model'
 import type { VideoExportDefaults } from '../lib/video-export-settings'
 import { DEFAULT_VIDEO_EXPORT_SETTINGS } from '../lib/video-export-settings'
 import {
@@ -33,6 +33,7 @@ export type ProjectStyleCommitResult = 'applied' | 'noop' | 'blocked' | 'stale'
 export interface ProjectStyleDraft {
   stageStyle: StageStyle
   lyricDisplay: LyricDisplaySettings
+  opening: OpeningTiming
   singers: ProjectStyleSingerDraft[]
   videoExportDefaults: VideoExportDefaults
 }
@@ -152,6 +153,7 @@ export function cloneProjectStyleDraft(draft: ProjectStyleDraft): ProjectStyleDr
   return {
     stageStyle: cloneStageStyle(draft.stageStyle),
     lyricDisplay: { ...draft.lyricDisplay },
+    opening: { leadInMs: draft.opening.leadInMs, titleTiming: { mode: 'until-lyrics' } },
     singers: draft.singers.map((singer) => ({
       ...singer,
       vocalStyle: cloneVocalStyle(singer.vocalStyle),
@@ -166,10 +168,12 @@ export function createProjectStyleDraft(
   tracks: readonly VocalTrack[],
   lyricDisplay: LyricDisplaySettings = { lineCount: 2, advanceMode: 'clear' },
   videoExportDefaults: VideoExportDefaults = DEFAULT_VIDEO_EXPORT_SETTINGS,
+  opening: OpeningTiming = { leadInMs: 0, titleTiming: { mode: 'until-lyrics' } },
 ): ProjectStyleDraft {
   return {
     stageStyle,
     lyricDisplay,
+    opening: { leadInMs: opening.leadInMs, titleTiming: { mode: 'until-lyrics' } },
     singers: tracks.map((track) => {
       const vocalStyle = cloneVocalStyle(track.vocalStyle)
       return {
@@ -209,6 +213,7 @@ export function sameProjectStyleDraft(left: ProjectStyleDraft, right: ProjectSty
     sameStageStyle(left.stageStyle, right.stageStyle) &&
     left.lyricDisplay.lineCount === right.lyricDisplay.lineCount &&
     left.lyricDisplay.advanceMode === right.lyricDisplay.advanceMode &&
+    left.opening.leadInMs === right.opening.leadInMs &&
     left.singers.length === right.singers.length &&
     left.singers.every((singer, index) => {
       const other = right.singers[index]
