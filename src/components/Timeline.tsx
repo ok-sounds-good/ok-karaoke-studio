@@ -1,10 +1,12 @@
 import {
   Fragment,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
@@ -22,6 +24,7 @@ import {
   ZoomIn,
 } from 'lucide-react'
 import type { KaraokeProject, LyricWord } from '../lib/model'
+import type { SyncSession } from '../lib/sync-session'
 import { formatTime } from '../lib/model'
 import { resolveVocalSungColor } from '../lib/video-style'
 import { flattenTrack, motionAwareScrollBehavior, type ProjectTimingDraft } from '../utils'
@@ -33,6 +36,7 @@ import {
   timelineTime,
   timelineWordIdsInRect,
   timelineWordLabel,
+  type TimelineLineLayout,
   type TimelineTrackLayout,
 } from './timeline-geometry'
 import {
@@ -56,6 +60,8 @@ interface TimelineProps {
   activeTrackId: string
   selectedWordIds: Set<string>
   syncWordId: string | null
+  syncSession?: SyncSession | null
+  syncOwnerScope?: string | null
   syncMode: boolean
   onSeek: (timeMs: number) => void
   onZoom: (zoom: number) => void
@@ -82,6 +88,75 @@ interface TimelineMarquee {
   currentY: number
 }
 
+export function indexTimelineLinesBySourceIndex(layout: TimelineTrackLayout | null) {
+  return new Map<number, TimelineLineLayout>(
+    layout?.lines.map((line) => [line.lineIndex, line]) ?? [],
+  )
+}
+
+export function pendingLineLayoutAt(
+  lineLayoutsBySourceIndex: Pick<ReadonlyMap<number, TimelineLineLayout>, 'get'>,
+  lineIndex: number,
+) {
+  return lineLayoutsBySourceIndex.get(lineIndex)
+}
+
+function PendingSyncBlocks({
+  session,
+  lineLayoutsBySourceIndex,
+  pixelsPerSecond,
+  offsetMs,
+  leadInMs,
+  color,
+}: {
+  session: SyncSession
+  lineLayoutsBySourceIndex: ReadonlyMap<number, TimelineLineLayout>
+  pixelsPerSecond: number
+  offsetMs: number
+  leadInMs: number
+  color: string
+}) {
+  useSyncExternalStore(session.subscribe.bind(session), session.getSnapshot)
+  return session
+    .getPendingWords()
+    .filter(
+      (word) => word.startMs !== null && (!word.initiallyTimed || word.changedFromMaterialized),
+    )
+    .map((word) => {
+      const line = pendingLineLayoutAt(lineLayoutsBySourceIndex, word.lineIndex)
+      const wordLayout = line?.words[word.wordIndex]
+      const start = Math.max(0, timelineTime(word.startMs!, offsetMs, leadInMs))
+      const end = timelineTime(word.endMs ?? word.startMs! + 100, offsetMs, leadInMs)
+      const timingLabel = `${word.text.replaceAll('/', '·')} timing block, ${formatTime(start, true)}–${formatTime(end, true)}`
+      return (
+        <span
+          key={word.id}
+          className="timeline-sync-pending"
+          aria-hidden="true"
+          data-sync-pending-word-id={word.id}
+          data-timing-label={timingLabel}
+          onPointerDown={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+          }}
+          onPointerMove={(event) => event.stopPropagation()}
+          onPointerUp={(event) => event.stopPropagation()}
+          onPointerCancel={(event) => event.stopPropagation()}
+          style={
+            {
+              top: wordLayout?.top ?? 8,
+              left: (start / 1000) * pixelsPerSecond,
+              width: Math.max(2, ((end - start) / 1000) * pixelsPerSecond),
+              height: TIMELINE_WORD_HEIGHT_PX,
+              '--track-color': color,
+              cursor: 'default',
+            } as CSSProperties
+          }
+        />
+      )
+    })
+}
+
 export function Timeline({
   project,
   peaks,
@@ -92,6 +167,8 @@ export function Timeline({
   activeTrackId,
   selectedWordIds,
   syncWordId,
+  syncSession,
+  syncOwnerScope,
   syncMode,
   onSeek,
   onZoom,
@@ -106,11 +183,110 @@ export function Timeline({
   onClearTimingAfterCursor,
 }: TimelineProps) {
   const viewportRef = useRef<HTMLDivElement>(null)
+  const syncTargetNodesRef = useRef(new Map<string, Map<HTMLElement, string>>())
+  const syncTargetCallbacksRef = useRef(new Map<string, (node: HTMLElement | null) => void>())
+  const activeSyncTargetRef = useRef<{ scope: string; wordId: string } | null>(null)
+  const syncTargetScope =
+    syncSession && syncSession.trackId === activeTrackId
+      ? (syncOwnerScope ?? `${project.id}\0${activeTrackId}\0${syncSession.epoch}`)
+      : null
+  const syncTargetScopeRef = useRef(syncTargetScope)
   const [timingDraft, setTimingDraft] = useState<ProjectTimingDraft | null>(null)
   const [marquee, setMarquee] = useState<TimelineMarquee | null>(null)
   const marqueeRef = useRef<TimelineMarquee | null>(null)
   const mountedRef = useRef(true)
   const [timelineScrollTop, setTimelineScrollTop] = useState(0)
+
+  const clearSyncTargetNodes = useCallback((scope?: string) => {
+    for (const [wordId, nodes] of syncTargetNodesRef.current) {
+      for (const [node, nodeScope] of nodes) {
+        if (scope !== undefined && nodeScope !== scope) continue
+        node.classList.remove('is-sync-target')
+        nodes.delete(node)
+      }
+      if (!nodes.size) syncTargetNodesRef.current.delete(wordId)
+    }
+  }, [])
+
+  syncTargetScopeRef.current = syncTargetScope
+  const registerSyncTargetNode = useCallback((surface: string, wordId: string) => {
+    const scope = syncTargetScopeRef.current
+    const callbackKey = `${scope ?? 'inactive'}\0${surface}\0${wordId}`
+    const existing = syncTargetCallbacksRef.current.get(callbackKey)
+    if (existing) return existing
+
+    let attached: HTMLElement | null = null
+    const callback = (node: HTMLElement | null) => {
+      if (attached === node) return
+      if (attached) {
+        const nodes = syncTargetNodesRef.current.get(wordId)
+        nodes?.delete(attached)
+        attached.classList.remove('is-sync-target')
+        if (nodes && !nodes.size) syncTargetNodesRef.current.delete(wordId)
+      }
+      attached = node
+      if (!node) {
+        if (syncTargetCallbacksRef.current.get(callbackKey) === callback) {
+          syncTargetCallbacksRef.current.delete(callbackKey)
+        }
+        return
+      }
+      syncTargetCallbacksRef.current.set(callbackKey, callback)
+      if (!scope) return
+      const nodes = syncTargetNodesRef.current.get(wordId) ?? new Map<HTMLElement, string>()
+      nodes.set(node, scope)
+      syncTargetNodesRef.current.set(wordId, nodes)
+      const activeTarget = activeSyncTargetRef.current
+      if (activeTarget?.scope === scope && activeTarget.wordId === wordId) {
+        node.classList.add('is-sync-target')
+      }
+    }
+
+    syncTargetCallbacksRef.current.set(callbackKey, callback)
+    return callback
+  }, [])
+
+  useEffect(() => {
+    if (!syncSession || !syncTargetScope) {
+      activeSyncTargetRef.current = null
+      clearSyncTargetNodes()
+      return
+    }
+    const apply = () => {
+      const next = syncSession.getSnapshot().targetWordId
+      const nextTarget = next ? { scope: syncTargetScope, wordId: next } : null
+      const previous = activeSyncTargetRef.current
+      if (previous?.scope === nextTarget?.scope && previous?.wordId === nextTarget?.wordId) {
+        return
+      }
+      if (previous)
+        syncTargetNodesRef.current.get(previous.wordId)?.forEach((scope, node) => {
+          if (scope === previous.scope) node.classList.remove('is-sync-target')
+        })
+      if (nextTarget)
+        syncTargetNodesRef.current.get(nextTarget.wordId)?.forEach((scope, node) => {
+          if (scope === nextTarget.scope) node.classList.add('is-sync-target')
+        })
+      activeSyncTargetRef.current = nextTarget
+    }
+    apply()
+    const unsubscribe = syncSession.subscribe(apply)
+    return () => {
+      unsubscribe()
+      clearSyncTargetNodes(syncTargetScope)
+      if (activeSyncTargetRef.current?.scope === syncTargetScope) {
+        activeSyncTargetRef.current = null
+      }
+    }
+  }, [clearSyncTargetNodes, syncSession, syncTargetScope])
+  useEffect(
+    () => () => {
+      activeSyncTargetRef.current = null
+      clearSyncTargetNodes()
+      syncTargetCallbacksRef.current.clear()
+    },
+    [clearSyncTargetNodes],
+  )
   const pixelsPerSecond = 72 * zoom
   const trackLayouts = useMemo(
     () =>
@@ -128,6 +304,11 @@ export function Timeline({
   const trackLayoutById = useMemo(
     () => new Map(trackLayouts.map((layout) => [layout.trackId, layout])),
     [trackLayouts],
+  )
+  const activeLayout = trackLayoutById.get(activeTrackId) ?? null
+  const activeLineLayoutsBySourceIndex = useMemo(
+    () => indexTimelineLinesBySourceIndex(activeLayout),
+    [activeLayout],
   )
   const width = Math.max(
     1040,
@@ -150,7 +331,7 @@ export function Timeline({
   )
   const activeTrackWords = activeTrack ? flattenTrack(activeTrack) : []
   const clearBoundaryMs = Math.max(0, currentMs - project.opening.leadInMs - project.offsetMs)
-  const activeHasTiming = Boolean(
+  const activeHasMaterializedTiming = Boolean(
     activeTrack?.lines.some(
       (line) =>
         line.startMs !== null ||
@@ -158,6 +339,7 @@ export function Timeline({
         line.words.some((word) => word.startMs !== null || word.endMs !== null),
     ),
   )
+  const activeHasTiming = activeHasMaterializedTiming || Boolean(syncSession?.hasPending)
   const canClearAfterCursor =
     clearBoundaryMs === 0
       ? activeHasTiming
@@ -528,24 +710,14 @@ export function Timeline({
             >
               <Zap size={13} fill="currentColor" /> {syncMode ? 'Exit sync' : 'Start sync'}
             </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              title="Clear every timing in the active track; lyric text is preserved"
-              disabled={!activeHasTiming}
-              onClick={onClearTiming}
-            >
-              <RotateCcw size={13} /> Clear timing
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              title="Clear active-track timings that begin at or after the playhead"
-              disabled={!canClearAfterCursor}
-              onClick={onClearTimingAfterCursor}
-            >
-              <TimerReset size={13} /> Clear from cursor
-            </Button>
+            <SyncClearButtons
+              syncSession={syncSession ?? null}
+              activeHasMaterializedTiming={activeHasMaterializedTiming}
+              canClearAfterCursor={canClearAfterCursor}
+              clearBoundaryMs={clearBoundaryMs}
+              onClearTiming={onClearTiming}
+              onClearTimingAfterCursor={onClearTimingAfterCursor}
+            />
           </div>
           <span className="timeline-hint">
             Drag words · drag empty space to select · click ruler to seek
@@ -686,6 +858,7 @@ export function Timeline({
                     project.opening.leadInMs,
                   )
                 const activeMarquee = marquee?.trackId === track.id ? marquee : null
+                const trackColor = resolveVocalSungColor(project.stageStyle, track.vocalStyle)
                 return (
                   <div
                     key={track.id}
@@ -698,6 +871,18 @@ export function Timeline({
                     onPointerCancel={marqueePointerCancel}
                     onLostPointerCapture={marqueeCaptureLost}
                   >
+                    {syncSession &&
+                      track.id === activeTrackId &&
+                      syncSession.trackId === track.id && (
+                        <PendingSyncBlocks
+                          session={syncSession}
+                          lineLayoutsBySourceIndex={activeLineLayoutsBySourceIndex}
+                          pixelsPerSecond={pixelsPerSecond}
+                          offsetMs={project.offsetMs}
+                          leadInMs={project.opening.leadInMs}
+                          color={trackColor}
+                        />
+                      )}
                     {layout.lines.map((lineLayout) => (
                       <Fragment key={lineLayout.line.id}>
                         <span
@@ -733,7 +918,8 @@ export function Timeline({
                           {lineLayout.words.map((wordLayout) => (
                             <span
                               key={wordLayout.word.id}
-                              className={`timeline-line-label__word ${selectedWordIds.has(wordLayout.word.id) ? 'is-selected' : ''} ${syncWordId === wordLayout.word.id ? 'is-sync-target' : ''}`}
+                              ref={registerSyncTargetNode('line-label', wordLayout.word.id)}
+                              className={`timeline-line-label__word ${selectedWordIds.has(wordLayout.word.id) ? 'is-selected' : ''}`}
                               style={{ width: wordLayout.labelWidth }}
                             >
                               {timelineWordLabel(wordLayout.word)}
@@ -759,7 +945,8 @@ export function Timeline({
                           return (
                             <button
                               key={word.id}
-                              className={`timeline-word ${wordLayout.width < 14 ? 'is-compact' : ''} ${selected ? 'is-selected' : ''} ${syncWordId === word.id ? 'is-sync-target' : ''}`}
+                              ref={registerSyncTargetNode('timing-word', word.id)}
+                              className={`timeline-word ${wordLayout.width < 14 ? 'is-compact' : ''} ${selected ? 'is-selected' : ''}`}
                               style={
                                 {
                                   top: wordLayout.top,
@@ -839,7 +1026,8 @@ export function Timeline({
             untimedWords.slice(0, 28).map(({ word, track }) => (
               <button
                 key={word.id}
-                className={`${syncWordId === word.id ? 'is-sync-target' : ''} ${selectedWordIds.has(word.id) ? 'is-selected' : ''}`}
+                ref={registerSyncTargetNode('untimed-tray', word.id)}
+                className={selectedWordIds.has(word.id) ? 'is-selected' : ''}
                 style={
                   {
                     '--track-color': resolveVocalSungColor(project.stageStyle, track.vocalStyle),
@@ -860,5 +1048,51 @@ export function Timeline({
         </div>
       </div>
     </section>
+  )
+}
+
+function SyncClearButtons({
+  syncSession,
+  activeHasMaterializedTiming,
+  canClearAfterCursor,
+  clearBoundaryMs,
+  onClearTiming,
+  onClearTimingAfterCursor,
+}: {
+  syncSession: SyncSession | null
+  activeHasMaterializedTiming: boolean
+  canClearAfterCursor: boolean
+  clearBoundaryMs: number
+  onClearTiming: () => void
+  onClearTimingAfterCursor: () => void
+}) {
+  const snapshot = useSyncExternalStore(
+    syncSession ? syncSession.subscribe.bind(syncSession) : () => () => undefined,
+    syncSession ? syncSession.getSnapshot : () => null,
+    () => null,
+  )
+  const hasTiming = activeHasMaterializedTiming || Boolean(snapshot?.hasPending)
+  const canClearPendingAfterCursor = Boolean(snapshot?.hasPending) && clearBoundaryMs === 0
+  return (
+    <>
+      <Button
+        size="sm"
+        variant="ghost"
+        title="Clear every timing in the active track; lyric text is preserved"
+        disabled={!hasTiming}
+        onClick={onClearTiming}
+      >
+        <RotateCcw size={13} /> Clear timing
+      </Button>
+      <Button
+        size="sm"
+        variant="ghost"
+        title="Clear active-track timings that begin at or after the playhead"
+        disabled={!canClearAfterCursor && !canClearPendingAfterCursor}
+        onClick={onClearTimingAfterCursor}
+      >
+        <TimerReset size={13} /> Clear from cursor
+      </Button>
+    </>
   )
 }

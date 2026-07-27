@@ -9,7 +9,9 @@ import {
   Volume2,
   Zap,
 } from 'lucide-react'
+import { useSyncExternalStore } from 'react'
 import { formatTime } from '../lib/model'
+import type { SyncSession } from '../lib/sync-session'
 import { KeyboardKey } from './ui'
 
 interface TransportBarProps {
@@ -22,6 +24,7 @@ interface TransportBarProps {
   syncPosition: number
   syncTotal: number
   syncDisabled?: boolean
+  syncSession?: SyncSession | null
   hasAudio: boolean
   onToggle: () => void
   onStop: () => void
@@ -41,6 +44,7 @@ export function TransportBar({
   syncPosition,
   syncTotal,
   syncDisabled = false,
+  syncSession = null,
   hasAudio,
   onToggle,
   onStop,
@@ -49,6 +53,12 @@ export function TransportBar({
   onVolume,
   onToggleSync,
 }: TransportBarProps) {
+  const presentation = useSyncExternalStore(
+    syncSession ? syncSession.subscribe.bind(syncSession) : () => () => undefined,
+    syncSession ? syncSession.getSnapshot : () => null,
+  )
+  const displayedSyncPosition = presentation?.cursor ?? syncPosition
+  const displayedSyncTotal = presentation?.total ?? syncTotal
   return (
     <footer className={`transport ${syncMode ? 'is-syncing' : ''}`}>
       <div className="transport__sync">
@@ -59,7 +69,7 @@ export function TransportBar({
               ? 'Exit lyric synchronization (Escape)'
               : 'Start lyric synchronization from the playhead'
           }
-          disabled={syncDisabled || !syncTotal}
+          disabled={syncDisabled || !displayedSyncTotal}
           onClick={onToggleSync}
         >
           <span>
@@ -69,8 +79,8 @@ export function TransportBar({
             <strong>{syncMode ? 'Syncing words' : 'Start sync'}</strong>
             <small>
               {syncMode
-                ? `${Math.min(syncPosition + 1, syncTotal)} of ${syncTotal}`
-                : syncTotal
+                ? `${Math.min(displayedSyncPosition + 1, displayedSyncTotal)} of ${displayedSyncTotal}`
+                : displayedSyncTotal
                   ? 'Time lyrics by feel'
                   : 'Add lyrics first'}
             </small>

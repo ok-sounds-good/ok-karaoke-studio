@@ -1,26 +1,19 @@
-import { useMemo } from 'react'
 import { Edit3, Radio, Zap } from 'lucide-react'
-import type { VocalTrack } from '../lib/model'
-import { flattenTrack } from '../utils'
+import { Fragment, useRef, useSyncExternalStore } from 'react'
+import type { SyncSession } from '../lib/sync-session'
 import { Button, KeyboardKey } from './ui'
 
 interface SyncCueStripProps {
-  track: VocalTrack
-  syncCursor: number
+  session: SyncSession
   onEditLyrics: () => void
 }
 
-export function SyncCueStrip({ track, syncCursor, onEditLyrics }: SyncCueStripProps) {
-  const words = useMemo(() => flattenTrack(track), [track])
-  const current = words[syncCursor] ?? null
-  const currentLineIndex = current?.lineIndex ?? -1
-  const visibleLines =
-    currentLineIndex >= 0
-      ? [
-          track.lines[currentLineIndex],
-          track.lines.slice(currentLineIndex + 1).find((line) => line.words.length > 0),
-        ].filter((line): line is VocalTrack['lines'][number] => Boolean(line))
-      : []
+export function SyncCueStrip({ session, onEditLyrics }: SyncCueStripProps) {
+  const presentation = useSyncExternalStore(session.subscribe.bind(session), session.getSnapshot)
+  const targetElementRef = useRef<HTMLSpanElement | null>(null)
+  const visibleLines = [presentation.currentLine, presentation.nextLine].filter(
+    (line): line is NonNullable<typeof line> => line !== null,
+  )
 
   return (
     <section className="sync-cue panel" aria-label="Synchronization focus">
@@ -36,7 +29,8 @@ export function SyncCueStrip({ track, syncCursor, onEditLyrics }: SyncCueStripPr
         </div>
         <div className="sync-cue__actions">
           <span>
-            <Zap size={12} /> Word {Math.min(syncCursor + 1, words.length)} of {words.length}
+            <Zap size={12} /> Word {Math.min(presentation.cursor + 1, presentation.total)} of{' '}
+            {presentation.total}
           </span>
           <Button
             size="sm"
@@ -57,14 +51,43 @@ export function SyncCueStrip({ track, syncCursor, onEditLyrics }: SyncCueStripPr
           >
             <span>{lineOffset === 0 ? 'Now' : 'Next'}</span>
             <p>
-              {line.words.map((word) => (
-                <b
-                  key={word.id}
-                  className={`${word.id === current?.word.id ? 'is-target' : ''} ${word.startMs !== null ? 'is-timed' : ''}`}
+              {line.beforeCount > 0 && (
+                <span
+                  className="sync-cue__ellipsis"
+                  aria-label={`${line.beforeCount} earlier words`}
                 >
-                  {word.text.replaceAll('/', '·')}
-                </b>
+                  …
+                </span>
+              )}
+              {line.tokens.map((token, tokenIndex) => (
+                <Fragment key={token.id}>
+                  <span
+                    ref={token.id === presentation.targetWordId ? targetElementRef : undefined}
+                    data-sync-word-id={token.id}
+                    className={[
+                      'sync-cue__token',
+                      (lineOffset === 0
+                        ? presentation.currentTimedWordIds
+                        : presentation.nextTimedWordIds
+                      ).includes(token.id)
+                        ? 'is-timed'
+                        : 'is-untimed',
+                      token.id === presentation.targetWordId ? 'is-target is-live' : '',
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
+                  >
+                    {token.text}
+                  </span>
+                  {tokenIndex < line.tokens.length - 1 ? ' ' : null}
+                </Fragment>
               ))}
+              {line.afterCount > 0 && (
+                <span className="sync-cue__ellipsis" aria-label={`${line.afterCount} later words`}>
+                  {' '}
+                  …
+                </span>
+              )}
             </p>
           </div>
         ))}

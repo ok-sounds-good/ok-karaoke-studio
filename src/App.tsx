@@ -9,6 +9,9 @@ import type {
 import {
   clampTiming,
   createProject,
+  createLyricLine,
+  createLyricWord,
+  createVocalTrack,
   exportAss,
   exportLrc,
   importLrc,
@@ -60,6 +63,7 @@ import {
   type ProjectStyleOwnerKey,
 } from './hooks/useProjectStyleSession'
 import type { ProjectActionKind, ProjectActionRequest } from './lib/project-action-arbiter'
+import { SyncSession } from './lib/sync-session'
 import {
   downloadText,
   effectiveDuration,
@@ -86,46 +90,70 @@ interface ProjectActionLifetimeOwner {
   readonly kind: ProjectActionLifetimeKind
 }
 
+interface SyncSessionOwner {
+  readonly projectId: string
+  readonly projectLifecycleEpoch: number
+  readonly sessionEpoch: number
+  readonly trackId: string
+}
+
 const projectActionStyleDisabledReasons: Record<ProjectActionLifetimeKind, string> = {
   open: 'Wait for project selection and opening to finish.',
   'import-audio': 'Wait for audio selection and import to finish.',
   'import-lrc': 'Wait for LRC selection and import to finish.',
 }
 
+function injectTestMaterializationFailure() {
+  if (import.meta.env.MODE !== 'test') return
+  ;(
+    globalThis as typeof globalThis & { __OKS_TEST_SYNC_MATERIALIZATION_FAILURE__?: () => void }
+  ).__OKS_TEST_SYNC_MATERIALIZATION_FAILURE__?.()
+}
+
 function useProjectHistory(initialProject: KaraokeProject | (() => KaraokeProject)) {
   const sequenceRef = useRef(0)
   const pastRef = useRef<HistoryEntry[]>([])
   const futureRef = useRef<HistoryEntry[]>([])
-  const [entry, setEntry] = useState<HistoryEntry>(() => ({
-    project: typeof initialProject === 'function' ? initialProject() : initialProject,
-    revision: 0,
-  }))
+  const initialEntryRef = useRef<HistoryEntry | null>(null)
+  if (!initialEntryRef.current) {
+    initialEntryRef.current = {
+      project: typeof initialProject === 'function' ? initialProject() : initialProject,
+      revision: 0,
+    }
+  }
+  const entryRef = useRef<HistoryEntry>(initialEntryRef.current)
+  const [entry, setEntry] = useState<HistoryEntry>(entryRef.current)
   const [savedRevision, setSavedRevision] = useState(0)
+  const savedRevisionRef = useRef(0)
   const [historyVersion, setHistoryVersion] = useState(0)
 
   const commit = useCallback(
     (updater: KaraokeProject | ((project: KaraokeProject) => KaraokeProject)) => {
-      setEntry((current) => {
-        const nextProject = typeof updater === 'function' ? updater(current.project) : updater
-        if (nextProject === current.project) return current
-        pastRef.current.push(current)
-        if (pastRef.current.length > 120) pastRef.current.shift()
-        futureRef.current = []
-        sequenceRef.current += 1
-        setHistoryVersion((value) => value + 1)
-        return { project: nextProject, revision: sequenceRef.current }
-      })
+      const current = entryRef.current
+      const nextProject = typeof updater === 'function' ? updater(current.project) : updater
+      if (nextProject === current.project) return current
+      pastRef.current.push(current)
+      if (pastRef.current.length > 120) pastRef.current.shift()
+      futureRef.current = []
+      sequenceRef.current += 1
+      const next = { project: nextProject, revision: sequenceRef.current }
+      entryRef.current = next
+      setEntry(next)
+      setHistoryVersion((value) => value + 1)
+      return next
     },
     [],
   )
 
   const replaceCurrent = useCallback((updater: (project: KaraokeProject) => KaraokeProject) => {
-    setEntry((current) => {
-      const nextProject = updater(current.project)
-      if (nextProject === current.project) return current
-      sequenceRef.current += 1
-      return { project: nextProject, revision: sequenceRef.current }
-    })
+    const current = entryRef.current
+    const nextProject = updater(current.project)
+    if (nextProject === current.project) return current
+    sequenceRef.current += 1
+    const next = { project: nextProject, revision: sequenceRef.current }
+    entryRef.current = next
+    setEntry(next)
+    return next
   }, [])
 
   const reset = useCallback((project: KaraokeProject, markClean = true) => {
@@ -133,32 +161,42 @@ function useProjectHistory(initialProject: KaraokeProject | (() => KaraokeProjec
     const next = { project, revision: sequenceRef.current }
     pastRef.current = []
     futureRef.current = []
+    entryRef.current = next
     setEntry(next)
-    if (markClean) setSavedRevision(next.revision)
+    if (markClean) {
+      savedRevisionRef.current = next.revision
+      setSavedRevision(next.revision)
+    }
     setHistoryVersion((value) => value + 1)
   }, [])
 
   const undo = useCallback(() => {
-    setEntry((current) => {
-      const previous = pastRef.current.pop()
-      if (!previous) return current
-      futureRef.current.push(current)
-      setHistoryVersion((value) => value + 1)
-      return previous
-    })
+    const current = entryRef.current
+    const previous = pastRef.current.pop()
+    if (!previous) return current
+    futureRef.current.push(current)
+    entryRef.current = previous
+    setEntry(previous)
+    setHistoryVersion((value) => value + 1)
+    return previous
   }, [])
 
   const redo = useCallback(() => {
-    setEntry((current) => {
-      const next = futureRef.current.pop()
-      if (!next) return current
-      pastRef.current.push(current)
-      setHistoryVersion((value) => value + 1)
-      return next
-    })
+    const current = entryRef.current
+    const next = futureRef.current.pop()
+    if (!next) return current
+    pastRef.current.push(current)
+    entryRef.current = next
+    setEntry(next)
+    setHistoryVersion((value) => value + 1)
+    return next
   }, [])
 
-  const markSaved = useCallback((revision: number) => setSavedRevision(revision), [])
+  const markSaved = useCallback((revision: number) => {
+    savedRevisionRef.current = revision
+    setSavedRevision(revision)
+  }, [])
+  const isDirty = useCallback(() => entryRef.current.revision !== savedRevisionRef.current, [])
   const reachableBackgroundImagePaths = useMemo(() => {
     const paths = new Set<string>()
     for (const candidate of [...pastRef.current, entry, ...futureRef.current]) {
@@ -172,6 +210,7 @@ function useProjectHistory(initialProject: KaraokeProject | (() => KaraokeProjec
     project: entry.project,
     revision: entry.revision,
     dirty: entry.revision !== savedRevision,
+    isDirty,
     canUndo: pastRef.current.length > 0,
     canRedo: futureRef.current.length > 0,
     historyVersion,
@@ -339,7 +378,7 @@ function adjacentTimedWord(words: LyricWord[], index: number, direction: -1 | 1)
 }
 
 export default function App() {
-  const history = useProjectHistory(createProject)
+  const history = useProjectHistory(() => createProject())
   const { project, commit: commitHistory, replaceCurrent } = history
   const [projectPath, setProjectPath] = useState<string | null>(null)
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
@@ -368,17 +407,17 @@ export default function App() {
   const projectInputRef = useRef<HTMLInputElement>(null)
   const audioInputRef = useRef<HTMLInputElement>(null)
   const lrcInputRef = useRef<HTMLInputElement>(null)
-  const syncHeldRef = useRef<{
-    wordId: string
-    startMs: number
-    isLineFinal: boolean
-    nextTimedStartMs: number | null
-    advanceOnRelease: boolean
-  } | null>(null)
   const syncSpaceHeldRef = useRef(false)
-  const syncExplicitlyEndedRef = useRef(new Set<string>())
   const syncScopeRef = useRef<string | null>(null)
-  const syncSessionHasCommitRef = useRef(false)
+  const syncSessionRef = useRef<SyncSession | null>(null)
+  const syncSessionOwnerRef = useRef<SyncSessionOwner | null>(null)
+  const syncEpochRef = useRef(0)
+  const syncSessionMaterializedRef = useRef(false)
+  const syncCompletionMaterializationRef = useRef<{
+    session: SyncSession
+    owner: SyncSessionOwner
+  } | null>(null)
+  const modalOpenRef = useRef(false)
   const projectRestoreSequenceRef = useRef(0)
 
   const projectLifecycleSequenceRef = useRef(0)
@@ -393,10 +432,75 @@ export default function App() {
   const lastReviewIssuesRef = useRef<ValidationIssue[]>([])
   projectRef.current = project
   const projectMutationIsBlocked = useCallback(() => projectTransitionRef.current, [])
+  const syncInputIsBlocked = useCallback(
+    () => projectTransitionRef.current || projectActionLifetimeRef.current !== null,
+    [],
+  )
+  modalOpenRef.current =
+    lyricsDialogOpen || exportDialogOpen || validationDialogOpen || workflowGuideOpen
 
   const showToast = useCallback(
     (message: string, tone: ToastState['tone'] = 'neutral') => setToast({ message, tone }),
     [],
+  )
+
+  const materializeSyncSession = useCallback(
+    (allowDuringTransition = false): HistoryEntry | null => {
+      const session = syncSessionRef.current
+      if (!session?.hasPending) return { project: projectRef.current, revision: history.revision }
+      const owner = syncSessionOwnerRef.current
+      if (
+        !owner ||
+        owner.projectId !== projectRef.current.id ||
+        owner.projectLifecycleEpoch !== projectLifecycleSequenceRef.current ||
+        owner.sessionEpoch !== session.epoch ||
+        owner.trackId !== session.trackId
+      ) {
+        return null
+      }
+      if (projectMutationIsBlocked() && !allowDuringTransition) return null
+      const patches = session.drainPatches()
+      try {
+        injectTestMaterializationFailure()
+        const nextProject = patchWords(projectRef.current, patches)
+        if (nextProject === projectRef.current) {
+          session.acknowledgeMaterialized(patches)
+          return { project: projectRef.current, revision: history.revision }
+        }
+        const entry = syncSessionMaterializedRef.current
+          ? replaceCurrent(() => nextProject)
+          : commitHistory(nextProject)
+        session.acknowledgeMaterialized(patches)
+        syncSessionMaterializedRef.current = true
+        projectRef.current = entry.project
+        return entry
+      } catch (error) {
+        session.restorePatches(patches)
+        showToast(
+          error instanceof Error && error.message
+            ? error.message
+            : 'Timing could not be applied. Keep syncing and try again.',
+          'warning',
+        )
+        return null
+      }
+    },
+    [commitHistory, history.revision, projectMutationIsBlocked, replaceCurrent, showToast],
+  )
+
+  const discardSyncSession = useCallback(() => {
+    syncSessionRef.current?.close()
+    syncSessionRef.current = null
+    syncSessionOwnerRef.current = null
+    syncSessionMaterializedRef.current = false
+    syncCompletionMaterializationRef.current = null
+    syncSpaceHeldRef.current = false
+    syncScopeRef.current = null
+  }, [])
+
+  const hasUnsavedSyncOrHistory = useCallback(
+    () => history.isDirty() || Boolean(syncSessionRef.current?.hasPending),
+    [history],
   )
 
   // Any ordinary edit ends an armed synchronization transaction before it
@@ -404,16 +508,13 @@ export default function App() {
   // its first real mutation can remain the session's single undo baseline.
   const commit = useCallback(
     (updater: KaraokeProject | ((project: KaraokeProject) => KaraokeProject)) => {
-      if (projectMutationIsBlocked()) return
-      syncHeldRef.current = null
-      syncSpaceHeldRef.current = false
-      syncExplicitlyEndedRef.current.clear()
-      syncScopeRef.current = null
-      syncSessionHasCommitRef.current = false
+      if (projectMutationIsBlocked()) return null
+      if (!materializeSyncSession()) return null
+      discardSyncSession()
       setSyncMode(false)
-      commitHistory(updater)
+      return commitHistory(updater)
     },
-    [commitHistory, projectMutationIsBlocked],
+    [commitHistory, discardSyncSession, materializeSyncSession, projectMutationIsBlocked],
   )
 
   const persistAudioDuration = useCallback(
@@ -652,14 +753,14 @@ export default function App() {
   }, [activeTrack, project.tracks])
 
   useEffect(() => {
-    if (!history.dirty) return
     const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (!hasUnsavedSyncOrHistory()) return
       event.preventDefault()
       event.returnValue = ''
     }
     window.addEventListener('beforeunload', beforeUnload)
     return () => window.removeEventListener('beforeunload', beforeUnload)
-  }, [history.dirty])
+  }, [hasUnsavedSyncOrHistory])
 
   const reviewProject = syncMode ? null : project
   const reviewIssues = useMemo<ValidationIssue[]>(() => {
@@ -763,8 +864,8 @@ export default function App() {
   }, [])
 
   const confirmDiscardChanges = useCallback(
-    (message: string) => !history.dirty || window.confirm(message),
-    [history.dirty],
+    (message: string) => !hasUnsavedSyncOrHistory() || window.confirm(message),
+    [hasUnsavedSyncOrHistory],
   )
 
   const replaceTrack = useCallback(
@@ -858,7 +959,12 @@ export default function App() {
   )
 
   const openProjectContents = useCallback(
-    async (contents: string, path: string | null, pendingRequestId: string | null = null) => {
+    async (
+      contents: string,
+      path: string | null,
+      pendingRequestId: string | null = null,
+      discardAlreadyConfirmed = false,
+    ) => {
       const settlePendingOpen = async (accepted: boolean) => {
         if (!pendingRequestId) return true
         if (!window.studio?.settleProjectOpen) return false
@@ -883,7 +989,15 @@ export default function App() {
           return false
         }
 
-        if (!confirmDiscardChanges('Discard the unsaved changes and open another project?')) {
+        if (
+          !discardAlreadyConfirmed &&
+          !confirmDiscardChanges('Discard the unsaved changes and open another project?')
+        ) {
+          await settlePendingOpen(false).catch(() => false)
+          return false
+        }
+
+        if (!materializeSyncSession(true)) {
           await settlePendingOpen(false).catch(() => false)
           return false
         }
@@ -910,17 +1024,14 @@ export default function App() {
         projectRestoreSequenceRef.current = restoreSequence
         projectLifecycleSequenceRef.current += 1
         acceptedProjectBackgroundPathRef.current = path
-        cancelHeldSync()
+        discardSyncSession()
         history.reset(next, true)
         setProjectPath(path)
         setActiveTrackId(next.tracks[0]?.id ?? '')
         setSelectedWordIds(new Set())
         setSyncMode(false)
-        syncHeldRef.current = null
         syncSpaceHeldRef.current = false
-        syncExplicitlyEndedRef.current.clear()
         syncScopeRef.current = null
-        syncSessionHasCommitRef.current = false
         playback.pause()
         playback.seek(0)
         setAudioUrl(null)
@@ -958,7 +1069,9 @@ export default function App() {
     [
       beginProjectTransition,
       confirmDiscardChanges,
+      discardSyncSession,
       history.reset,
+      materializeSyncSession,
       markProjectAuthorityCertain,
       markProjectAuthorityUncertain,
       playback.pause,
@@ -973,6 +1086,7 @@ export default function App() {
       if (!confirmDiscardChanges('Discard the unsaved changes and start a new project?')) {
         return false
       }
+      if (!materializeSyncSession(true)) return false
       if (window.studio) {
         try {
           if (!window.studio.resetProjectScope || !(await window.studio.resetProjectScope())) {
@@ -998,18 +1112,15 @@ export default function App() {
       projectLifecycleSequenceRef.current += 1
       acceptedProjectBackgroundPathRef.current = null
       const next = createProject({ title: 'Untitled Song', artist: 'Unknown Artist' })
-      cancelHeldSync()
+      discardSyncSession()
       history.reset(next, true)
       setProjectPath(null)
       setAudioUrl(null)
       setActiveTrackId(next.tracks[0]?.id ?? '')
       setSelectedWordIds(new Set())
       setSyncMode(false)
-      syncHeldRef.current = null
       syncSpaceHeldRef.current = false
-      syncExplicitlyEndedRef.current.clear()
       syncScopeRef.current = null
-      syncSessionHasCommitRef.current = false
       playback.pause()
       playback.seek(0)
       markProjectAuthorityCertain()
@@ -1022,7 +1133,9 @@ export default function App() {
   }, [
     beginProjectTransition,
     confirmDiscardChanges,
+    discardSyncSession,
     history.reset,
+    materializeSyncSession,
     markProjectAuthorityCertain,
     markProjectAuthorityUncertain,
     playback.pause,
@@ -1031,6 +1144,8 @@ export default function App() {
   ])
 
   const handleOpen = useCallback(async () => {
+    if (!confirmDiscardChanges('Discard the unsaved changes and open another project?'))
+      return false
     const owner = beginProjectActionLifetime('open')
     if (!owner) return false
     const studio = window.studio
@@ -1050,7 +1165,7 @@ export default function App() {
         return false
       }
       return result
-        ? await openProjectContents(result.contents, result.path, result.requestId)
+        ? await openProjectContents(result.contents, result.path, result.requestId, true)
         : false
     } catch (error) {
       const message =
@@ -1062,22 +1177,30 @@ export default function App() {
     } finally {
       finishProjectActionLifetime(owner)
     }
-  }, [beginProjectActionLifetime, finishProjectActionLifetime, openProjectContents, showToast])
+  }, [
+    beginProjectActionLifetime,
+    confirmDiscardChanges,
+    finishProjectActionLifetime,
+    openProjectContents,
+    showToast,
+  ])
 
   const handleSave = useCallback(
     async (saveAs = false) => {
       if (blockProjectSideEffect()) return
+      const authoritative = materializeSyncSession()
+      if (!authoritative) return
       const saveRequestSequence = saveRequestSequenceRef.current + 1
       saveRequestSequenceRef.current = saveRequestSequence
       const projectLifecycleSequence = projectLifecycleSequenceRef.current
-      const savedRevision = history.revision
+      const savedRevision = authoritative.revision
       const saveIsCurrent = () =>
         saveRequestSequence === saveRequestSequenceRef.current &&
         projectLifecycleSequence === projectLifecycleSequenceRef.current
 
       try {
-        const contents = serializeProject(project)
-        const suggestedName = `${slugify(project.title)}.oks`
+        const contents = serializeProject(authoritative.project)
+        const suggestedName = `${slugify(authoritative.project.title)}.oks`
         if (window.studio) {
           const result = await window.studio.saveProject({
             path: saveAs ? undefined : (projectPath ?? undefined),
@@ -1099,11 +1222,17 @@ export default function App() {
         showToast(error instanceof Error ? error.message : 'Project could not be saved.', 'warning')
       }
     },
-    [blockProjectSideEffect, history.markSaved, history.revision, project, projectPath, showToast],
+    [blockProjectSideEffect, history.markSaved, materializeSyncSession, projectPath, showToast],
   )
 
   const applyAudio = useCallback(
     (path: string, url: string, name?: string) => {
+      const committed = commit((current) => ({
+        ...current,
+        audioPath: path,
+        updatedAt: new Date().toISOString(),
+      }))
+      if (!committed) return false
       projectRestoreSequenceRef.current += 1
       playback.pause()
       playback.seek(0)
@@ -1111,14 +1240,15 @@ export default function App() {
         if (current?.startsWith('blob:')) URL.revokeObjectURL(current)
         return url
       })
-      commit((current) => ({ ...current, audioPath: path, updatedAt: new Date().toISOString() }))
       showToast(`${name ?? path.split('/').pop() ?? 'Audio'} linked`, 'success')
+      return true
     },
     [commit, playback.pause, playback.seek, showToast],
   )
 
   const handleImportAudio = useCallback(async () => {
     if (blockProjectSideEffect()) return
+    if (!materializeSyncSession()) return
     const owner = beginProjectActionLifetime('import-audio')
     if (!owner) return
     const studio = window.studio
@@ -1134,38 +1264,53 @@ export default function App() {
     } finally {
       finishProjectActionLifetime(owner)
     }
-  }, [applyAudio, beginProjectActionLifetime, blockProjectSideEffect, finishProjectActionLifetime])
+  }, [
+    applyAudio,
+    beginProjectActionLifetime,
+    blockProjectSideEffect,
+    finishProjectActionLifetime,
+    materializeSyncSession,
+  ])
 
   const applyLrc = useCallback(
     (contents: string) => {
       if (!activeTrack) return
       try {
         const imported = importLrc(contents, activeTrack.id, project.offsetMs)
-        replaceTrack(activeTrack.id, {
-          ...imported,
-          name: activeTrack.name,
-          vocalStyle: cloneVocalStyle(activeTrack.vocalStyle),
-        })
+        const committed = commit((current) => ({
+          ...current,
+          updatedAt: new Date().toISOString(),
+          tracks: current.tracks.map((track) =>
+            track.id === activeTrack.id
+              ? {
+                  ...imported,
+                  name: activeTrack.name,
+                  vocalStyle: cloneVocalStyle(activeTrack.vocalStyle),
+                }
+              : track,
+          ),
+        }))
+        if (!committed) return false
         setSelectedWordIds(new Set())
-        syncHeldRef.current = null
         syncSpaceHeldRef.current = false
-        syncExplicitlyEndedRef.current.clear()
         syncScopeRef.current = null
-        syncSessionHasCommitRef.current = false
         setSyncMode(false)
         showToast(`Imported LRC into ${activeTrack.name}`, 'success')
+        return true
       } catch (error) {
         showToast(
           error instanceof Error ? error.message : 'Could not import that LRC file.',
           'warning',
         )
+        return false
       }
     },
-    [activeTrack, project.offsetMs, replaceTrack, showToast],
+    [activeTrack, commit, project.offsetMs, showToast],
   )
 
   const handleImportLrc = useCallback(async () => {
     if (blockProjectSideEffect()) return
+    if (!materializeSyncSession()) return
     const owner = beginProjectActionLifetime('import-lrc')
     if (!owner) return
     const studio = window.studio
@@ -1181,7 +1326,13 @@ export default function App() {
     } finally {
       finishProjectActionLifetime(owner)
     }
-  }, [applyLrc, beginProjectActionLifetime, blockProjectSideEffect, finishProjectActionLifetime])
+  }, [
+    applyLrc,
+    beginProjectActionLifetime,
+    blockProjectSideEffect,
+    finishProjectActionLifetime,
+    materializeSyncSession,
+  ])
 
   const handleProjectFileChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
@@ -1265,14 +1416,17 @@ export default function App() {
     async (format: StudioExportFormat) => {
       if (blockProjectSideEffect()) return
       if (!activeTrack) return
+      const authoritative = materializeSyncSession()
+      if (!authoritative) return
+      const exportProjectSnapshot = authoritative.project
       try {
-        const base = slugify(`${project.artist}-${project.title}`)
+        const base = slugify(`${exportProjectSnapshot.artist}-${exportProjectSnapshot.title}`)
         const contents =
           format === 'lrc'
-            ? exportLrc(project, activeTrack.id)
+            ? exportLrc(exportProjectSnapshot, activeTrack.id)
             : format === 'ass'
-              ? exportAss(project)
-              : serializeProject(project)
+              ? exportAss(exportProjectSnapshot)
+              : serializeProject(exportProjectSnapshot)
         const suggestedName = `${base}.${format}`
         if (window.studio) {
           const result = await window.studio.exportText({ suggestedName, contents, format })
@@ -1290,17 +1444,20 @@ export default function App() {
         showToast(error instanceof Error ? error.message : 'Export failed.', 'warning')
       }
     },
-    [activeTrack, blockProjectSideEffect, project, showToast],
+    [activeTrack, blockProjectSideEffect, materializeSyncSession, showToast],
   )
 
   const exportVideo = useCallback(
     async ({ resolution, fps }: Pick<StudioVideoExportOptions, 'resolution' | 'fps'>) => {
       if (blockProjectSideEffect()) return
+      const authoritative = materializeSyncSession()
+      if (!authoritative) return
+      const exportProjectSnapshot = authoritative.project
       const background =
-        project.stageStyle.background.mode === 'image'
+        exportProjectSnapshot.stageStyle.background.mode === 'image'
           ? backgroundImages.getExportCapability()
           : null
-      if (project.stageStyle.background.mode === 'image' && !background)
+      if (exportProjectSnapshot.stageStyle.background.mode === 'image' && !background)
         return void showToast(
           'The linked background is not ready in Live Preview. Restore or retry it before exporting video.',
           'warning',
@@ -1309,7 +1466,7 @@ export default function App() {
         showToast('Video export is available in the desktop app.', 'warning')
         return
       }
-      if (!project.audioPath || !playback.hasAudio) {
+      if (!exportProjectSnapshot.audioPath || !playback.hasAudio) {
         showToast('Attach a readable audio track before exporting video.', 'warning')
         return
       }
@@ -1319,9 +1476,9 @@ export default function App() {
         videoExportActiveRef.current = true
         setVideoExportProgress({ phase: 'preparing', completed: 0, total: 1 })
         const result = await window.studio.exportVideo({
-          suggestedName: `${slugify(`${project.artist}-${project.title}`)}.mp4`,
-          projectJson: serializeProject(project),
-          audioPath: project.audioPath,
+          suggestedName: `${slugify(`${exportProjectSnapshot.artist}-${exportProjectSnapshot.title}`)}.mp4`,
+          projectJson: serializeProject(exportProjectSnapshot),
+          audioPath: exportProjectSnapshot.audioPath,
           durationMs: Math.max(1_000, Math.round(playback.durationMs)),
           resolution,
           fps,
@@ -1358,10 +1515,10 @@ export default function App() {
     [
       blockProjectSideEffect,
       backgroundImages,
+      materializeSyncSession,
       playback.durationMs,
       playback.hasAudio,
       playback.pause,
-      project,
       showToast,
     ],
   )
@@ -1386,58 +1543,45 @@ export default function App() {
       if (word.startMs !== null)
         playback.seek(Math.max(0, project.opening.leadInMs + word.startMs + project.offsetMs))
       const index = syncWords.findIndex((candidate) => candidate.id === word.id)
-      if (index >= 0 && syncMode) setSyncCursor(index)
+      if (index >= 0 && syncMode) {
+        syncSessionRef.current?.select(word.id)
+        setSyncCursor(index)
+      }
     },
     [playback.seek, project.offsetMs, project.opening.leadInMs, syncMode, syncWords],
   )
 
   const abandonHeldSyncGesture = useCallback(() => {
-    syncHeldRef.current = null
+    syncSessionRef.current?.abandonHeld()
     syncSpaceHeldRef.current = false
   }, [])
 
   const cancelHeldSync = useCallback(() => {
     abandonHeldSyncGesture()
-    syncExplicitlyEndedRef.current.clear()
     syncScopeRef.current = null
   }, [abandonHeldSyncGesture])
 
   const openLyricsEditor = useCallback(() => {
+    if (!materializeSyncSession()) return
     abandonHeldSyncGesture()
     setLyricsDialogOpen(true)
-  }, [abandonHeldSyncGesture])
-
-  const applySyncMutation = useCallback(
-    (updater: (current: KaraokeProject) => KaraokeProject) => {
-      if (projectMutationIsBlocked()) return false
-      const next = updater(projectRef.current)
-      if (next === projectRef.current) return false
-      if (syncSessionHasCommitRef.current) {
-        replaceCurrent(() => next)
-        return true
-      }
-      syncSessionHasCommitRef.current = true
-      commitHistory(next)
-      return true
-    },
-    [commitHistory, projectMutationIsBlocked, replaceCurrent],
-  )
+  }, [abandonHeldSyncGesture, materializeSyncSession])
 
   const handleUndo = useCallback(() => {
     if (projectMutationIsBlocked()) return
-    cancelHeldSync()
-    syncSessionHasCommitRef.current = false
+    if (!materializeSyncSession()) return
+    discardSyncSession()
     setSyncMode(false)
     history.undo()
-  }, [cancelHeldSync, history.undo, projectMutationIsBlocked])
+  }, [discardSyncSession, history.undo, materializeSyncSession, projectMutationIsBlocked])
 
   const handleRedo = useCallback(() => {
     if (projectMutationIsBlocked()) return
-    cancelHeldSync()
-    syncSessionHasCommitRef.current = false
+    if (!materializeSyncSession()) return
+    discardSyncSession()
     setSyncMode(false)
     history.redo()
-  }, [cancelHeldSync, history.redo, projectMutationIsBlocked])
+  }, [discardSyncSession, history.redo, materializeSyncSession, projectMutationIsBlocked])
 
   const nativeCloseBridge = useMemo(() => {
     const studio = window.studio
@@ -1480,10 +1624,17 @@ export default function App() {
       'import-lrc': handleImportLrc,
       undo: handleUndo,
       redo: handleRedo,
-      'native-close': (request: ProjectActionRequest) =>
-        request.kind === 'native-close'
-          ? (nativeCloseBridge?.resolveWindowClose(request.nativeRequestId, true) ?? false)
-          : false,
+      'native-close': (request: ProjectActionRequest) => {
+        if (request.kind !== 'native-close') return false
+        if (
+          hasUnsavedSyncOrHistory() &&
+          !window.confirm('Close Okay Karaoke Studio and discard unsaved changes?')
+        ) {
+          return nativeCloseBridge?.resolveWindowClose(request.nativeRequestId, false) ?? false
+        }
+        if (!materializeSyncSession()) return false
+        return nativeCloseBridge?.resolveWindowClose(request.nativeRequestId, true) ?? false
+      },
     },
   })
 
@@ -1510,34 +1661,50 @@ export default function App() {
       if (item) {
         const changingTrack = item.track.id !== activeTrackId
         if (changingTrack) {
+          if (!materializeSyncSession()) return
+          discardSyncSession()
           cancelHeldSync()
-          syncSessionHasCommitRef.current = false
           setSyncMode(false)
           setActiveTrackId(item.track.id)
         }
         handleSelectWord(item.word, changingTrack ? false : add)
       }
     },
-    [activeTrackId, cancelHeldSync, handleSelectWord, project],
+    [
+      activeTrackId,
+      cancelHeldSync,
+      discardSyncSession,
+      handleSelectWord,
+      materializeSyncSession,
+      project,
+    ],
   )
 
   const clearActiveTrackTimingFrom = useCallback(
     (fromMs: number, successMessage: string, emptyMessage: string) => {
-      if (!activeTrack) return
-      const nextTrack = clearTrackTimingFrom(activeTrack, fromMs)
-      if (nextTrack === activeTrack) {
+      if (!materializeSyncSession()) return
+      const currentTrack = projectRef.current.tracks.find((track) => track.id === activeTrackId)
+      if (!currentTrack) return
+      const nextTrack = clearTrackTimingFrom(currentTrack, fromMs)
+      if (nextTrack === currentTrack) {
         showToast(emptyMessage, 'neutral')
         return
       }
       playback.pause()
       cancelHeldSync()
-      syncSessionHasCommitRef.current = false
       setSyncMode(false)
       setSelectedWordIds(new Set())
-      replaceTrack(activeTrack.id, nextTrack)
+      replaceTrack(currentTrack.id, nextTrack)
       showToast(successMessage, 'success')
     },
-    [activeTrack, cancelHeldSync, playback.pause, replaceTrack, showToast],
+    [
+      activeTrackId,
+      cancelHeldSync,
+      materializeSyncSession,
+      playback.pause,
+      replaceTrack,
+      showToast,
+    ],
   )
 
   const handleClearTiming = useCallback(() => {
@@ -1562,18 +1729,18 @@ export default function App() {
   ])
 
   const handleStop = useCallback(() => {
-    cancelHeldSync()
+    if (!materializeSyncSession()) return
+    discardSyncSession()
     setSyncMode(false)
-    syncSessionHasCommitRef.current = false
     playback.pause()
     playback.seek(0)
-  }, [cancelHeldSync, playback.pause, playback.seek])
+  }, [discardSyncSession, materializeSyncSession, playback.pause, playback.seek])
 
   const toggleSyncMode = useCallback(() => {
     if (syncMode) {
-      cancelHeldSync()
+      if (!materializeSyncSession()) return
+      discardSyncSession()
       setSyncMode(false)
-      syncSessionHasCommitRef.current = false
       return
     }
     if (!syncWords.length) {
@@ -1590,16 +1757,25 @@ export default function App() {
       showToast('No words remain at or after the playhead', 'neutral')
       return
     }
-    syncSessionHasCommitRef.current = false
+    discardSyncSession()
     syncScopeRef.current = `${project.id}\0${activeTrack?.id ?? ''}\0${syncWords
       .map((word) => word.id)
       .join('\0')}`
+    const sessionEpoch = ++syncEpochRef.current
+    syncSessionRef.current = new SyncSession(activeTrack!, fromPlayhead, sessionEpoch)
+    syncSessionOwnerRef.current = {
+      projectId: project.id,
+      projectLifecycleEpoch: projectLifecycleSequenceRef.current,
+      sessionEpoch,
+      trackId: activeTrack!.id,
+    }
     setSyncCursor(fromPlayhead)
     setSyncMode(true)
     playback.play()
     showToast('Tap sync armed — press each word onset; hold the final word of a line', 'neutral')
   }, [
-    cancelHeldSync,
+    discardSyncSession,
+    materializeSyncSession,
     playback.getCurrentMs,
     playback.play,
     activeTrack?.id,
@@ -1610,6 +1786,34 @@ export default function App() {
     syncMode,
     syncWords,
   ])
+
+  const scheduleCompletedSyncMaterialization = useCallback(() => {
+    const session = syncSessionRef.current
+    const owner = syncSessionOwnerRef.current
+    if (!session || !owner || !session.isClosed) return
+    const scheduled = syncCompletionMaterializationRef.current
+    if (scheduled?.session === session && scheduled.owner === owner) return
+    syncCompletionMaterializationRef.current = { session, owner }
+    window.setTimeout(() => {
+      if (syncCompletionMaterializationRef.current?.session !== session) return
+      syncCompletionMaterializationRef.current = null
+      if (
+        syncSessionRef.current !== session ||
+        syncSessionOwnerRef.current !== owner ||
+        !session.isClosed ||
+        owner.projectId !== projectRef.current.id ||
+        owner.projectLifecycleEpoch !== projectLifecycleSequenceRef.current ||
+        owner.sessionEpoch !== session.epoch ||
+        owner.trackId !== session.trackId
+      ) {
+        return
+      }
+      if (!materializeSyncSession()) return
+      discardSyncSession()
+      setSyncMode(false)
+      showToast('Track timing complete', 'success')
+    }, 0)
+  }, [discardSyncSession, materializeSyncSession, showToast])
 
   useEffect(() => {
     if (!syncMode) return
@@ -1624,30 +1828,35 @@ export default function App() {
     // Ordinary edits clear the session in commit(). A changed project/track is
     // therefore fail-closed, while a timing-only cloned track keeps its session.
     const scope = `${project.id}\0${activeTrack?.id ?? ''}\0${syncWords.map((word) => word.id).join('\0')}`
-    if (scope === syncScopeRef.current) return
+    const owner = syncSessionOwnerRef.current
+    if (
+      scope === syncScopeRef.current &&
+      owner?.projectId === project.id &&
+      owner.projectLifecycleEpoch === projectLifecycleSequenceRef.current &&
+      owner.trackId === activeTrack?.id &&
+      owner.sessionEpoch === syncSessionRef.current?.epoch
+    ) {
+      return
+    }
     cancelHeldSync()
-    syncSessionHasCommitRef.current = false
     setSyncMode(false)
   }, [activeTrack?.id, cancelHeldSync, project.id, syncMode, syncWords])
 
   useEffect(() => {
-    const advanceSyncCursor = () => {
-      const next = syncCursor + 1
-      setSyncCursor(next)
-      if (next >= syncItems.length) {
-        setSyncMode(false)
-        cancelHeldSync()
-        syncSessionHasCommitRef.current = false
-        showToast('Track timing complete', 'success')
-      }
+    const completeIfNeeded = () => {
+      const session = syncSessionRef.current
+      if (!session || session.getSnapshot().cursor < session.getSnapshot().total) return
+      session.closeInput()
+      syncSpaceHeldRef.current = false
+      scheduleCompletedSyncMaterialization()
     }
 
     const startDisplayedWord = (advanceOnRelease: boolean) => {
-      const item = syncItems[syncCursor]
-      if (!item) {
+      const session = syncSessionRef.current
+      if (!session || !session.currentWordId) {
+        if (!materializeSyncSession()) return false
         setSyncMode(false)
-        cancelHeldSync()
-        syncSessionHasCommitRef.current = false
+        discardSyncSession()
         showToast('All words are timed', 'success')
         return false
       }
@@ -1661,81 +1870,42 @@ export default function App() {
         showToast('The lyric clock has not reached 0:00 yet', 'neutral')
         return false
       }
-      const previous = syncItems[syncCursor - 1]
-      const previousTimed = adjacentTimedWord(syncWords, syncCursor, -1)
-      const nextTimed = adjacentTimedWord(syncWords, syncCursor, 1)
-      const previousEndMs = previousTimed ? syncWordEnd(previousTimed) : null
-      const nextTimedStartMs = nextTimed?.startMs ?? null
-      const startMs = Math.max(Math.round(sampledLyricMs), previousEndMs ?? 0)
-
-      if (nextTimedStartMs !== null && startMs >= nextTimedStartMs) {
+      const result = session.start(sampledLyricMs, advanceOnRelease)
+      if (!result.started) {
         showToast('No timing space remains before the next timed word', 'warning')
         return false
       }
-
-      syncExplicitlyEndedRef.current.delete(item.word.id)
-      const patches = new Map<string, Partial<Pick<LyricWord, 'startMs' | 'endMs'>>>()
-      if (
-        previous?.line.id === item.line.id &&
-        previous.word.startMs !== null &&
-        !syncExplicitlyEndedRef.current.has(previous.word.id)
-      ) {
-        patches.set(previous.word.id, { endMs: startMs })
-      }
-      patches.set(
-        item.word.id,
-        clampTiming(startMs, startMs + DEFAULT_SYNC_WORD_DURATION_MS, {
-          minMs: startMs,
-          maxMs: nextTimedStartMs ?? Number.POSITIVE_INFINITY,
-          minimumDurationMs: DEFAULT_SYNC_WORD_DURATION_MS,
-        }),
-      )
-      if (!applySyncMutation((current) => patchWords(current, patches))) return false
-      syncHeldRef.current = {
-        wordId: item.word.id,
-        startMs,
-        isLineFinal: item.wordIndex === item.line.words.length - 1,
-        nextTimedStartMs,
-        advanceOnRelease,
-      }
       playback.play()
-      if (!advanceOnRelease) advanceSyncCursor()
+      if (!advanceOnRelease) completeIfNeeded()
       return true
     }
 
     const endActiveWord = () => {
-      const active = syncHeldRef.current
-      if (!active) return
+      const session = syncSessionRef.current
+      if (!session) return
       const sampledLyricMs = lyricTimeAtPlayback(
         playback.getCurrentMs(),
         project.offsetMs,
         project.opening.leadInMs,
       )
-      if (sampledLyricMs < 0 || projectMutationIsBlocked()) return
-      const timing = clampTiming(active.startMs, sampledLyricMs, {
-        minMs: active.startMs,
-        maxMs: active.nextTimedStartMs ?? Number.POSITIVE_INFINITY,
-        minimumDurationMs: 1,
-      })
-      applySyncMutation((current) => patchWord(current, active.wordId, timing))
-      syncExplicitlyEndedRef.current.add(active.wordId)
-      const shouldAdvance = active.advanceOnRelease
+      if (sampledLyricMs < 0 || syncInputIsBlocked()) return
+      const advanced = session.end(sampledLyricMs)
       abandonHeldSyncGesture()
-      if (shouldAdvance) advanceSyncCursor()
+      if (advanced) completeIfNeeded()
     }
 
     const keyDown = (event: KeyboardEvent) => {
       const exactBare = !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey
-      if (document.querySelector('.modal-backdrop')) return
+      if (modalOpenRef.current || syncInputIsBlocked()) return
       if (inputHasTypingFocus()) return
       const exactShift = event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey
       const targetsControl = eventTargetsSpaceActivatableControl(event)
 
       if (event.code === 'Escape' && syncMode) {
         event.preventDefault()
-        cancelHeldSync()
+        if (!materializeSyncSession()) return
+        discardSyncSession()
         setSyncMode(false)
-        syncSessionHasCommitRef.current = false
         return
       }
       if (
@@ -1797,33 +1967,26 @@ export default function App() {
     }
 
     const keyUp = (event: KeyboardEvent) => {
-      if (document.querySelector('.modal-backdrop')) {
+      if (modalOpenRef.current || syncInputIsBlocked()) {
         if (event.code === 'Space') abandonHeldSyncGesture()
         return
       }
       if (event.code !== 'Space' || !syncMode || !syncSpaceHeldRef.current) return
-      const held = syncHeldRef.current
-      if (!held) return
+      const session = syncSessionRef.current
+      if (!session) return
       event.preventDefault()
-      if (projectMutationIsBlocked()) {
+      if (syncInputIsBlocked()) {
         abandonHeldSyncGesture()
         return
       }
-      if (held.isLineFinal) {
-        const sampledLyricMs = lyricTimeAtPlayback(
-          playback.getCurrentMs(),
-          project.offsetMs,
-          project.opening.leadInMs,
-        )
-        const timing = clampTiming(held.startMs, sampledLyricMs, {
-          minMs: held.startMs,
-          maxMs: held.nextTimedStartMs ?? Number.POSITIVE_INFINITY,
-          minimumDurationMs: DEFAULT_SYNC_WORD_DURATION_MS,
-        })
-        applySyncMutation((current) => patchWord(current, held.wordId, timing))
-      }
+      const sampledLyricMs = lyricTimeAtPlayback(
+        playback.getCurrentMs(),
+        project.offsetMs,
+        project.opening.leadInMs,
+      )
+      const released = session.release(sampledLyricMs)
       abandonHeldSyncGesture()
-      advanceSyncCursor()
+      completeIfNeeded()
     }
 
     const windowBlur = () => abandonHeldSyncGesture()
@@ -1837,7 +2000,6 @@ export default function App() {
       window.removeEventListener('blur', windowBlur)
     }
   }, [
-    applySyncMutation,
     abandonHeldSyncGesture,
     cancelHeldSync,
     commit,
@@ -1847,14 +2009,14 @@ export default function App() {
     playback.toggle,
     project.offsetMs,
     project.opening.leadInMs,
-    projectMutationIsBlocked,
+    scheduleCompletedSyncMaterialization,
     selectAllActiveTrackWords,
     selectedWordIds,
     showToast,
-    syncCursor,
-    syncItems,
     syncMode,
-    syncWords,
+    discardSyncSession,
+    materializeSyncSession,
+    syncInputIsBlocked,
     styleSession.isOpen,
   ])
 
@@ -1888,13 +2050,14 @@ export default function App() {
 
   const handleSelectTrack = useCallback(
     (trackId: string) => {
+      if (!materializeSyncSession()) return
+      discardSyncSession()
       cancelHeldSync()
-      syncSessionHasCommitRef.current = false
       setSyncMode(false)
       setActiveTrackId(trackId)
       setSelectedWordIds(new Set())
     },
-    [cancelHeldSync],
+    [cancelHeldSync, discardSyncSession, materializeSyncSession],
   )
 
   const workflowGuideActions = createWorkflowGuideActions({
@@ -1912,7 +2075,15 @@ export default function App() {
     exportProject: () => requestProjectAction('export'),
   })
 
-  const syncWordId = syncMode ? (syncWords[syncCursor]?.id ?? null) : null
+  const activeSyncSession = syncMode ? syncSessionRef.current : null
+  const syncWordId = activeSyncSession?.currentWordId ?? null
+  const activeSyncOwner = activeSyncSession ? syncSessionOwnerRef.current : null
+  const syncOwnerScope =
+    activeSyncSession &&
+    activeSyncOwner?.sessionEpoch === activeSyncSession.epoch &&
+    activeSyncOwner.trackId === activeSyncSession.trackId
+      ? `${activeSyncOwner.projectId}\0${activeSyncOwner.projectLifecycleEpoch}\0${activeSyncOwner.trackId}\0${activeSyncOwner.sessionEpoch}`
+      : null
   const styleDisabledReason = styleSession.isOpen
     ? 'The Style editor is already open.'
     : projectActionLifetimeKind
@@ -1942,6 +2113,7 @@ export default function App() {
       <TopBar
         title={project.title}
         dirty={history.dirty}
+        syncSession={activeSyncSession}
         canUndo={history.canUndo}
         canRedo={history.canRedo}
         issueCount={reviewIssues.length}
@@ -1995,12 +2167,8 @@ export default function App() {
           <WorkspaceDivider
             isSyncing={syncMode}
             stage={
-              syncMode && activeTrack ? (
-                <SyncCueStrip
-                  track={activeTrack}
-                  syncCursor={syncCursor}
-                  onEditLyrics={openLyricsEditor}
-                />
+              syncMode && activeTrack && activeSyncSession ? (
+                <SyncCueStrip session={activeSyncSession} onEditLyrics={openLyricsEditor} />
               ) : (
                 <KaraokePreview
                   activeVocalTrackId={activeTrack?.id}
@@ -2027,6 +2195,8 @@ export default function App() {
                 activeTrackId={activeTrackId}
                 selectedWordIds={selectedWordIds}
                 syncWordId={syncWordId}
+                syncSession={activeSyncSession}
+                syncOwnerScope={syncOwnerScope}
                 syncMode={syncMode}
                 onSeek={playback.seek}
                 onZoom={setZoom}
@@ -2058,6 +2228,7 @@ export default function App() {
         syncMode={syncMode}
         syncPosition={syncCursor}
         syncTotal={syncWords.length}
+        syncSession={activeSyncSession}
         syncDisabled={styleSession.isOpen}
         hasAudio={playback.hasAudio}
         onToggle={playback.toggle}

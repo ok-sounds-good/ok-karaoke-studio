@@ -190,7 +190,7 @@
   margin: 0;
 }
 
-.sync-cue__line b {
+.sync-cue__token {
   padding: 3px 5px;
   border: 1px solid transparent;
   border-radius: 5px;
@@ -199,11 +199,11 @@
   line-height: 1;
 }
 
-.sync-cue__line b.is-timed {
+.sync-cue__token.is-timed {
   color: #b7c1bb;
 }
 
-.sync-cue__line b.is-target {
+.sync-cue__token.is-target {
   border-color: var(--accent);
   background: var(--accent);
   box-shadow: 0 0 0 3px rgba(215, 250, 74, 0.07);
