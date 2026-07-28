@@ -3,10 +3,10 @@
 ## Product promise
 
 Okay Karaoke Studio is a desktop editor for turning a backing track and plain
-lyrics into precisely timed karaoke lyrics on one lead-vocal authoring track.
-Project settings, lyric editing, Lyric Timing, stage verification, and playback
-stay in **one unified window**, with a focused low-latency surface replacing the
-stage while synchronization is armed.
+lyrics into precisely timed karaoke lyrics on one or more independently timed
+singer tracks. Project settings, lyric editing, Lyric Timing, stage verification,
+and playback stay in **one unified window**, with a focused low-latency surface
+replacing the stage while synchronization is armed.
 
 This document is the active product-acceptance contract for version 0.1. The
 supporting criteria below may change as real editing work exposes blockers;
@@ -48,8 +48,8 @@ current format.
 
 1. Launch into a clean-slate project, or open an existing `.oks` project.
 2. Attach an audio backing track.
-3. Open **Edit text** to paste lyrics, preserving internal blank rows as section
-   separators, or import an LRC file.
+3. Add or select the singer to author, then open **Edit text** to paste lyrics,
+   preserving internal blank rows as section separators, or import an LRC file.
 4. Press Space at each word onset, or use Right to start the displayed target
    and Down to end the active word. Each same-line onset closes the preceding
    word unless Down explicitly ended it; hold Space on a final word to extend it. The
@@ -57,16 +57,18 @@ current format.
    order, including across line boundaries.
 5. Correct individual words by dragging and resizing them in Lyric Timing;
    edits stop at those same lyric-order boundaries.
-6. Exit synchronization, configure the video's stage style, and verify the
-   result in the restored Live Preview, choosing its line count and Clear or
-   Scroll advance behavior as needed.
-7. Save the editable project and export LRC, ASS, or a finished MP4 karaoke video.
+6. Repeat lyric editing and timing for any additional singers, including
+   intentional overlapping passages.
+7. Exit synchronization, configure the video's stage style and title schedule,
+   and verify the result in the restored Live Preview, choosing its line count
+   and Clear or Scroll advance behavior as needed.
+8. Save the editable project and export LRC, ASS, or a finished MP4 karaoke video.
 
 ## Single-window layout invariant
 
 The main window must provide access to:
 
-- Project metadata, video-style settings, and lead-track controls.
+- Project metadata, video-style settings, and active-singer controls.
 - An **Edit text** action in Live Preview that opens the transactional lyric
   editor; Lyric Timing does not duplicate it, and the main workspace does not
   persistently render a Word Map or lyric list. While synchronization replaces
@@ -111,10 +113,18 @@ Karaoke Studio identity.
   Project** action, a packaged user workflow, or fallback data after a load
   failure.
 
-### Lyrics and vocal track
+### Lyrics and singer tracks
 
-- One lead-vocal authoring track with its own name and sung color.
-- Creating additional independently timed singer tracks is deferred.
+- New projects begin with one empty **Lead Vocal** track.
+- Users can add, rename, select, style, independently time, mute, solo, and
+  remove singer tracks up to the eight-track project limit. At least one singer
+  remains in every normal authored project.
+- Each singer owns lyrics, blank-row sections, timing, colors, placement,
+  alignment, Preview Time, sync-aid settings, and mute/solo state. Lyric
+  typeface, face, size, line count, and Clear/Scroll mode remain project-global.
+- Singer display objects and timed passages may overlap intentionally. The
+  Studio does not warn about, reject, hide, or automatically move overlapping
+  singers.
 - **Edit text** opens a transactional plain-text lyric editor rather than a
   persistent Word Map or lyric panel in the main workspace.
 - Preserve internal blank lyric rows as section separators through edits and
@@ -128,18 +138,42 @@ Karaoke Studio identity.
 
 #### Opening Clock
 
-Current v0 projects require a root-level `opening` value outside `stageStyle`:
-`{ leadInMs: number, titleTiming: { mode: 'until-lyrics' } }`. New projects use
-`leadInMs: 0`; older `.oks` formats are not accepted or migrated. Video time is
-`V`, opening lead-in is `L`, and lyric offset is `O`: source audio is `V-L`,
-lyrics and sync samples are `V-L-O`, and timeline output placement is
-`L+O+stored lyric time`. Before `L`, audio, lyrics, and sync aids are gated.
-The title remains through the first output-eligible lyric activation (never
-before `L`) and remains for the whole video when no eligible timed lyric exists.
-Export keeps absolute video timestamps, delays audio by `L`, and counts `L`
-once in duration and the 30-minute cap. Inspector edits apply immediately;
-Title Card edits are part of the Style draft and apply/cancel atomically with
-Style. Saved Style Templates deliberately exclude opening timing.
+Current `main` accepts a root-level `opening` value outside `stageStyle` with
+`leadInMs` and `titleTiming: { mode: 'until-lyrics' }`. Version 0.1 acceptance
+expands the current-format value to:
+
+```ts
+opening: {
+  leadInMs: number
+  titleTiming:
+    | { mode: 'until-lyrics' }
+    | { mode: 'fixed'; durationMs: number }
+}
+```
+
+New projects use `leadInMs: 0` and Until lyrics. Older `.oks` formats are not
+accepted or migrated; renderer/main codecs, fixtures, round trips, and rejection
+tests change together when Fixed lands. Video time is `V`, opening lead-in is
+`L`, and lyric offset is `O`: source audio is `V-L`, lyrics and sync samples are
+`V-L-O`, and timeline output placement is `L+O+stored lyric time`. Before `L`,
+audio, lyrics, and sync aids are gated.
+
+Until lyrics ends the title at the first mute/solo-aware output-eligible singer
+window, never before `L`, and keeps it for the whole video when no eligible timed
+lyric exists. Fixed begins at video time zero and ends at
+`max(leadInMs, durationMs)`, so it may intentionally coexist with music, singer
+lyrics, and sync aids or extend beyond the audio. Export keeps absolute video
+timestamps, delays audio by `L`, and counts lead-in or fixed-title extension
+exactly once in duration and the 30-minute cap. Inspector edits apply
+immediately; Title Card edits are part of the Style draft and apply/cancel
+atomically with Style. Saved Style Templates deliberately exclude opening
+timing.
+
+Output stacking is background, title, singer lyric groups, then sync aids.
+When scheduled title time intersects visible lyrics or sync aids, the Studio
+shows one dismissible, non-blocking temporal advisory with the actual interval.
+It performs no spatial collision analysis and never warns about intentional
+title/singer or singer/singer placement overlap.
 
 - Tap-sync mode in which bare Space key-down starts the current word. The next
   same-line key-down backfills the preceding word's end to that new onset;
@@ -150,9 +184,17 @@ Style. Saved Style Templates deliberately exclude opening timing.
   from the authoritative clock and bare Down explicitly ends the active word.
   Shift+Left/Right always seeks by one second without timing; outside sync,
   bare Right retains its short seek.
+- Sync Focus explains the distinct Right and Down actions before input, keeps
+  the active word/line and next target visually unambiguous, and confirms the
+  resulting target without stealing focus. A bounded native/manual run confirms
+  real input ordering and advancing playback without requiring a reusable trace
+  platform.
 - Sample synchronization timestamps from the authoritative playback clock.
   Convert them to lyric time with the project offset, and ignore taps that occur
   before lyric time `0:00` when a positive offset delays the lyrics.
+- Input-to-visible feedback below 100 ms is satisfactory; 100–400 ms is
+  noteworthy and recorded but does not block version 0.1; above 400 ms blocks.
+  A 16.667 ms or one-frame result is diagnostic headroom, not a release gate.
 - Start or resume synchronization from the current playhead.
 - Applying an **Edit text** transaction preserves matching word identity and
   timing, leaves added or changed words untimed, rebuilds the active sync cursor
@@ -182,9 +224,10 @@ Style. Saved Style Templates deliberately exclude opening timing.
 - Dragging across empty Lyric Timing space draws a visible marquee and selects the
   active track's intersecting word blocks.
 - Word text is rendered separately from duration-sized timing blocks. Timing
-  blocks for non-overlapping words in the single lead track share a common
+  blocks for non-overlapping words within the active singer track share a common
   chronological baseline; label lanes may stagger vertically so full labels
-  remain readable without ellipses.
+  remain readable without ellipses. Timing overlap between different singers
+  does not alter this track-local geometry.
 - The timeline navigation group is ordered **Jump to start (`|<`)**, **Scroll
   backward (`<`)**, **Scroll forward (`>`)**. Each action has an unambiguous
   accessible name and hover description.
@@ -202,14 +245,19 @@ Style. Saved Style Templates deliberately exclude opening timing.
 - Per-word highlighting is the lyric progress signal; the stage does not add a
   separate whole-line progress meter.
 - Render full lyric lines without repeating the singer or track name above each
-  line. The authored track supplies the lyrics and its singer-owned appearance.
+  line. Every currently visible singer supplies independent lyrics, timing, and
+  singer-owned appearance.
 - A project-persisted visible-line count from 1 through 5 governs both Live
-  Preview and MP4 output. The stage renders only those full lines, with no
-  miniature upcoming-line treatment.
+  Preview and MP4 output. Each visible singer receives that complete line budget
+  within its own lyric object; one singer never consumes another singer's
+  budget. The stage renders only full lines, with no miniature upcoming-line
+  treatment.
 - Project-persisted **Clear** and **Scroll** advance modes govern both Live
   Preview and MP4 output. Clear replaces a page of lines within a section;
-  Scroll advances one line and maintains the configured count where enough
-  lines remain in that section.
+  Scroll visibly animates retained rows upward by one stable line slot while the
+  incoming row enters the opened slot. Scroll maintains the configured count
+  where enough lines remain in that section, uses one time-based duration at 30
+  and 60 fps, and applies independently within each visible singer object.
 - Internal blank lyric rows split sections. Neither advance mode blends lines
   across a separator: after one section passes, the next section loads as its
   own group.
@@ -217,12 +265,12 @@ Style. Saved Style Templates deliberately exclude opening timing.
   gaps between lyric sections.
 - Title card, safe-area guide, and current time.
 - The Stage monitor defaults to **Auto**, a timing-verification view that shows
-  the same Title or Song layer the exported output has at the playhead. **Title**
-  pins the title card for placement, and **Song** pins the active singer's
-  authored lyric window for placement and text review, including untimed
-  lyrics. Title and Song are editor-only viewer choices: they are not saved in
-  the project and never alter MP4 frame planning. The monitor is suspended
-  during armed synchronization and restored on exit.
+  the same Title, Song, Title + Song, or blank state the exported output has at
+  the playhead. **Title** pins the title card for placement, and **Song** pins
+  the active singer's authored lyric window for placement and text review,
+  including untimed lyrics. Title and Song are editor-only viewer choices: they
+  are not saved in the project and never alter MP4 frame planning. The monitor
+  is suspended during armed synchronization and restored on exit.
 - Stage-monitor controls follow the visible layer. Title exposes the movable
   title element; Song exposes line count and Clear/Scroll advance controls.
   Edit text remains available in either layer. Only Auto is labeled Live.
@@ -370,9 +418,9 @@ singing waiting`, then `Example line 3` through the configured maximum.
 - Export the active vocal track as LRC.
 - Export the project as ASS with karaoke timing tags.
 - Render an MP4 up to 30 minutes from the persisted stage style, lyric line
-  count and advance mode, per-word timing, authored lead track, linked static
-  background when selected, and linked backing track through a locally
-  installed FFmpeg executable.
+  count and advance mode, every visible singer's timing and appearance, title
+  schedule, linked static background when selected, and linked backing track
+  through a locally installed FFmpeg executable.
 - Offer the exact resolution presets 240p (426 x 240), 360p (640 x 360), 480p
   (854 x 480), 720p (1280 x 720), 1080p (1920 x 1080), 1440p (2560 x 1440),
   and 2160p (3840 x 2160), with 30 fps and 60 fps choices. Default to 720p at
@@ -388,7 +436,9 @@ singing waiting`, then `Example line 3` through the configured maximum.
   destination; it does not publish that partial file as the requested result.
 - Keep the chosen destination safe and remove staging output after ordinary
   errors, including unavailable video requirements.
-- Validate and report untimed, invalid, or overlapping timing before export.
+- Validate and report untimed or invalid timing, including illegal word overlap
+  within one singer, before export. Simultaneous timing across different singers
+  is valid and produces no warning or export error.
 - Browser fallbacks for open/download when the React surface is run outside Electron.
 
 ### Platform and distribution
@@ -428,8 +478,9 @@ singing waiting`, then `Example line 3` through the configured maximum.
   synchronization semantics/history, timing validation, and LRC/ASS round
   trips.
 - Unit tests must keep Live Preview and video frame planning aligned for line
-  count, Clear/Scroll behavior, section boundaries, resolved styles, preview
-  time, and sync-aid eligibility and timing, plus the gated `bun run test:video`
+  count, Clear/Scroll behavior and transitions, per-singer budgets, title
+  scheduling/coexistence, section boundaries, resolved styles, preview time,
+  and sync-aid eligibility and timing, plus the gated `bun run test:video`
   H.264/AAC export smoke check.
 - Clean TypeScript build, production Vite build, launchable unpacked macOS and
   Windows packages, and the required Windows installer artifact.
@@ -446,9 +497,7 @@ singing waiting`, then `Example line 3` through the configured maximum.
   files.
 - Alternative sync-aid animations.
 - Automatic linguistic hyphenation.
-- Authoring additional independently timed singer tracks. Those tracks are the
-  future mechanism for intentional overlapping vocals; timing within the active
-  single-track workflow remains chronological and non-overlapping.
+- Automatic lyric splitting, singer assignment, or vocal-track reordering.
 - Embedded audio, cloud sync, collaboration, show rotation, or a singer-facing second display.
 
 ## Product acceptance checklist
@@ -473,6 +522,10 @@ singing waiting`, then `Example line 3` through the configured maximum.
       ignored.
 - [x] Armed Right starts the displayed target and Down ends the active word;
       explicit endings preserve intentional gaps, while Shift+Left/Right only seek.
+- [ ] Sync Focus makes Right and Down predictable before input, confirms the
+      resulting target, and passes one bounded native/manual real-playback check
+      with exact input order and no feedback above 400 ms, without adding a
+      generalized trace platform.
 - [x] One synchronization session is one undoable history step; Lyric Timing
       selection and correction behaviors remain available afterward.
 - [x] Transactional lyric edits preserve matching timing, disclose and confirm
@@ -481,8 +534,9 @@ singing waiting`, then `Example line 3` through the configured maximum.
       pre-edit lyric and timing state atomically.
 - [x] Command/Ctrl+A and marquee selection select the intended active-track words
       without selecting page text.
-- [x] Non-overlapping lead-track timing blocks share one chronological baseline;
-      label lanes may stagger while full word labels remain readable.
+- [x] Within each singer, non-overlapping timing blocks share one chronological
+      baseline and label lanes may stagger while full word labels remain
+      readable; simultaneous timing across different singers remains valid.
 - [x] Sync capture, block movement, and edge resizing cannot cross the preceding
       or following timed word in lyric order, including across line boundaries.
 - [x] Timeline navigation, transport Stop, and hover help are discoverable and
@@ -490,12 +544,19 @@ singing waiting`, then `Example line 3` through the configured maximum.
 - [x] Live Preview and MP4 show the persisted 1-to-5 line count with matching
       Clear/Scroll behavior, no miniature upcoming line, and no blending across
       blank-row section boundaries.
+- [ ] Scroll is visibly distinct from Clear: retained rows animate by one stable
+      slot with matching Preview/MP4 timing at 30 and 60 fps, independently for
+      every visible singer.
 - [x] Live Preview and MP4 use the same per-word timing, show no repeated singer
       or track label above lyric lines, and add no automatic Instrumental treatment
       between sections.
 - [x] The Stage monitor's Auto, Title, and Song viewer choices keep movement
       aligned with the visible layer, expose untimed active-singer lyrics in Song,
       and remain editor-only without changing project or MP4 output.
+- [ ] Opening timing offers Until lyrics and Fixed duration, and Auto truthfully
+      renders Title + Song coexistence with the same schedule and layer order as
+      MP4 output; a title/lyric or title/sync-aid intersection produces only the
+      dismissible temporal advisory, never a spatial-overlap warning.
 - [x] The project can choose a solid, gradient, or linked-image background and
       can configure or disable the Stage frame, while title-card, footer, and frame
       typography remain independently configurable.
@@ -510,12 +571,18 @@ singing waiting`, then `Example line 3` through the configured maximum.
 - [x] Global lyric typeface, face, and size plus each singer's required colors,
       placement, horizontal alignment, and cue settings match in Live Preview
       and MP4 output.
+- [ ] Users can add, rename, select, independently edit/time/style, mute, solo,
+      and remove singers up to the eight-track limit; save/reopen and MP4 preserve
+      simultaneous singers, per-singer line budgets, and intentional overlap.
 - [x] Active-vocal and title-card display objects move transactionally in Design
       Preview, persist through projects and Style templates, remain within the
       logical stage, and retain matching positions in Live Preview and MP4
       without collision handling. Pointer movement softly snaps each axis to
       stage center with transient guides and a bypass, while keyboard movement
       remains deterministic.
+- [ ] Title Card visibility, typography, color, and position changes appear in
+      Design Preview, persist only after **Apply & close**, survive save/reopen,
+      and reach normal Preview and MP4 without stale pre-Apply state.
 - [x] Preview time controls line eligibility, and the built-in sync aid appears
       only on the first line of a blank-row-separated section when at least its
       configured minimum lead time is available.
