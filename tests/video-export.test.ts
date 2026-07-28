@@ -41,6 +41,7 @@ const videoExport = require('../electron/video-export.cjs') as {
   ): {
     showTitle: boolean
     lines: Array<{
+      trackId: string
       style: { sungColor: string }
       text: string
       words: Array<{ text: string; progress: number }>
@@ -437,22 +438,28 @@ describe('karaoke video frame planning', () => {
     ).toEqual(['Two', 'Three', 'Four'])
   })
 
-  it('treats line count as a stage-wide limit while retaining both visible voices', () => {
+  it('gives every visible singer an independent Clear and Scroll window in track order', () => {
     const base = videoProject()
     const lines = [
       timedVideoLine('Lead one', 0, 1_000),
       timedVideoLine('Lead two', 1_000, 2_000),
       timedVideoLine('Lead three', 2_000, 3_000),
+      timedVideoLine('Lead four', 3_000, 4_000),
     ]
     const project = {
       ...base,
       offsetMs: 0,
-      lyricDisplay: { lineCount: 3, advanceMode: 'clear' },
+      lyricDisplay: { lineCount: 2, advanceMode: 'clear' },
       tracks: [
         {
           ...base.tracks[0],
           name: 'Lead',
-          vocalStyle: { ...base.tracks[0].vocalStyle, position: { x: 800, y: 500 } },
+          vocalStyle: {
+            ...base.tracks[0].vocalStyle,
+            position: { x: 800, y: 500 },
+            previewMs: 0,
+            syncAid: { enabled: false, minLeadMs: 0, maxLeadMs: 0 },
+          },
           lines,
         },
         {
@@ -463,6 +470,8 @@ describe('karaoke video frame planning', () => {
             ...base.tracks[0].vocalStyle,
             sungColor: '#58d6de',
             position: { x: 800, y: 500 },
+            previewMs: 0,
+            syncAid: { enabled: false, minLeadMs: 0, maxLeadMs: 0 },
           },
           lines: lines.map((line) => ({
             ...line,
@@ -479,11 +488,15 @@ describe('karaoke video frame planning', () => {
     }
 
     const state = videoExport.frameStateAt(project, 0)
-    expect(state.lines).toHaveLength(3)
-    expect(new Set(state.lines.map((line) => line.text.split(' ')[0]))).toEqual(
-      new Set(['Lead', 'Harmony']),
-    )
+    expect(state.lines).toHaveLength(4)
+    expect(state.lines.map(({ trackId, text }) => [trackId, text])).toEqual([
+      ['video-lead', 'Lead one'],
+      ['video-lead', 'Lead two'],
+      ['video-harmony', 'Harmony one'],
+      ['video-harmony', 'Harmony two'],
+    ])
     expect(state.lines.map(({ style }) => style.position)).toEqual([
+      { x: 800, y: 500 },
       { x: 800, y: 500 },
       { x: 800, y: 500 },
       { x: 800, y: 500 },
@@ -492,6 +505,65 @@ describe('karaoke video frame planning', () => {
     expect(new Set(state.lines.map(({ style }) => style.sungColor))).toEqual(
       new Set([base.tracks[0].vocalStyle.sungColor, '#58d6de']),
     )
+
+    const clearAtTwoSeconds = videoExport.frameStateAt(project, 2_000)
+    expect(clearAtTwoSeconds.lines.map(({ trackId, text }) => [trackId, text])).toEqual([
+      ['video-lead', 'Lead three'],
+      ['video-lead', 'Lead four'],
+      ['video-harmony', 'Harmony three'],
+      ['video-harmony', 'Harmony four'],
+    ])
+
+    project.lyricDisplay.advanceMode = 'scroll'
+    const scrollAtTwoSeconds = videoExport.frameStateAt(project, 2_000)
+    expect(scrollAtTwoSeconds.lines.map(({ trackId, text }) => [trackId, text])).toEqual([
+      ['video-lead', 'Lead two'],
+      ['video-lead', 'Lead three'],
+      ['video-harmony', 'Harmony two'],
+      ['video-harmony', 'Harmony three'],
+    ])
+    expect(previewFrameStateAt(project, 2_000)).toEqual(scrollAtTwoSeconds)
+  })
+
+  it.each([
+    { label: 'muted tracks', muted: true, solo: false, expected: ['video-lead'] },
+    { label: 'solo tracks', muted: false, solo: true, expected: ['video-harmony'] },
+  ])('keeps Preview and MP4 planning aligned for $label', ({ muted, solo, expected }) => {
+    const base = videoProject()
+    const project = {
+      ...base,
+      offsetMs: 0,
+      tracks: [
+        {
+          ...base.tracks[0],
+          vocalStyle: {
+            ...base.tracks[0].vocalStyle,
+            previewMs: 0,
+            syncAid: { enabled: false, minLeadMs: 0, maxLeadMs: 0 },
+          },
+        },
+        {
+          ...base.tracks[0],
+          id: 'video-harmony',
+          muted,
+          solo,
+          vocalStyle: {
+            ...base.tracks[0].vocalStyle,
+            previewMs: 0,
+            syncAid: { enabled: false, minLeadMs: 0, maxLeadMs: 0 },
+          },
+          lines: base.tracks[0].lines.map((line) => ({
+            ...line,
+            id: `harmony-${line.id}`,
+            words: line.words.map((word) => ({ ...word, id: `harmony-${word.id}` })),
+          })),
+        },
+      ],
+    }
+
+    const frame = videoExport.frameStateAt(project, 1_500)
+    expect(frame.lines.map(({ trackId }) => trackId)).toEqual(expected)
+    expect(previewFrameStateAt(project, 1_500)).toEqual(frame)
   })
 
   it('rejects malformed and semantically invalid current projects', () => {
