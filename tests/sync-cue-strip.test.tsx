@@ -51,6 +51,37 @@ describe('SyncCueStrip', () => {
     ).toBe(true)
   })
 
+  it('keeps the active word distinct from the next target and announces both after Right', async () => {
+    const track = createVocalTrack({
+      id: 'lead',
+      lines: [
+        createLyricLine('one two', { id: 'first' }),
+        createLyricLine('three', { id: 'next' }),
+      ],
+    })
+    const session = new SyncSession(track, 0, 3)
+    await mount(session)
+
+    await act(async () => session.start(1_000, false))
+
+    expect(document.querySelector('.sync-cue__line.is-active-line')?.textContent).toContain('one')
+    expect(document.querySelector('.sync-cue__token.is-active')?.getAttribute('aria-label')).toBe(
+      'Active word: one',
+    )
+    expect(document.querySelector('.sync-cue__token.is-target')?.getAttribute('aria-label')).toBe(
+      'Next target: two',
+    )
+    expect(document.querySelector('.sync-cue__status')?.textContent).toBe(
+      'Started one. Next target: two.',
+    )
+    expect(document.querySelector('.sync-cue__help')?.textContent).toContain(
+      'Start the displayed target.',
+    )
+    expect(document.querySelector('.sync-cue__help')?.textContent).toContain(
+      'Explicitly end the active word.',
+    )
+  })
+
   it('renders a bounded, truthful excerpt for a 5k-word source line', async () => {
     const words = Array.from({ length: 5_000 }, (_, index) =>
       createLyricWord(`w${index}`, { id: `w${index}` }),

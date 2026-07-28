@@ -136,6 +136,35 @@
   color: #fff;
 }
 
+.sync-cue__line .sync-cue__token.is-active:not(.is-target) {
+  border-color: #70469e;
+  background: #ede6f4;
+  box-shadow: 0 0 0 3px rgba(112, 70, 158, 0.12);
+  color: #302b38;
+}
+
+.sync-cue__line.is-active-line {
+  border-color: #ded1ec;
+  background: #f5effa;
+}
+
+.sync-cue__line.is-active-line > span {
+  color: #70469e;
+}
+
+.sync-cue__line.is-active-line .sync-cue__token {
+  color: #302b38;
+}
+
+.sync-cue__line.is-active-line .sync-cue__token.is-timed {
+  color: #62576e;
+}
+
+.sync-cue__status {
+  background: #faf8fc;
+  color: #62576e;
+}
+
 .sync-cue__help {
   background: #faf8fc;
   color: #62576e;

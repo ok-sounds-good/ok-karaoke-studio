@@ -1840,7 +1840,15 @@ export default function App() {
   useEffect(() => {
     const completeIfNeeded = () => {
       const session = syncSessionRef.current
-      if (!session || session.getSnapshot().cursor < session.getSnapshot().total) return
+      const snapshot = session?.getSnapshot()
+      if (
+        !session ||
+        !snapshot ||
+        snapshot.cursor < snapshot.total ||
+        snapshot.activeWordId !== null
+      ) {
+        return
+      }
       session.closeInput()
       syncSpaceHeldRef.current = false
       scheduleCompletedSyncMaterialization()
@@ -1849,6 +1857,10 @@ export default function App() {
     const startDisplayedWord = (advanceOnRelease: boolean) => {
       const session = syncSessionRef.current
       if (!session || !session.currentWordId) {
+        if (session?.getSnapshot().activeWordId !== null) {
+          showToast('End the active word with Down before starting another target.', 'neutral')
+          return false
+        }
         if (!materializeSyncSession()) return false
         setSyncMode(false)
         discardSyncSession()
@@ -1883,10 +1895,15 @@ export default function App() {
         project.offsetMs,
         project.opening.leadInMs,
       )
-      if (sampledLyricMs < 0 || syncInputIsBlocked()) return
-      const advanced = session.end(sampledLyricMs)
+      if (sampledLyricMs < 0) {
+        showToast('The lyric clock has not reached 0:00 yet', 'neutral')
+        return
+      }
+      if (syncInputIsBlocked()) return
+      const ended = session.end(sampledLyricMs)
       abandonHeldSyncGesture()
-      if (advanced) completeIfNeeded()
+      if (ended) completeIfNeeded()
+      else showToast('No active word to end. Press Right to start the displayed target.', 'neutral')
     }
 
     const keyDown = (event: KeyboardEvent) => {

@@ -55,6 +55,79 @@ describe('SyncSession', () => {
     expect(session.drainPatches().get(third.id)).toEqual({ startMs: 3_000, endMs: 3_125 })
   })
 
+  it('publishes arrow feedback only after its active and next-target state is updated', () => {
+    const source = track()
+    const [first, second] = source.lines[0].words
+    const session = new SyncSession(source, 0, 13)
+    const published = [] as ReturnType<SyncSession['getSnapshot']>[]
+    const unsubscribe = session.subscribe(() => published.push(session.getSnapshot()))
+
+    expect(session.start(1_000, false)).toMatchObject({ wordId: first.id, started: true })
+    expect(published).toHaveLength(1)
+    expect(published[0]).toMatchObject({
+      activeWordId: first.id,
+      feedback: 'Started first. Next target: second.',
+      targetWordId: second.id,
+    })
+
+    expect(session.end(1_200)).toBe(true)
+    expect(published[1]).toMatchObject({
+      activeWordId: null,
+      feedback: 'Ended first. Next target: second.',
+      targetWordId: second.id,
+    })
+    unsubscribe()
+  })
+
+  it('clears abandoned active feedback in one publication without moving the target', () => {
+    const source = track()
+    const [first, second] = source.lines[0].words
+    const session = new SyncSession(source, 0, 14)
+    const published = [] as ReturnType<SyncSession['getSnapshot']>[]
+    const unsubscribe = session.subscribe(() => published.push(session.getSnapshot()))
+
+    session.start(1_000, false)
+    expect(session.abandonHeld()).toBe(true)
+    expect(published).toHaveLength(2)
+    expect(published[1]).toMatchObject({
+      activeWordId: null,
+      feedback: '',
+      targetWordId: second.id,
+    })
+    expect(session.abandonHeld()).toBe(false)
+    expect(published).toHaveLength(2)
+    expect(session.drainPatches().get(first.id)).toEqual({ startMs: 1_000, endMs: 1_100 })
+    unsubscribe()
+  })
+
+  it('keeps a final Right word active until Down, then closes without a redundant publication', () => {
+    const source = createVocalTrack({
+      id: 'one-word',
+      lines: [createLyricLine('last', { id: 'last-line' })],
+    })
+    const word = source.lines[0].words[0]
+    const session = new SyncSession(source, 0, 15)
+    const published = [] as ReturnType<SyncSession['getSnapshot']>[]
+    const unsubscribe = session.subscribe(() => published.push(session.getSnapshot()))
+
+    expect(session.start(100, false)).toMatchObject({ wordId: word.id, started: true })
+    expect(published).toHaveLength(1)
+    expect(published[0]).toMatchObject({
+      activeWordId: word.id,
+      feedback: 'Started last. No next target remains; press Down to end the active word.',
+      targetWordId: null,
+    })
+
+    expect(session.end(900)).toBe(true)
+    expect(published).toHaveLength(2)
+    expect(published[1]).toMatchObject({ activeWordId: null, targetWordId: null })
+    expect(session.drainPatches()).toEqual(new Map([[word.id, { startMs: 100, endMs: 900 }]]))
+    session.closeInput()
+    expect(session.isClosed).toBe(true)
+    expect(published).toHaveLength(3)
+    unsubscribe()
+  })
+
   it('publishes drained and acknowledged pending state so all consumers agree', () => {
     const source = track()
     const session = new SyncSession(source, 0, 11)
@@ -67,7 +140,7 @@ describe('SyncSession', () => {
     expect(session.getSnapshot().hasPending).toBe(false)
     session.acknowledgeMaterialized(patches)
     expect(session.getSnapshot().hasPending).toBe(false)
-    expect(published).toEqual([true, true, false, false])
+    expect(published).toEqual([true, false, false])
     unsubscribe()
   })
 
