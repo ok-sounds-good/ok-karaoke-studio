@@ -1,17 +1,30 @@
 import { memo, useMemo } from 'react'
-import { FileAudio2, Import, Mic2, Music2, SlidersHorizontal, UsersRound } from 'lucide-react'
+import {
+  FileAudio2,
+  Import,
+  Mic2,
+  Music2,
+  Plus,
+  SlidersHorizontal,
+  Trash2,
+  UsersRound,
+} from 'lucide-react'
 import type { KaraokeProject, VocalTrack } from '../lib/model'
 import { formatTime } from '../lib/model'
 import { openingLeadInMaximum } from '../lib/project-validation'
 import { resolveVocalSungColor } from '../lib/video-style'
 import { effectiveDuration, flattenProject, flattenTrack } from '../utils'
 import { OpeningTimingControl } from './OpeningTimingControl'
+import { MAX_PROJECT_TRACKS } from '../lib/project-validation'
 import { Button } from './ui'
 
 interface InspectorPanelProps {
   project: KaraokeProject
   activeTrackId: string
   onSelectTrack: (trackId: string) => void
+  onAddTrack: () => void
+  onRemoveTrack: (trackId: string) => void
+  canAddTrack: boolean
   onUpdateProject: (
     patch: Partial<Pick<KaraokeProject, 'title' | 'artist' | 'offsetMs' | 'opening'>>,
   ) => void
@@ -27,6 +40,9 @@ export const InspectorPanel = memo(function InspectorPanel({
   project,
   activeTrackId,
   onSelectTrack,
+  onAddTrack,
+  onRemoveTrack,
+  canAddTrack,
   onUpdateProject,
   onUpdateTrack,
   onImportAudio,
@@ -120,14 +136,33 @@ export const InspectorPanel = memo(function InspectorPanel({
         </section>
 
         <section className="inspector-section">
-          <div className="inspector-section__title">
-            <span>{project.tracks.length === 1 ? 'Vocal track' : 'Vocal tracks'}</span>
-            <UsersRound size={13} />
+          <div className="inspector-section__title-row">
+            <div className="inspector-section__title">
+              <span>{project.tracks.length === 1 ? 'Vocal track' : 'Vocal tracks'}</span>
+              <UsersRound size={13} />
+            </div>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={onAddTrack}
+              title={`Add singer track`}
+              disabled={!canAddTrack}
+              className="inspector-track-add"
+            >
+              <Plus size={12} /> Add singer
+            </Button>
           </div>
+          {!canAddTrack && (
+            <p className="vocal-tracks-note">Maximum of {MAX_PROJECT_TRACKS} singers reached.</p>
+          )}
           <div className="vocal-track-list">
             {project.tracks.map((track, index) => {
               const { total, complete } = trackStats.get(track.id) ?? { total: 0, complete: 0 }
               const sungColor = resolveVocalSungColor(project.stageStyle, track.vocalStyle)
+              const canRemoveTrack = project.tracks.length > 1
+              const removeTitle = canRemoveTrack
+                ? `Remove ${track.name} from project`
+                : 'At least one singer must remain in the project.'
               return (
                 <article
                   key={track.id}
@@ -178,32 +213,49 @@ export const InspectorPanel = memo(function InspectorPanel({
                     <span>
                       {complete}/{total} timed
                     </span>
-                    {project.tracks.length > 1 && (
-                      <div>
-                        <button
-                          className={track.muted ? 'is-on' : ''}
-                          aria-label={`${track.muted ? 'Unmute' : 'Mute'} ${track.name}`}
-                          title={`${track.muted ? 'Unmute' : 'Mute'} ${track.name}`}
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            onUpdateTrack(track.id, { muted: !track.muted })
-                          }}
-                        >
-                          M
-                        </button>
-                        <button
-                          className={track.solo ? 'is-on' : ''}
-                          aria-label={`${track.solo ? 'Disable solo for' : 'Solo'} ${track.name}`}
-                          title={`${track.solo ? 'Disable solo for' : 'Solo'} ${track.name}`}
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            onUpdateTrack(track.id, { solo: !track.solo })
-                          }}
-                        >
-                          S
-                        </button>
-                      </div>
-                    )}
+                    <div>
+                      {project.tracks.length > 1 && (
+                        <>
+                          <button
+                            className={track.muted ? 'is-on' : ''}
+                            aria-label={`${track.muted ? 'Unmute' : 'Mute'} ${track.name}`}
+                            title={`${track.muted ? 'Unmute' : 'Mute'} ${track.name}`}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              onUpdateTrack(track.id, { muted: !track.muted })
+                            }}
+                          >
+                            M
+                          </button>
+                          <button
+                            className={track.solo ? 'is-on' : ''}
+                            aria-label={`${track.solo ? 'Disable solo for' : 'Solo'} ${track.name}`}
+                            title={`${track.solo ? 'Disable solo for' : 'Solo'} ${track.name}`}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              onUpdateTrack(track.id, { solo: !track.solo })
+                            }}
+                          >
+                            S
+                          </button>
+                        </>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="danger"
+                        className="vocal-track-card__remove"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onRemoveTrack(track.id)
+                        }}
+                        aria-label={`Remove ${track.name} from project`}
+                        title={removeTitle}
+                        disabled={!canRemoveTrack}
+                      >
+                        <Trash2 size={12} />
+                        Remove
+                      </Button>
+                    </div>
                   </div>
                 </article>
               )

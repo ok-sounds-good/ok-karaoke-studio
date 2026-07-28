@@ -31,6 +31,18 @@
   color: var(--muted);
 }
 
+.inspector-section__title-row {
+  align-items: flex-start;
+}
+
+.inspector-track-add {
+  width: auto;
+}
+
+.vocal-tracks-note {
+  color: var(--muted);
+}
+
 .audio-source {
   border-color: var(--control-line);
   background: #f7f2fb;
@@ -83,6 +95,12 @@
   border-color: #ded4e8;
   background: #faf8fc;
   color: #756a80;
+}
+
+.vocal-track-card__remove {
+  width: auto;
+  height: auto;
+  padding: 0 9px;
 }
 
 .vocal-track-card__status button.is-on {

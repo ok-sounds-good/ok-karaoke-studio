@@ -11,6 +11,7 @@ import {
   createProject,
   createLyricLine,
   createLyricWord,
+  MAX_PROJECT_TRACKS,
   createVocalTrack,
   exportAss,
   exportLrc,
@@ -366,6 +367,50 @@ function syncWordEnd(word: LyricWord): number | null {
   return Math.max(word.startMs + 1, word.endMs ?? word.startMs + DEFAULT_SYNC_WORD_DURATION_MS)
 }
 
+function nextSingerTrackName(existing: VocalTrack[]): string {
+  const existingNumbers = new Set<number>()
+  for (const track of existing) {
+    const match = /^Singer\s+(\d+)$/i.exec(track.name)
+    if (!match) continue
+    const parsed = Number.parseInt(match[1], 10)
+    if (Number.isSafeInteger(parsed) && parsed >= 2) existingNumbers.add(parsed)
+  }
+  let next = 2
+  while (existingNumbers.has(next)) next += 1
+  return `Singer ${next}`
+}
+
+function nextTrackId(existingTrackIds: Set<string>, projectId: string): string {
+  let suffix = 1
+  while (existingTrackIds.has(`${projectId}-track-${suffix}`)) suffix += 1
+  return `${projectId}-track-${suffix}`
+}
+
+function collectProjectEntityIds(project: KaraokeProject): Set<string> {
+  const existingIds = new Set<string>()
+  project.tracks.forEach((track) => {
+    existingIds.add(track.id)
+    track.lines.forEach((line) => {
+      existingIds.add(line.id)
+      line.words.forEach((word) => {
+        existingIds.add(word.id)
+      })
+    })
+  })
+  return existingIds
+}
+
+function nextTrackIndexAfterRemoval(count: number, removedIndex: number, activeIndex: number) {
+  if (count === 0) return 0
+  if (activeIndex > removedIndex) {
+    return Math.max(0, Math.min(activeIndex - 1, count - 1))
+  }
+  if (activeIndex === removedIndex) {
+    return Math.max(0, Math.min(removedIndex, count - 1))
+  }
+  return Math.min(activeIndex, count - 1)
+}
+
 function adjacentTimedWord(words: LyricWord[], index: number, direction: -1 | 1): LyricWord | null {
   for (
     let candidateIndex = index + direction;
@@ -430,6 +475,7 @@ export default function App() {
   const timelineGestureActiveRef = useRef(false)
   const projectRef = useRef(project)
   const lastReviewIssuesRef = useRef<ValidationIssue[]>([])
+  const activeTrackIndexRef = useRef(0)
   projectRef.current = project
   const projectMutationIsBlocked = useCallback(() => projectTransitionRef.current, [])
   const syncInputIsBlocked = useCallback(
@@ -744,8 +790,22 @@ export default function App() {
   }, [videoExportProgress])
 
   useEffect(() => {
-    if (!activeTrack && project.tracks[0]) setActiveTrackId(project.tracks[0].id)
-  }, [activeTrack, project.tracks])
+    const activeIndex = project.tracks.findIndex((track) => track.id === activeTrackId)
+    if (activeIndex >= 0) {
+      activeTrackIndexRef.current = activeIndex
+      return
+    }
+    if (!project.tracks.length) {
+      activeTrackIndexRef.current = 0
+      return
+    }
+    const deterministicIndex = Math.max(
+      0,
+      Math.min(activeTrackIndexRef.current, project.tracks.length - 1),
+    )
+    activeTrackIndexRef.current = deterministicIndex
+    setActiveTrackId(project.tracks[deterministicIndex].id)
+  }, [activeTrackId, project.tracks])
 
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
@@ -1556,27 +1616,101 @@ export default function App() {
     syncScopeRef.current = null
   }, [abandonHeldSyncGesture])
 
+  const clearTrackEditorState = useCallback(() => {
+    if (!materializeSyncSession()) return false
+    discardSyncSession()
+    cancelHeldSync()
+    setSyncMode(false)
+    setSelectedWordIds(new Set())
+    setTimingDraft(null)
+    setSyncCursor(0)
+    return true
+  }, [cancelHeldSync, discardSyncSession, materializeSyncSession, setSyncCursor])
+
   const openLyricsEditor = useCallback(() => {
     if (!materializeSyncSession()) return
     abandonHeldSyncGesture()
     setLyricsDialogOpen(true)
   }, [abandonHeldSyncGesture, materializeSyncSession])
 
+  const trackCanBeAdded = project.tracks.length < MAX_PROJECT_TRACKS
+  const handleAddTrack = useCallback(() => {
+    const currentProject = projectRef.current
+    if (currentProject.tracks.length >= MAX_PROJECT_TRACKS) {
+      showToast(
+        `Cannot add more singers. Keep up to ${MAX_PROJECT_TRACKS} vocal tracks only.`,
+        'warning',
+      )
+      return
+    }
+    if (!clearTrackEditorState()) return
+
+    const existingIds = collectProjectEntityIds(currentProject)
+    const nextTrack = createVocalTrack({
+      id: nextTrackId(existingIds, currentProject.id),
+      name: nextSingerTrackName(currentProject.tracks),
+      defaultStyleIndex: currentProject.tracks.length,
+      lines: [],
+    })
+    const committed = commit((current) => ({
+      ...current,
+      updatedAt: new Date().toISOString(),
+      tracks: [...current.tracks, nextTrack],
+    }))
+    if (!committed) return
+    setActiveTrackId(nextTrack.id)
+    activeTrackIndexRef.current = committed.project.tracks.length - 1
+  }, [clearTrackEditorState, commit, showToast])
+
+  const handleRemoveTrack = useCallback(
+    (trackId: string) => {
+      const currentProject = projectRef.current
+      const trackToRemove = currentProject.tracks.find((track) => track.id === trackId)
+      if (!trackToRemove) return
+      if (currentProject.tracks.length <= 1) {
+        showToast('At least one singer must remain in the project.', 'warning')
+        return
+      }
+      if (
+        !window.confirm(
+          `Remove ${trackToRemove.name} and keep the remaining singer tracks? This cannot be undone except via history.`,
+        )
+      ) {
+        return
+      }
+      if (!clearTrackEditorState()) return
+      const removedIndex = currentProject.tracks.findIndex((track) => track.id === trackId)
+      if (removedIndex < 0) return
+      const committed = commit((current) => ({
+        ...current,
+        updatedAt: new Date().toISOString(),
+        tracks: current.tracks.filter((track) => track.id !== trackId),
+      }))
+      if (!committed) return
+      const nextTrackIndex = nextTrackIndexAfterRemoval(
+        committed.project.tracks.length,
+        removedIndex,
+        activeTrackIndexRef.current,
+      )
+      const nextTrack = committed.project.tracks[nextTrackIndex]
+      if (!nextTrack) return
+      setActiveTrackId(nextTrack.id)
+      activeTrackIndexRef.current = nextTrackIndex
+    },
+    [clearTrackEditorState, commit, showToast],
+  )
+
   const handleUndo = useCallback(() => {
     if (projectMutationIsBlocked()) return
-    if (!materializeSyncSession()) return
-    discardSyncSession()
-    setSyncMode(false)
+    if (!clearTrackEditorState()) return
     history.undo()
-  }, [discardSyncSession, history.undo, materializeSyncSession, projectMutationIsBlocked])
+  }, [clearTrackEditorState, history.undo, projectMutationIsBlocked])
 
   const handleRedo = useCallback(() => {
     if (projectMutationIsBlocked()) return
-    if (!materializeSyncSession()) return
-    discardSyncSession()
-    setSyncMode(false)
+    if (!clearTrackEditorState()) return
     history.redo()
-  }, [discardSyncSession, history.redo, materializeSyncSession, projectMutationIsBlocked])
+  }, [clearTrackEditorState, history.redo, projectMutationIsBlocked])
 
   const nativeCloseBridge = useMemo(() => {
     const studio = window.studio
@@ -2062,14 +2196,10 @@ export default function App() {
 
   const handleSelectTrack = useCallback(
     (trackId: string) => {
-      if (!materializeSyncSession()) return
-      discardSyncSession()
-      cancelHeldSync()
-      setSyncMode(false)
+      if (!clearTrackEditorState()) return
       setActiveTrackId(trackId)
-      setSelectedWordIds(new Set())
     },
-    [cancelHeldSync, discardSyncSession, materializeSyncSession],
+    [clearTrackEditorState],
   )
 
   const workflowGuideActions = createWorkflowGuideActions({
@@ -2170,6 +2300,9 @@ export default function App() {
             project={project}
             activeTrackId={activeTrackId}
             onSelectTrack={handleSelectTrack}
+            onAddTrack={handleAddTrack}
+            onRemoveTrack={handleRemoveTrack}
+            canAddTrack={trackCanBeAdded}
             onUpdateProject={updateProject}
             onUpdateTrack={updateTrack}
             onImportAudio={() => requestProjectAction('import-audio')}
