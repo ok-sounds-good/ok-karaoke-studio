@@ -216,30 +216,21 @@ function createStageFramePlanner(project) {
       ...entry,
       active: activeWindow(entry.windows, lyricMs),
     }))
-    const lines = []
-    for (
-      let lineIndex = 0;
-      lineIndex < project.lyricDisplay.lineCount && lines.length < project.lyricDisplay.lineCount;
-      lineIndex += 1
-    ) {
-      for (const { active, style, track } of planned) {
-        const line = active?.entries[lineIndex]?.line
-        if (!line || lines.length >= project.lyricDisplay.lineCount) continue
-        lines.push({
-          id: line.id,
-          trackId: track.id,
-          text: line.text.replaceAll('/', '·'),
-          style,
-          words: line.words
-            .filter((word) => word.text)
-            .map((word) => ({
-              id: word.id,
-              text: word.text.replaceAll('/', '·'),
-              progress: wordProgress(word, lyricMs),
-            })),
-        })
-      }
-    }
+    const lines = planned.flatMap(({ active, style, track }) =>
+      (active?.entries ?? []).map(({ line }) => ({
+        id: line.id,
+        trackId: track.id,
+        text: line.text.replaceAll('/', '·'),
+        style,
+        words: line.words
+          .filter((word) => word.text)
+          .map((word) => ({
+            id: word.id,
+            text: word.text.replaceAll('/', '·'),
+            progress: wordProgress(word, lyricMs),
+          })),
+      })),
+    )
     const admitted = new Set(lines.map((line) => JSON.stringify([line.trackId, line.id])))
     const syncAids = planned.flatMap(({ active, firstSectionLineIds, style, track }) => {
       const aid = syncAidFor(track, firstSectionLineIds, active, lyricMs)

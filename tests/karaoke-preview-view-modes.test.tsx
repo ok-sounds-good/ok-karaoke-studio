@@ -304,6 +304,61 @@ describe('Karaoke Preview viewer modes', () => {
     expect(container.textContent).toContain('Hidden')
   })
 
+  it('renders every visible singer at a completely shared placement', async () => {
+    const lead = createVocalTrack({
+      id: 'overlap-lead',
+      name: 'Lead',
+      lines: [
+        createLyricLine('Lead one', {
+          startMs: 0,
+          endMs: 1_000,
+          words: [createLyricWord('Lead one', { startMs: 0, endMs: 1_000 })],
+        }),
+        createLyricLine('Lead two', {
+          startMs: 1_000,
+          endMs: 2_000,
+          words: [createLyricWord('Lead two', { startMs: 1_000, endMs: 2_000 })],
+        }),
+      ],
+    })
+    const harmony = createVocalTrack({
+      id: 'overlap-harmony',
+      name: 'Harmony',
+      lines: [
+        createLyricLine('Harmony one', {
+          startMs: 0,
+          endMs: 1_000,
+          words: [createLyricWord('Harmony one', { startMs: 0, endMs: 1_000 })],
+        }),
+        createLyricLine('Harmony two', {
+          startMs: 1_000,
+          endMs: 2_000,
+          words: [createLyricWord('Harmony two', { startMs: 1_000, endMs: 2_000 })],
+        }),
+      ],
+    })
+    lead.vocalStyle.position = { x: 800, y: 500 }
+    harmony.vocalStyle.position = { x: 800, y: 500 }
+    const project = createProject({
+      id: 'overlap-project',
+      lyricDisplay: { lineCount: 2, advanceMode: 'clear' },
+      tracks: [lead, harmony],
+    })
+
+    await renderPreview(project, { playbackMs: 500 })
+
+    const lyricObjects = [
+      ...container.querySelectorAll<HTMLElement>('[data-lyric-object-line-count]'),
+    ]
+    expect(lyricObjects).toHaveLength(2)
+    expect(lyricObjects.map(({ dataset }) => dataset.lyricObjectLineCount)).toEqual(['2', '2'])
+    expect(
+      lyricObjects.map(
+        (object) => object.querySelector('[data-lyric-object-content]')?.textContent,
+      ),
+    ).toEqual(['Lead oneLead two', 'Harmony oneHarmony two'])
+  })
+
   it('distinguishes faithful Auto from pinned layers and resets the viewer for a new project', async () => {
     const project = timedProject()
     await renderPreview(project, {
