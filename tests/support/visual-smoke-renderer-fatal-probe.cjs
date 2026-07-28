@@ -133,6 +133,10 @@ const PROBE_HTML = `<!doctype html>
         )
       }
       updateDividerAria()
+      const dividerAriaObserver = new ResizeObserver(updateDividerAria)
+      dividerAriaObserver.observe(workspace)
+      dividerAriaObserver.observe(stage)
+      window.addEventListener('pagehide', () => dividerAriaObserver.disconnect(), { once: true })
       window.addEventListener('oks-captured', () => {
         setTimeout(() => {
           throw new TypeError('renderer-fatal-probe')
