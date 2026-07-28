@@ -18,11 +18,12 @@ import {
 import {
   MAX_PROJECT_DURATION_MS,
   MAX_PROJECT_LINES,
+  MAX_PROJECT_TRACKS,
   MAX_PROJECT_WORDS,
   hasValidationErrors,
   validateProject,
 } from '../src/lib/project-validation'
-import { DEFAULT_VOCAL_STYLE } from '../src/lib/video-style'
+import { DEFAULT_VOCAL_STYLE, defaultSingerColors } from '../src/lib/video-style'
 
 interface StudioHarness {
   studio: StudioApi
@@ -228,6 +229,22 @@ async function tapSyncWord() {
 function timelineTimingLabels() {
   return [...document.querySelectorAll<HTMLElement>('.timeline-word, .timeline-sync-pending')].map(
     (word) => word.getAttribute('aria-label') ?? word.dataset.timingLabel ?? null,
+  )
+}
+
+function expectSyncEditorStateCleared() {
+  expect(document.querySelector('.sync-cue')).toBeNull()
+  const workspace = document.querySelector<HTMLElement>('.unified-workspace')
+  expect(workspace?.classList.contains('is-syncing')).toBe(false)
+  expect(
+    document.querySelectorAll('.timeline-word.is-selected, .untimed-tray button.is-selected'),
+  ).toHaveLength(0)
+  expect(document.querySelectorAll('.timeline-sync-pending')).toHaveLength(0)
+}
+
+function timelineSelectableTarget() {
+  return document.querySelector<HTMLButtonElement>(
+    '.timeline-word, .timeline-sync-pending, .untimed-tray button',
   )
 }
 
@@ -559,6 +576,233 @@ describe('mounted first-time workflow', () => {
       contents: savedContents,
       format: 'oks',
     })
+  })
+
+  it('adds a singer track with deterministic default naming and style', async () => {
+    await clickButton('Add singer')
+
+    const trackInputs = document.querySelectorAll<HTMLInputElement>('input[aria-label$="name"]')
+    expect(trackInputs).toHaveLength(2)
+    expect(trackInputs[1].value).toBe('Singer 2')
+
+    await clickButton('Workflow')
+    await clickButton('Save .oks')
+    const saved = parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents)
+    expect(saved.tracks).toHaveLength(2)
+    expect(saved.tracks[1]).toMatchObject({
+      name: 'Singer 2',
+      vocalStyle: { ...DEFAULT_VOCAL_STYLE, ...defaultSingerColors(1) },
+    })
+  })
+
+  it('generates singer-track IDs that are unique across track, line, and word IDs', async () => {
+    const collidingProject = createProject({
+      id: 'collision-project',
+      tracks: [
+        createVocalTrack({
+          id: 'collision-project-track-1',
+          name: 'Lead Vocal',
+          lines: [
+            createLyricLine('One', {
+              id: 'collision-lead-line',
+              words: [createLyricWord('One', { id: 'collision-lead-word' })],
+            }),
+          ],
+        }),
+      ],
+    })
+    const existingIds = new Set<string>()
+    collidingProject.tracks.forEach((track) => {
+      existingIds.add(track.id)
+      track.lines.forEach((line) => {
+        existingIds.add(line.id)
+        line.words.forEach((word) => {
+          existingIds.add(word.id)
+        })
+      })
+    })
+    harness.openProject.mockResolvedValueOnce({
+      requestId: 'singer-id-collision-open',
+      path: '/opened/singer-id-collision.oks',
+      contents: serializeProject(collidingProject),
+    })
+
+    await clickButton('Workflow')
+    await clickButton('Open .oks')
+    await clickButton('Add singer')
+
+    await clickButton('Workflow')
+    await clickButton('Save .oks')
+    const saved = parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents)
+    expect(saved.tracks).toHaveLength(2)
+    const addedTrack = saved.tracks[1]
+    expect(existingIds.has(addedTrack.id)).toBe(false)
+    expect(addedTrack.id).toBe('collision-project-track-2')
+  })
+
+  it('adds a singer while clearing sync state and selection state', async () => {
+    const project = createProject({
+      id: 'add-clears-sync',
+      tracks: [
+        createVocalTrack({
+          id: 'add-sync-lead',
+          name: 'Lead Vocal',
+          lines: [
+            createLyricLine('One two', {
+              id: 'add-sync-line',
+              words: [createLyricWord('One'), createLyricWord('two')],
+            }),
+          ],
+        }),
+      ],
+    })
+    harness.openProject.mockResolvedValueOnce({
+      requestId: 'add-clear-open',
+      path: '/opened/add-clear-state.oks',
+      contents: serializeProject(project),
+    })
+
+    await clickButton('Workflow')
+    await clickButton('Open .oks')
+    await clickButton('Start sync')
+    await pressKey('ArrowRight')
+    await pressKey('Space')
+    const timelineWord = timelineSelectableTarget()
+    if (!timelineWord) throw new Error('Could not find a timeline word')
+    await act(async () => {
+      timelineWord.click()
+    })
+    expect(document.querySelector('.sync-cue')).not.toBeNull()
+
+    await clickButton('Add singer')
+    expectSyncEditorStateCleared()
+    expect(document.querySelectorAll('.vocal-track-card')).toHaveLength(2)
+    expect(
+      document.querySelector<HTMLInputElement>(
+        'article.vocal-track-card.is-active input[aria-label="Track 2 name"]',
+      )?.value,
+    ).toBe('Singer 2')
+  })
+
+  it('disables adding singers when at max and explains the limit', async () => {
+    for (let index = 0; index < MAX_PROJECT_TRACKS - 1; index += 1) {
+      await clickButton('Add singer')
+    }
+
+    const addSinger = buttonContaining('Add singer')
+    expect(addSinger.disabled).toBe(true)
+    expect(document.querySelector('.vocal-tracks-note')?.textContent).toContain(
+      `Maximum of ${MAX_PROJECT_TRACKS} singers reached.`,
+    )
+
+    expect(document.querySelectorAll('.vocal-track-card')).toHaveLength(MAX_PROJECT_TRACKS)
+    await act(async () => {
+      addSinger.click()
+    })
+    expect(document.querySelectorAll('.vocal-track-card')).toHaveLength(MAX_PROJECT_TRACKS)
+  })
+
+  it('removes a singer track with confirmation and keeps at least one track', async () => {
+    await clickButton('Add singer')
+    const leadRemove = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Remove Lead Vocal from project"]',
+    )
+    if (!leadRemove) throw new Error('Could not find the lead remove button')
+
+    await act(async () => {
+      leadRemove.click()
+    })
+    expect(window.confirm).toHaveBeenCalledWith(
+      'Remove Lead Vocal and keep the remaining singer tracks? This cannot be undone except via history.',
+    )
+
+    expect(document.querySelectorAll('.vocal-track-card')).toHaveLength(1)
+    const singleRemove = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Remove Singer 2 from project"]',
+    )
+    if (!singleRemove) throw new Error('Could not find the remaining remove button')
+    expect(singleRemove.disabled).toBe(true)
+    expect(singleRemove.title).toBe('At least one singer must remain in the project.')
+    const confirmCalls = (window.confirm as ReturnType<typeof vi.fn>).mock.calls.length
+    await act(async () => {
+      singleRemove.click()
+    })
+    expect((window.confirm as ReturnType<typeof vi.fn>).mock.calls.length).toBe(confirmCalls)
+    expect(document.querySelectorAll('.vocal-track-card')).toHaveLength(1)
+  })
+
+  it('keeps active-track selection deterministic after removal and through undo/redo', async () => {
+    const project = createProject({
+      id: 'active-after-remove',
+      title: 'Active Track Check',
+      tracks: [
+        createVocalTrack({
+          id: 'lead',
+          name: 'Lead Vocal',
+          lines: [createLyricLine('One two', { id: 'active-after-remove-lead' })],
+        }),
+        createVocalTrack({
+          id: 'duet',
+          name: 'Duet Vocal',
+          lines: [createLyricLine('Three four', { id: 'active-after-remove-duet' })],
+        }),
+        createVocalTrack({
+          id: 'backup',
+          name: 'Backup Vocal',
+          lines: [createLyricLine('Five six', { id: 'active-after-remove-backup' })],
+        }),
+      ],
+    })
+    harness.openProject.mockResolvedValueOnce({
+      requestId: 'active-track-remove-open',
+      path: '/opened/active-track-remove.oks',
+      contents: serializeProject(project),
+    })
+
+    await clickButton('Workflow')
+    await clickButton('Open .oks')
+    await clickButton('Start sync')
+    await pressKey('ArrowRight')
+    const firstWord = timelineSelectableTarget()
+    if (!firstWord) throw new Error('Could not find a timeline word')
+    await act(async () => {
+      firstWord.click()
+    })
+    expect(document.querySelector('.sync-cue')).not.toBeNull()
+
+    const activeTrackName = () =>
+      document
+        .querySelector<HTMLElement>('.vocal-track-card.is-active')
+        ?.querySelector<HTMLInputElement>('input[aria-label^="Track "]')?.value
+
+    expect(activeTrackName()).toBe('Lead Vocal')
+
+    const removeLead = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Remove Lead Vocal from project"]',
+    )
+    if (!removeLead) throw new Error('Could not find the lead remove button')
+    await act(async () => {
+      removeLead.click()
+    })
+    expectSyncEditorStateCleared()
+
+    expect(activeTrackName()).toBe('Duet Vocal')
+
+    const undo = document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')
+    if (!undo) throw new Error('Could not find Undo control')
+    await act(async () => {
+      undo.click()
+    })
+    expect(activeTrackName()).toBe('Duet Vocal')
+    expectSyncEditorStateCleared()
+
+    const redo = document.querySelector<HTMLButtonElement>('[aria-label="Redo"]')
+    if (!redo) throw new Error('Could not find Redo control')
+    await act(async () => {
+      redo.click()
+    })
+    expect(activeTrackName()).toBe('Duet Vocal')
+    expectSyncEditorStateCleared()
   })
 
   it('clamps opening lead-in atomically when audio metadata reduces its combined budget', async () => {
@@ -2484,20 +2728,31 @@ describe('mounted first-time workflow', () => {
     await clickButton('Open .oks')
     await clickButton('Start sync')
     await pressKey('ArrowRight')
+    const activeWord = timelineSelectableTarget()
+    if (!activeWord) throw new Error('Could not find a timeline word')
+    await act(async () => {
+      activeWord.click()
+    })
+    expect(document.querySelector('.sync-cue')).not.toBeNull()
+    expect(document.querySelector('.sync-cue')).not.toBeNull()
     await act(async () =>
       document.querySelector<HTMLButtonElement>('[aria-label="Select Duet vocal track"]')?.click(),
     )
+    expectSyncEditorStateCleared()
     await act(async () =>
       document.querySelector<HTMLButtonElement>('[aria-label="Select Lead vocal track"]')?.click(),
     )
+    expectSyncEditorStateCleared()
     await clickButton('Start sync')
     await act(async () => harness.sendMenuAction('save'))
 
     const saved = parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents)
     expect(saved.tracks[0].lines[0].words[0]).toMatchObject({ startMs: 0, endMs: 100 })
     await act(async () => harness.sendMenuAction('undo'))
+    expectSyncEditorStateCleared()
     expect(timelineTimingLabels()).toHaveLength(0)
     await act(async () => harness.sendMenuAction('redo'))
+    expectSyncEditorStateCleared()
     expect(timelineTimingLabels()).toContain('One timing block, 0:00.000–0:00.100')
   })
 
