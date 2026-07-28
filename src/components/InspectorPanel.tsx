@@ -217,32 +217,28 @@ export const InspectorPanel = memo(function InspectorPanel({
                       {complete}/{total} timed
                     </span>
                     <div>
-                      {project.tracks.length > 1 && (
-                        <>
-                          <button
-                            className={track.muted ? 'is-on' : ''}
-                            aria-label={`${track.muted ? 'Unmute' : 'Mute'} ${track.name}`}
-                            title={`${track.muted ? 'Unmute' : 'Mute'} ${track.name}`}
-                            onClick={(event) => {
-                              event.stopPropagation()
-                              onUpdateTrack(track.id, { muted: !track.muted })
-                            }}
-                          >
-                            M
-                          </button>
-                          <button
-                            className={track.solo ? 'is-on' : ''}
-                            aria-label={`${track.solo ? 'Disable solo for' : 'Solo'} ${track.name}`}
-                            title={`${track.solo ? 'Disable solo for' : 'Solo'} ${track.name}`}
-                            onClick={(event) => {
-                              event.stopPropagation()
-                              onUpdateTrack(track.id, { solo: !track.solo })
-                            }}
-                          >
-                            S
-                          </button>
-                        </>
-                      )}
+                      <button
+                        className={track.muted ? 'is-on' : ''}
+                        aria-label={`${track.muted ? 'Unmute' : 'Mute'} ${track.name}`}
+                        title={`${track.muted ? 'Unmute' : 'Mute'} ${track.name}`}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onUpdateTrack(track.id, { muted: !track.muted })
+                        }}
+                      >
+                        M
+                      </button>
+                      <button
+                        className={track.solo ? 'is-on' : ''}
+                        aria-label={`${track.solo ? 'Disable solo for' : 'Solo'} ${track.name}`}
+                        title={`${track.solo ? 'Disable solo for' : 'Solo'} ${track.name}`}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onUpdateTrack(track.id, { solo: !track.solo })
+                        }}
+                      >
+                        S
+                      </button>
                       <Button
                         size="sm"
                         variant="danger"

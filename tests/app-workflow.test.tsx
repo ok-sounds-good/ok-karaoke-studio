@@ -23,6 +23,7 @@ import {
   hasValidationErrors,
   validateProject,
 } from '../src/lib/project-validation'
+import { previewFrameStateAt } from '../src/lib/stage-frame-state'
 import { DEFAULT_VOCAL_STYLE, defaultSingerColors } from '../src/lib/video-style'
 
 interface StudioHarness {
@@ -729,6 +730,90 @@ describe('mounted first-time workflow', () => {
     })
     expect((window.confirm as ReturnType<typeof vi.fn>).mock.calls.length).toBe(confirmCalls)
     expect(document.querySelectorAll('.vocal-track-card')).toHaveLength(1)
+  })
+
+  it('allows unmuting a solo surviving singer after removal and restores preview output', async () => {
+    const demo = createDemoProject()
+    const lead = demo.tracks[0]
+    const duet = {
+      ...lead,
+      id: 'duet-vocal',
+      name: 'Singer 2',
+      lines: lead.lines.map((line, lineIndex) => ({
+        ...line,
+        id: `duet-line-${lineIndex + 1}`,
+        words: line.words.map((word, wordIndex) => ({
+          ...word,
+          id: `duet-word-${lineIndex + 1}-${wordIndex + 1}`,
+        })),
+      })),
+    }
+    harness.openProject.mockResolvedValueOnce({
+      requestId: 'single-singer-mute-open',
+      path: '/opened/single-singer-mute.oks',
+      contents: serializeProject({ ...demo, tracks: [lead, duet], title: 'Single singer mute' }),
+    })
+    await clickButton('Workflow')
+    await clickButton('Open .oks')
+
+    const muteLead = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Mute Lead Vocal"]',
+    )
+    if (!muteLead) throw new Error('Could not find the lead mute button')
+
+    await act(async () => {
+      muteLead.click()
+    })
+    expect(
+      document.querySelector<HTMLButtonElement>('button[aria-label="Unmute Lead Vocal"]'),
+    ).not.toBeNull()
+    expect(
+      document.querySelector<HTMLButtonElement>('button[aria-label="Solo Lead Vocal"]'),
+    ).not.toBeNull()
+
+    const removeSinger2 = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Remove Singer 2 from project"]',
+    )
+    if (!removeSinger2) throw new Error('Could not find the backup remove button')
+    await act(async () => {
+      removeSinger2.click()
+    })
+    expect(window.confirm).toHaveBeenCalledWith(
+      'Remove Singer 2 and keep the remaining singer tracks? This cannot be undone except via history.',
+    )
+    expect(document.querySelectorAll('.vocal-track-card')).toHaveLength(1)
+    await act(async () => {
+      harness.sendMenuAction('save')
+    })
+    const mutedSaved = parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents)
+    expect(mutedSaved.tracks).toHaveLength(1)
+    expect(mutedSaved.tracks[0]).toMatchObject({
+      name: 'Lead Vocal',
+      muted: true,
+    })
+    expect(previewFrameStateAt(mutedSaved, 2_000).lines).toHaveLength(0)
+
+    const unmuteLead = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Unmute Lead Vocal"]',
+    )
+    if (!unmuteLead) throw new Error('Could not find the surviving track unmute button')
+    await act(async () => {
+      unmuteLead.click()
+    })
+    expect(
+      document.querySelector<HTMLButtonElement>('button[aria-label="Mute Lead Vocal"]'),
+    ).not.toBeNull()
+
+    await act(async () => {
+      harness.sendMenuAction('save')
+    })
+    const saved = parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents)
+    expect(saved.tracks).toHaveLength(1)
+    expect(saved.tracks[0]).toMatchObject({
+      name: 'Lead Vocal',
+      muted: false,
+    })
+    expect(previewFrameStateAt(saved, 2_000).lines.length).toBeGreaterThan(0)
   })
 
   it('keeps active-track selection deterministic after removal and through undo/redo', async () => {
