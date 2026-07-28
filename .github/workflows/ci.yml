@@ -72,6 +72,7 @@ jobs:
             --exclude tests/project-style-workflow.test.tsx \
             --exclude tests/sync-session.test.ts \
             --exclude tests/timeline-density-mounted.test.tsx \
+            --exclude tests/timeline-gestures.test.tsx \
             --exclude tests/video-style-visual-smoke.test.ts \
             --exclude tests/visual-result-validation.test.ts \
             --exclude tests/visual-smoke-launcher.test.ts \
@@ -119,6 +120,7 @@ jobs:
             tests/project-style-workflow.test.tsx \
             tests/sync-session.test.ts \
             tests/timeline-density-mounted.test.tsx \
+            tests/timeline-gestures.test.tsx \
             tests/video-style-visual-smoke.test.ts \
             tests/visual-result-validation.test.ts \
             tests/visual-smoke-launcher.test.ts \
