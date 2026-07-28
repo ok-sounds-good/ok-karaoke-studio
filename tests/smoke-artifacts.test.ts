@@ -1,6 +1,9 @@
 import { createRequire } from 'node:module'
+import * as fs from 'node:fs/promises'
 import {
+  chmod,
   lstat,
+  link,
   mkdir,
   mkdtemp,
   readFile,
@@ -13,6 +16,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join, parse, sep, win32 } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { validPng } from './support/png-fixture'
 
 const require = createRequire(import.meta.url)
 const artifacts = require('../electron/smoke-artifacts.cjs') as {
@@ -25,6 +29,11 @@ const artifacts = require('../electron/smoke-artifacts.cjs') as {
   normalizeArtifactBuffers(values: Artifact[]): Artifact[]
   normalizeLauncherFailure(value: unknown): { code: string; ok: false }
   outputState(path: string): Promise<{ output: string; state: string }>
+  inspectOutputDirectory(
+    path: string,
+    fsApi?: Record<string, unknown>,
+    platform?: string,
+  ): Promise<unknown>
   publishArtifactBuffers(
     output: string,
     values: Artifact[],
@@ -39,6 +48,8 @@ const artifacts = require('../electron/smoke-artifacts.cjs') as {
 }
 const visualResults = require('../scripts/visual-result-validation.cjs') as {
   STYLE_SESSION_NAMES: readonly string[]
+  createResultArtifacts(png: Buffer): { artifacts: Artifact[] }
+  validateVisualResultDirectory(path: string): Promise<unknown>
 }
 
 interface Artifact {
@@ -67,6 +78,10 @@ function resultArtifacts(): Artifact[] {
     { bytes: Buffer.from('png bytes'), name: '01-default.png' },
     { bytes: Buffer.from('{"ok":true}\n'), name: 'result.json' },
   ]
+}
+
+function validatedResultArtifacts(): Artifact[] {
+  return visualResults.createResultArtifacts(validPng(1280, 720)).artifacts
 }
 
 describe('smoke artifact ownership and publication', () => {
@@ -157,6 +172,15 @@ describe('smoke artifact ownership and publication', () => {
     expect(await readFile(join(target, 'sentinel'), 'utf8')).toBe('caller target')
   })
 
+  it('uses POSIX modes only on POSIX and accepts normal Windows stat semantics', async () => {
+    const root = await temporaryRoot()
+    await chmod(root, 0o755)
+    await expect(artifacts.inspectOutputDirectory(root, undefined, 'linux')).rejects.toThrow(
+      'VISUAL_OUTPUT_RACE',
+    )
+    await expect(artifacts.inspectOutputDirectory(root, undefined, 'win32')).resolves.toBeDefined()
+  })
+
   it('loses claim, directory-swap, and exclusive-file races without overwriting', async () => {
     const root = await temporaryRoot()
     const claimedByOther = join(root, 'other-claim')
@@ -212,6 +236,142 @@ describe('smoke artifact ownership and publication', () => {
     expect((await lstat(join(output, '01-default.png'))).isDirectory()).toBe(true)
   })
 
+  it('fails closed when the claimed destination parent is replaced during publication', async () => {
+    const root = await temporaryRoot()
+    const parent = join(root, 'parent')
+    const displaced = join(root, 'displaced-parent')
+    await mkdir(parent)
+    const output = join(parent, 'evidence')
+    await expect(
+      artifacts.publishArtifactBuffers(output, resultArtifacts(), {
+        beforeWrite: async () => {
+          await rename(parent, displaced)
+          await mkdir(parent)
+          await mkdir(join(parent, 'evidence'))
+          await writeFile(join(parent, 'evidence', 'racer'), 'retain replacement')
+        },
+      }),
+    ).rejects.toThrow('VISUAL_OUTPUT_RACE')
+    expect(await readFile(join(parent, 'evidence', 'racer'), 'utf8')).toBe('retain replacement')
+  })
+
+  it('rejects a late hard link to an ordinary artifact before it can publish completion', async () => {
+    const root = await temporaryRoot()
+    const output = join(root, 'evidence')
+    await expect(
+      artifacts.publishArtifactBuffers(output, resultArtifacts(), {
+        afterWrite: async (claimed: string, name: string) => {
+          if (name === '01-default.png') {
+            await link(join(claimed, name), join(claimed, 'late-link'))
+          }
+        },
+      }),
+    ).rejects.toThrow('VISUAL_OUTPUT_RACE')
+    await expect(lstat(join(output, 'result.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('rejects an unexpected entry before completion publication', async () => {
+    const root = await temporaryRoot()
+    const output = join(root, 'evidence')
+    await expect(
+      artifacts.publishArtifactBuffers(output, resultArtifacts(), {
+        afterWrite: async (claimed: string, name: string) => {
+          if (name === '01-default.png') await writeFile(join(claimed, 'unexpected'), 'retain')
+        },
+      }),
+    ).rejects.toThrow('VISUAL_OUTPUT_RACE')
+    await expect(lstat(join(output, 'result.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('uses exactly two links only while atomically publishing the marker, then restores one', async () => {
+    const root = await temporaryRoot()
+    const output = join(root, 'evidence')
+    let sawTwoLinks = false
+    await artifacts.publishArtifactBuffers(output, resultArtifacts(), {
+      beforeMarkerCleanup: async (claimed: string, tempName: string, marker: string) => {
+        expect((await lstat(join(claimed, tempName), { bigint: true })).nlink).toBe(2n)
+        expect((await lstat(join(claimed, marker), { bigint: true })).nlink).toBe(2n)
+        sawTwoLinks = true
+      },
+    })
+    expect(sawTwoLinks).toBe(true)
+    expect((await lstat(join(output, 'result.json'), { bigint: true })).nlink).toBe(1n)
+  })
+
+  it.each(['after-link', 'temporary-unlink', 'final-verification'])(
+    'rolls back an owned public marker after %s failure',
+    async (phase) => {
+      const root = await temporaryRoot()
+      const output = join(root, 'evidence')
+      const options: Record<string, unknown> = {}
+      if (phase === 'after-link') {
+        options.afterWrite = async (_claimed: string, name: string) => {
+          if (name === 'result.json') throw new Error('after-link')
+        }
+      }
+      if (phase === 'temporary-unlink') {
+        options.fsApi = {
+          ...fs,
+          unlink: async (filePath: string) => {
+            if (filePath.includes('.oks-marker-')) throw new Error('temporary-unlink')
+            return fs.unlink(filePath)
+          },
+        }
+      }
+      if (phase === 'final-verification') {
+        options.beforeFinalVerification = async () => {
+          throw new Error('final-verification')
+        }
+      }
+
+      await expect(
+        artifacts.publishArtifactBuffers(output, validatedResultArtifacts(), options),
+      ).rejects.toBeDefined()
+      await expect(lstat(join(output, 'result.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(visualResults.validateVisualResultDirectory(output)).rejects.toBeDefined()
+    },
+  )
+
+  it('keeps a private marker when metadata fails immediately before the final transition', async () => {
+    const root = await temporaryRoot()
+    const output = join(root, 'evidence')
+    const values = validatedResultArtifacts()
+    await expect(
+      artifacts.publishArtifactBuffers(output, values, {
+        beforeFinalVerification: async () => {
+          await chmod(join(output, values[0].name), 0o640)
+        },
+      }),
+    ).rejects.toThrow('VISUAL_OUTPUT_RACE')
+    await expect(visualResults.validateVisualResultDirectory(output)).rejects.toBeDefined()
+  })
+
+  it('retains a racer-owned result marker and displaced owned evidence after post-link replacement', async () => {
+    const root = await temporaryRoot()
+    const output = join(root, 'evidence')
+    const values = validatedResultArtifacts()
+    const marker = values.at(-1)
+    if (!marker) throw new Error('missing marker fixture')
+    const displaced = join(root, 'displaced-marker')
+
+    await expect(
+      artifacts.publishArtifactBuffers(output, values, {
+        afterWrite: async (claimed: string, name: string) => {
+          if (name !== marker.name) return
+          await rename(join(claimed, name), displaced)
+          await writeFile(join(claimed, name), marker.bytes, { mode: 0o600 })
+          throw new Error('force rejection after replacement')
+        },
+      }),
+    ).rejects.toBeDefined()
+    expect(await readFile(join(output, marker.name))).toEqual(marker.bytes)
+    expect(await readFile(displaced)).toEqual(marker.bytes)
+    expect((await lstat(join(output, marker.name), { bigint: true })).ino).not.toBe(
+      (await lstat(displaced, { bigint: true })).ino,
+    )
+    await expect(visualResults.validateVisualResultDirectory(output)).rejects.toBeDefined()
+  })
+
   it('never replaces a completion marker raced in before hard-link publication', async () => {
     const root = await temporaryRoot()
     const output = join(root, 'evidence')
@@ -223,7 +383,7 @@ describe('smoke artifact ownership and publication', () => {
       }),
     ).rejects.toThrow('VISUAL_OUTPUT_RACE')
     expect(await readFile(join(output, 'result.json'), 'utf8')).toBe('racer marker')
-    expect((await readdir(output)).some((name) => name.startsWith('.oks-marker-'))).toBe(false)
+    expect((await readdir(output)).some((name) => name.startsWith('.oks-marker-'))).toBe(true)
   })
 
   it('retains a replacement temp leaf instead of deleting an unowned cleanup race', async () => {
@@ -345,6 +505,30 @@ describe('smoke artifact ownership and publication', () => {
       )
     }
     await expect(lstat(rejected)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(() =>
+      artifacts.normalizeLauncherFailure({ code: 'NATIVE_SYNC_TRACE_START_FAILED', ok: false }),
+    ).toThrow('VISUAL_FAILURE_INVALID')
+  })
+
+  it('claims the failure parent before checking output absence', async () => {
+    const root = await temporaryRoot()
+    const parent = join(root, 'parent')
+    const displaced = join(root, 'displaced')
+    await mkdir(parent)
+    const output = join(parent, 'failure')
+    await expect(
+      artifacts.writeFreshLauncherFailure(
+        output,
+        { code: 'VISUAL_SMOKE_FAILED', ok: false },
+        {
+          beforeClaim: async () => {
+            await rename(parent, displaced)
+            await mkdir(parent)
+          },
+        },
+      ),
+    ).rejects.toThrow('VISUAL_OUTPUT_RACE')
+    await expect(lstat(join(parent, 'failure'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('rejects every existing failure output without trusting or changing markers', async () => {

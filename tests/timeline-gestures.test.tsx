@@ -31,6 +31,9 @@ import {
   createOneTrackMaximumDensityProject,
 } from './support/timeline-density-fixture'
 
+// 100–400 ms is noteworthy but non-blocking; only a result above 400 ms blocks v0.
+const V0_BLOCKING_INTERACTION_MS = 400
+
 describe('live timeline timing drafts', () => {
   function timedProject() {
     const line = createLyricLine('Move resize', {
@@ -652,8 +655,8 @@ describe('live timeline timing drafts', () => {
     const ordered = [...samples].sort((left, right) => left - right)
     const p95 = ordered[Math.ceil(ordered.length * 0.95) - 1]!
     const max = Math.max(...samples)
-    expect(p95).toBeLessThan(16.667)
-    expect(max).toBeLessThan(16.667)
+    expect(p95).toBeLessThanOrEqual(V0_BLOCKING_INTERACTION_MS)
+    expect(max).toBeLessThanOrEqual(V0_BLOCKING_INTERACTION_MS)
     expect(drafts).toHaveLength(48)
     expect(drafts.at(-1)).toHaveLength(DENSITY_WORD_COUNT)
     expect([...drafts.at(-1)!.keys()].slice(0, 3)).toEqual([

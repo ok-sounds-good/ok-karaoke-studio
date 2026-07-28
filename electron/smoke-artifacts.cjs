@@ -122,6 +122,17 @@ function sameIdentity(left, right) {
   return Boolean(left && right && left.dev === right.dev && left.ino === right.ino)
 }
 
+function sameEntries(actual, expected) {
+  return actual.slice().sort().join('\0') === [...expected].sort().join('\0')
+}
+
+function restrictiveMode(stats, platform = process.platform) {
+  // Windows stat mode bits are not POSIX ownership permissions. The smoke
+  // output root is task-owned, so do not reject a normal Windows caller based
+  // on replicated mode bits that have no group/other access meaning there.
+  return platform === 'win32' || (Number(stats.mode) & 0o077) === 0
+}
+
 async function lstatOrNull(filePath, fsApi = fs) {
   try {
     return await fsApi.lstat(filePath, { bigint: true })
@@ -245,13 +256,16 @@ function normalizeLauncherFailure(failure) {
 
 async function assertClaimedDirectory(claim, fsApi) {
   try {
+    if (claim.parent) await assertClaimedParent(claim.parent, fsApi)
     const stats = await fsApi.lstat(claim.output, { bigint: true })
     const realPath = await fsApi.realpath(claim.output)
     if (
       !stats.isDirectory() ||
       stats.isSymbolicLink() ||
       !sameIdentity(statIdentity(stats), claim) ||
-      realPath !== claim.realPath
+      realPath !== claim.realPath ||
+      (claim.expectedEntries &&
+        !sameEntries(await fsApi.readdir(claim.output), claim.expectedEntries))
     )
       throw artifactError('VISUAL_OUTPUT_RACE')
   } catch (error) {
@@ -260,10 +274,52 @@ async function assertClaimedDirectory(claim, fsApi) {
   }
 }
 
-async function assertOwnedRegularFile(filePath, identity, fsApi) {
+async function inspectParentDirectory(rawChild, fsApi = fs) {
+  try {
+    const child = validateFreshOutputPath(rawChild)
+    const parent = path.dirname(child)
+    const stats = await fsApi.lstat(parent, { bigint: true })
+    const realPath = await fsApi.realpath(parent)
+    if (!stats.isDirectory() || stats.isSymbolicLink()) throw artifactError('VISUAL_OUTPUT_RACE')
+    return { ...statIdentity(stats), path: parent, realPath }
+  } catch (error) {
+    if (error?.code === 'VISUAL_OUTPUT_RACE') throw error
+    throw artifactError('VISUAL_OUTPUT_RACE')
+  }
+}
+
+async function assertClaimedParent(parent, fsApi = fs) {
+  try {
+    const stats = await fsApi.lstat(parent.path, { bigint: true })
+    if (
+      !stats.isDirectory() ||
+      stats.isSymbolicLink() ||
+      !sameIdentity(statIdentity(stats), parent) ||
+      (await fsApi.realpath(parent.path)) !== parent.realPath
+    )
+      throw artifactError('VISUAL_OUTPUT_RACE')
+  } catch (error) {
+    if (error?.code === 'VISUAL_OUTPUT_RACE') throw error
+    throw artifactError('VISUAL_OUTPUT_RACE')
+  }
+}
+
+async function assertOwnedRegularFile(
+  filePath,
+  identity,
+  fsApi,
+  expectedNlink = 1,
+  platform = process.platform,
+) {
   try {
     const stats = await fsApi.lstat(filePath, { bigint: true })
-    if (!stats.isFile() || stats.isSymbolicLink() || !sameIdentity(statIdentity(stats), identity))
+    if (
+      !stats.isFile() ||
+      stats.isSymbolicLink() ||
+      stats.nlink !== BigInt(expectedNlink) ||
+      !restrictiveMode(stats, platform) ||
+      !sameIdentity(statIdentity(stats), identity)
+    )
       throw artifactError('VISUAL_OUTPUT_RACE')
     return stats
   } catch (error) {
@@ -274,28 +330,35 @@ async function assertOwnedRegularFile(filePath, identity, fsApi) {
 
 async function claimOutputDirectory(rawOutput, options = {}) {
   const fsApi = options.fsApi || fs
+  const parent = await inspectParentDirectory(rawOutput, fsApi)
+  await assertClaimedParent(parent, fsApi)
   const { output, state } = await outputState(rawOutput, fsApi)
   if (state !== 'absent') throw artifactError('VISUAL_OUTPUT_EXISTS')
   await options.beforeClaim?.(output)
+  await assertClaimedParent(parent, fsApi)
   try {
     await fsApi.mkdir(output, { mode: 0o700, recursive: false })
   } catch (error) {
     if (error?.code === 'EEXIST') throw artifactError('VISUAL_OUTPUT_EXISTS')
     throw error
   }
-  return inspectOutputDirectory(output, fsApi)
+  const claim = await inspectOutputDirectory(output, fsApi, options.platform || process.platform)
+  claim.parent = parent
+  await assertClaimedDirectory(claim, fsApi)
+  return claim
 }
 
-async function inspectOutputDirectory(rawOutput, fsApi = fs) {
+async function inspectOutputDirectory(rawOutput, fsApi = fs, platform = process.platform) {
   const output = validateFreshOutputPath(rawOutput)
   try {
     const stats = await fsApi.lstat(output, { bigint: true })
-    if (!stats.isDirectory() || stats.isSymbolicLink()) {
+    if (!stats.isDirectory() || stats.isSymbolicLink() || !restrictiveMode(stats, platform)) {
       throw artifactError('VISUAL_OUTPUT_RACE')
     }
     const claim = {
       ...statIdentity(stats),
       output,
+      platform,
       realPath: await fsApi.realpath(output),
     }
     await assertClaimedDirectory(claim, fsApi)
@@ -314,10 +377,13 @@ async function writeExclusiveArtifact(claim, artifact, options, fsApi) {
   let handleIdentity
   try {
     handle = await fsApi.open(filePath, 'wx', 0o600)
+    claim.expectedEntries?.add(artifact.name)
     await handle.writeFile(artifact.bytes)
     await handle.sync()
     const stats = await handle.stat({ bigint: true })
-    if (!stats.isFile()) throw artifactError('VISUAL_OUTPUT_RACE')
+    if (!stats.isFile() || stats.nlink !== 1n || !restrictiveMode(stats, claim.platform)) {
+      throw artifactError('VISUAL_OUTPUT_RACE')
+    }
     handleIdentity = statIdentity(stats)
   } catch (error) {
     if (error?.code === 'EEXIST' || error?.code === 'ELOOP') {
@@ -335,20 +401,33 @@ async function writeExclusiveArtifact(claim, artifact, options, fsApi) {
     !linkedStats ||
     !linkedStats.isFile() ||
     linkedStats.isSymbolicLink() ||
+    linkedStats.nlink !== 1n ||
+    !restrictiveMode(linkedStats, claim.platform) ||
     !sameIdentity(statIdentity(linkedStats), handleIdentity)
   )
     throw artifactError('VISUAL_OUTPUT_RACE')
+  const ordinary = { identity: handleIdentity, path: filePath }
+  claim.ordinaryClaims ||= []
+  claim.ordinaryClaims.push(ordinary)
   await assertClaimedDirectory(claim, fsApi)
+  return ordinary
 }
 
-async function unlinkOwnedTemporary(claim, tempPath, identity, fsApi) {
+async function assertOrdinaryArtifacts(claim, fsApi) {
+  for (const ordinary of claim.ordinaryClaims || []) {
+    await assertOwnedRegularFile(ordinary.path, ordinary.identity, fsApi, 1, claim.platform)
+  }
+}
+
+async function unlinkOwnedTemporary(claim, tempPath, identity, fsApi, expectedNlink = 1) {
   try {
     await assertClaimedDirectory(claim, fsApi)
-    await assertOwnedRegularFile(tempPath, identity, fsApi)
+    await assertOwnedRegularFile(tempPath, identity, fsApi, expectedNlink, claim.platform)
     // Node has no portable identity-conditional unlink. The fresh directory is
     // mode 0700 and the unpredictable leaf is checked immediately before the
     // path-based unlink. Any observed mismatch is retained rather than removed.
     await fsApi.unlink(tempPath)
+    claim.expectedEntries?.delete(path.basename(tempPath))
     await assertClaimedDirectory(claim, fsApi)
     return (await lstatOrNull(tempPath, fsApi)) === null
   } catch {
@@ -356,26 +435,72 @@ async function unlinkOwnedTemporary(claim, tempPath, identity, fsApi) {
   }
 }
 
+async function unlinkFinalOwnedTemporary(claim, tempPath, markerPath, identity, fsApi) {
+  await assertClaimedDirectory(claim, fsApi)
+  await assertOwnedRegularFile(tempPath, identity, fsApi, 2, claim.platform)
+  await assertOwnedRegularFile(markerPath, identity, fsApi, 2, claim.platform)
+  await assertOrdinaryArtifacts(claim, fsApi)
+  // This is the final success transition. Once unlink succeeds, the public
+  // marker is complete and no further fallible verification may reject it.
+  await fsApi.unlink(tempPath)
+  claim.expectedEntries?.delete(path.basename(tempPath))
+}
+
+async function rollbackPublishedMarker(claim, markerPath, tempPath, identity, fsApi) {
+  try {
+    await assertClaimedDirectory(claim, fsApi)
+    const temporary = await lstatOrNull(tempPath, fsApi)
+    const expectedNlink = temporary ? 2 : 1
+    await assertOwnedRegularFile(markerPath, identity, fsApi, expectedNlink, claim.platform)
+    if (temporary) {
+      await assertOwnedRegularFile(tempPath, identity, fsApi, expectedNlink, claim.platform)
+    }
+    await fsApi.unlink(markerPath)
+    claim.expectedEntries?.delete(path.basename(markerPath))
+    await assertClaimedDirectory(claim, fsApi)
+    if (temporary) await unlinkOwnedTemporary(claim, tempPath, identity, fsApi)
+    return true
+  } catch {
+    // An unexpected identity or unlink failure is retained. Before temporary
+    // cleanup that leaves an extra entry, which the result validator rejects.
+    return false
+  }
+}
+
 async function writeCompletionMarker(claim, artifact, options, fsApi) {
   await options.beforeWrite?.(claim.output, artifact.name)
   await assertClaimedDirectory(claim, fsApi)
+  await assertOrdinaryArtifacts(claim, fsApi)
   const markerPath = path.join(claim.output, artifact.name)
   const tempName = `.oks-marker-${randomUUID()}.tmp`
   const tempPath = path.join(claim.output, tempName)
   let tempIdentity = null
+  let markerPublished = false
 
   try {
     let handle
     try {
       handle = await fsApi.open(tempPath, 'wx', 0o600)
+      claim.expectedEntries?.add(tempName)
       const createdStats = await handle.stat({ bigint: true })
-      if (!createdStats.isFile()) throw artifactError('VISUAL_OUTPUT_RACE')
+      if (
+        !createdStats.isFile() ||
+        createdStats.nlink !== 1n ||
+        !restrictiveMode(createdStats, claim.platform)
+      ) {
+        throw artifactError('VISUAL_OUTPUT_RACE')
+      }
       tempIdentity = statIdentity(createdStats)
       await options.beforeMarkerWrite?.(claim.output, tempName, artifact.name)
       await handle.writeFile(artifact.bytes)
       await handle.sync()
       const syncedStats = await handle.stat({ bigint: true })
-      if (!syncedStats.isFile() || !sameIdentity(statIdentity(syncedStats), tempIdentity)) {
+      if (
+        !syncedStats.isFile() ||
+        syncedStats.nlink !== 1n ||
+        !restrictiveMode(syncedStats, claim.platform) ||
+        !sameIdentity(statIdentity(syncedStats), tempIdentity)
+      ) {
         throw artifactError('VISUAL_OUTPUT_RACE')
       }
     } catch (error) {
@@ -388,14 +513,18 @@ async function writeCompletionMarker(claim, artifact, options, fsApi) {
     }
 
     await assertClaimedDirectory(claim, fsApi)
-    await assertOwnedRegularFile(tempPath, tempIdentity, fsApi)
+    await assertOwnedRegularFile(tempPath, tempIdentity, fsApi, 1, claim.platform)
+    await assertOrdinaryArtifacts(claim, fsApi)
     await options.beforeMarkerPublish?.(claim.output, tempName, artifact.name)
     await assertClaimedDirectory(claim, fsApi)
-    await assertOwnedRegularFile(tempPath, tempIdentity, fsApi)
+    await assertOwnedRegularFile(tempPath, tempIdentity, fsApi, 1, claim.platform)
+    await assertOrdinaryArtifacts(claim, fsApi)
     try {
       // Same-directory hard linking publishes the fully closed marker without
       // replacing a raced destination. The private link is removed afterward.
       await fsApi.link(tempPath, markerPath)
+      claim.expectedEntries?.add(artifact.name)
+      markerPublished = true
     } catch (error) {
       if (error?.code === 'EEXIST' || error?.code === 'ELOOP') {
         throw artifactError('VISUAL_OUTPUT_RACE')
@@ -405,16 +534,20 @@ async function writeCompletionMarker(claim, artifact, options, fsApi) {
 
     await options.afterWrite?.(claim.output, artifact.name)
     await assertClaimedDirectory(claim, fsApi)
-    await assertOwnedRegularFile(tempPath, tempIdentity, fsApi)
-    await assertOwnedRegularFile(markerPath, tempIdentity, fsApi)
+    await assertOwnedRegularFile(tempPath, tempIdentity, fsApi, 2, claim.platform)
+    await assertOwnedRegularFile(markerPath, tempIdentity, fsApi, 2, claim.platform)
+    await assertOrdinaryArtifacts(claim, fsApi)
     await options.beforeMarkerCleanup?.(claim.output, tempName, artifact.name)
-    if (!(await unlinkOwnedTemporary(claim, tempPath, tempIdentity, fsApi))) {
-      throw artifactError('VISUAL_OUTPUT_RACE')
-    }
-    await assertClaimedDirectory(claim, fsApi)
-    await assertOwnedRegularFile(markerPath, tempIdentity, fsApi)
+    await options.beforeFinalVerification?.(claim.output, artifact.name)
+    await unlinkFinalOwnedTemporary(claim, tempPath, markerPath, tempIdentity, fsApi)
   } catch (error) {
-    if (tempIdentity) await unlinkOwnedTemporary(claim, tempPath, tempIdentity, fsApi)
+    if (tempIdentity) {
+      if (markerPublished) {
+        await rollbackPublishedMarker(claim, markerPath, tempPath, tempIdentity, fsApi)
+      } else {
+        await unlinkOwnedTemporary(claim, tempPath, tempIdentity, fsApi)
+      }
+    }
     throw error
   }
 }
@@ -423,6 +556,7 @@ async function publishArtifactBuffers(rawOutput, artifacts, options = {}) {
   const fsApi = options.fsApi || fs
   const normalized = normalizeArtifactBuffers(artifacts)
   const claim = await claimOutputDirectory(rawOutput, options)
+  claim.expectedEntries = new Set()
   // Node exposes no portable openat-style API. These identity checks detect
   // path swaps around each exclusive write, but do not claim path APIs are atomic.
   for (const artifact of normalized) {
@@ -432,17 +566,13 @@ async function publishArtifactBuffers(rawOutput, artifacts, options = {}) {
       await writeExclusiveArtifact(claim, artifact, options, fsApi)
     }
   }
-  await assertClaimedDirectory(claim, fsApi)
   return claim.output
 }
 
 async function writeFreshLauncherFailure(rawOutput, failure, options = {}) {
   const safeFailure = normalizeLauncherFailure(failure)
-  const fsApi = options.fsApi || fs
-  const { output, state } = await outputState(rawOutput, fsApi)
-  if (state !== 'absent') throw artifactError('VISUAL_OUTPUT_EXISTS')
   await publishArtifactBuffers(
-    output,
+    rawOutput,
     [
       {
         bytes: Buffer.from(`${JSON.stringify(safeFailure)}\n`, 'utf8'),
@@ -458,9 +588,11 @@ module.exports = {
   ARTIFACT_LIMITS,
   LAUNCHER_FAILURE_CODES,
   artifactError,
+  assertClaimedParent,
   assertClaimedDirectory,
   claimOutputDirectory,
   inspectOutputDirectory,
+  inspectParentDirectory,
   normalizeArtifactBuffers,
   normalizeLauncherFailure,
   outputState,
