@@ -8,12 +8,17 @@ import App from '../src/App'
 import {
   createDemoProject,
   createLyricLine,
+  createLyricWord,
+  createProject,
   createVocalTrack,
   parseProject,
   serializeProject,
+  type KaraokeProject,
 } from '../src/lib/model'
 import {
   MAX_PROJECT_DURATION_MS,
+  MAX_PROJECT_LINES,
+  MAX_PROJECT_WORDS,
   hasValidationErrors,
   validateProject,
 } from '../src/lib/project-validation'
@@ -224,6 +229,99 @@ function timelineTimingLabels() {
   return [...document.querySelectorAll<HTMLElement>('.timeline-word, .timeline-sync-pending')].map(
     (word) => word.getAttribute('aria-label') ?? word.dataset.timingLabel ?? null,
   )
+}
+
+const AGGREGATE_REPLACEMENT_SIZE = 1_000
+
+const aggregateReplacementCases = [
+  {
+    kind: 'words',
+    label: 'word',
+    limit: MAX_PROJECT_WORDS,
+    warning: `Projects are limited to ${MAX_PROJECT_WORDS} lyric words.`,
+  },
+  {
+    kind: 'lines',
+    label: 'line',
+    limit: MAX_PROJECT_LINES,
+    warning: `Projects are limited to ${MAX_PROJECT_LINES} lyric lines.`,
+  },
+] as const
+
+function replacementLyrics(
+  kind: (typeof aggregateReplacementCases)[number]['kind'],
+  count: number,
+) {
+  const tokens = Array.from({ length: count }, (_, index) => `${kind}-${index}`)
+  return tokens.join(kind === 'words' ? ' ' : '\n')
+}
+
+function replacementLrc(kind: (typeof aggregateReplacementCases)[number]['kind'], count: number) {
+  if (kind === 'words') return `[00:01]${replacementLyrics(kind, count)}`
+  return Array.from({ length: count }, (_, index) => `[00:01]lines-${index}`).join('\n')
+}
+
+function aggregateReplacementProject(
+  kind: (typeof aggregateReplacementCases)[number]['kind'],
+): KaraokeProject {
+  const activeLines =
+    kind === 'words'
+      ? [
+          createLyricLine(replacementLyrics(kind, AGGREGATE_REPLACEMENT_SIZE), {
+            id: 'aggregate-active-line',
+            words: Array.from({ length: AGGREGATE_REPLACEMENT_SIZE }, (_, index) =>
+              createLyricWord(`words-${index}`, { id: `aggregate-active-word-${index}` }),
+            ),
+          }),
+        ]
+      : [
+          createLyricLine('seed', {
+            id: 'aggregate-active-line',
+            words: [createLyricWord('seed', { id: 'aggregate-active-word' })],
+          }),
+        ]
+  const reserveLines =
+    kind === 'words'
+      ? [
+          createLyricLine(replacementLyrics(kind, MAX_PROJECT_WORDS - AGGREGATE_REPLACEMENT_SIZE), {
+            id: 'aggregate-reserve-line',
+            words: Array.from(
+              { length: MAX_PROJECT_WORDS - AGGREGATE_REPLACEMENT_SIZE },
+              (_, index) =>
+                createLyricWord(`words-${index}`, { id: `aggregate-reserve-word-${index}` }),
+            ),
+          }),
+        ]
+      : Array.from({ length: MAX_PROJECT_LINES - AGGREGATE_REPLACEMENT_SIZE }, (_, index) =>
+          createLyricLine('', { id: `aggregate-reserve-line-${index}` }),
+        )
+  return createProject({
+    id: `aggregate-${kind}-replacement-project`,
+    title: `Aggregate ${kind} replacement`,
+    tracks: [
+      createVocalTrack({
+        id: 'aggregate-active',
+        name: 'Lead Vocal',
+        lines: activeLines,
+      }),
+      createVocalTrack({
+        id: 'aggregate-reserve',
+        name: 'Reserve Vocal',
+        lines: reserveLines,
+      }),
+    ],
+  })
+}
+
+function projectCardinality(project: KaraokeProject) {
+  return {
+    lines: project.tracks.reduce((count, track) => count + track.lines.length, 0),
+    words: project.tracks.reduce(
+      (count, track) =>
+        count + track.lines.reduce((trackCount, line) => trackCount + line.words.length, 0),
+      0,
+    ),
+  }
 }
 
 describe('mounted first-time workflow', () => {
@@ -2900,6 +2998,112 @@ describe('mounted first-time workflow', () => {
       parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents).tracks[0].lines[0].words[0],
     ).toMatchObject({ text: 'replacement' })
   })
+
+  it.each(aggregateReplacementCases)(
+    'keeps Edit text transactional at the aggregate $label boundary',
+    async ({ kind, limit, warning }) => {
+      const openedProject = aggregateReplacementProject(kind)
+      harness.openProject.mockResolvedValueOnce({
+        requestId: `aggregate-${kind}-edit-open`,
+        path: `/opened/aggregate-${kind}-edit.oks`,
+        contents: serializeProject(openedProject),
+      })
+      await clickButton('Workflow')
+      await clickButton('Open .oks')
+
+      const exactLyrics = replacementLyrics(kind, AGGREGATE_REPLACEMENT_SIZE)
+      await clickButton('Edit text')
+      await replaceTextarea(exactLyrics)
+      await clickButton('Apply lyrics')
+      expect(document.querySelector('[role="dialog"]')).toBeNull()
+      expect(document.querySelector('[role="status"]')?.textContent).toContain('Lyrics updated')
+
+      await act(async () => harness.sendMenuAction('save'))
+      const exactSaved = parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents)
+      expect(projectCardinality(exactSaved)[kind]).toBe(limit)
+      await act(async () => harness.sendMenuAction('undo'))
+      expect(document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')?.disabled).toBe(true)
+      expect(document.querySelector<HTMLButtonElement>('[aria-label="Redo"]')?.disabled).toBe(false)
+
+      const overLimitLyrics = replacementLyrics(kind, AGGREGATE_REPLACEMENT_SIZE + 1)
+      await clickButton('Edit text')
+      await replaceTextarea(overLimitLyrics)
+      await clickButton('Apply lyrics')
+
+      const textarea = document.querySelector<HTMLTextAreaElement>('textarea')
+      const rejection = document.querySelector<HTMLElement>('.toast--warning[role="status"]')
+      expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+      expect(textarea?.value === overLimitLyrics).toBe(true)
+      expect(document.querySelectorAll('.toast--warning[role="status"]')).toHaveLength(1)
+      expect(rejection?.textContent).toContain(warning)
+      expect(rejection?.textContent).not.toContain('Lyrics updated')
+      expect(document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')?.disabled).toBe(true)
+      expect(document.querySelector<HTMLButtonElement>('[aria-label="Redo"]')?.disabled).toBe(false)
+
+      await replaceTextarea(exactLyrics)
+      await clickButton('Apply lyrics')
+      expect(document.querySelector('[role="dialog"]')).toBeNull()
+      expect(document.querySelector('[role="status"]')?.textContent).toContain('Lyrics updated')
+      expect(document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')?.disabled).toBe(false)
+      expect(document.querySelector<HTMLButtonElement>('[aria-label="Redo"]')?.disabled).toBe(true)
+
+      await act(async () => harness.sendMenuAction('undo'))
+      await act(async () => harness.sendMenuAction('save'))
+      const afterRejectedEdit = parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents)
+      expect(afterRejectedEdit).toStrictEqual(openedProject)
+    },
+  )
+
+  it.each(aggregateReplacementCases)(
+    'keeps LRC replacement transactional at the aggregate $label boundary',
+    async ({ kind, limit, warning }) => {
+      const openedProject = aggregateReplacementProject(kind)
+      harness.openProject.mockResolvedValueOnce({
+        requestId: `aggregate-${kind}-lrc-open`,
+        path: `/opened/aggregate-${kind}-lrc.oks`,
+        contents: serializeProject(openedProject),
+      })
+      await clickButton('Workflow')
+      await clickButton('Open .oks')
+
+      const exactLrc = replacementLrc(kind, AGGREGATE_REPLACEMENT_SIZE)
+      harness.importLrc.mockResolvedValueOnce({ contents: exactLrc })
+      await clickButton('Workflow')
+      await clickButton('Import LRC')
+      expect(document.querySelector('[role="status"]')?.textContent).toContain('Imported LRC')
+
+      await act(async () => harness.sendMenuAction('save'))
+      const exactSaved = parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents)
+      expect(projectCardinality(exactSaved)[kind]).toBe(limit)
+      await act(async () => harness.sendMenuAction('undo'))
+      expect(document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')?.disabled).toBe(true)
+      expect(document.querySelector<HTMLButtonElement>('[aria-label="Redo"]')?.disabled).toBe(false)
+
+      harness.importLrc.mockResolvedValueOnce({
+        contents: replacementLrc(kind, AGGREGATE_REPLACEMENT_SIZE + 1),
+      })
+      await clickButton('Workflow')
+      await clickButton('Import LRC')
+
+      const rejection = document.querySelector<HTMLElement>('.toast--warning[role="status"]')
+      expect(document.querySelectorAll('.toast--warning[role="status"]')).toHaveLength(1)
+      expect(rejection?.textContent).toContain(warning)
+      expect(rejection?.textContent).not.toContain('Imported LRC')
+      expect(document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')?.disabled).toBe(true)
+      expect(document.querySelector<HTMLButtonElement>('[aria-label="Redo"]')?.disabled).toBe(false)
+
+      await act(async () => harness.sendMenuAction('save'))
+      const afterRejectedImport = parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents)
+      expect(afterRejectedImport).toStrictEqual(openedProject)
+
+      harness.importLrc.mockResolvedValueOnce({ contents: exactLrc })
+      await clickButton('Workflow')
+      await clickButton('Import LRC')
+      expect(document.querySelector('[role="status"]')?.textContent).toContain('Imported LRC')
+      expect(document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')?.disabled).toBe(false)
+      expect(document.querySelector<HTMLButtonElement>('[aria-label="Redo"]')?.disabled).toBe(true)
+    },
+  )
 
   it.each([
     ['lrc', 'Enhanced LRC', 'LRC bridge failed', '[ti:Latest export snapshot]'],

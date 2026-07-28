@@ -8,8 +8,10 @@ import { validPng } from './support/png-fixture'
 
 const require = createRequire(import.meta.url)
 const smoke = require('../electron/video-style-visual-smoke.cjs')
+const launcher = require('../scripts/video-style-visual-smoke.cjs')
 const contracts = require('../electron/visual-smoke-renderer-contracts.cjs')
 const profiles = require('../electron/smoke-profile.cjs')
+const savePaths = require('../electron/save-paths.cjs')
 const roots: string[] = []
 
 afterEach(async () =>
@@ -608,6 +610,12 @@ describe('production-window visual smoke', () => {
     expect(smoke.parseVisualSmokeArguments(styleSessionScenario)).toMatchObject({
       scenario: smoke.STYLE_SESSION_SCENARIO,
     })
+    const timelineDensityScenario = [...argv]
+    timelineDensityScenario[scenarioIndex] =
+      `${smoke.OPTIONS.scenario}${smoke.TIMELINE_DENSITY_SCENARIO}`
+    expect(smoke.parseVisualSmokeArguments(timelineDensityScenario)).toMatchObject({
+      scenario: smoke.TIMELINE_DENSITY_SCENARIO,
+    })
     const retiredScenario = [...argv]
     retiredScenario[scenarioIndex] = `${smoke.OPTIONS.scenario}project-typography`
     expect(() => smoke.parseVisualSmokeArguments(retiredScenario)).toThrow(
@@ -618,6 +626,90 @@ describe('production-window visual smoke', () => {
     expect(() => smoke.parseVisualSmokeArguments(unknownScenario)).toThrow(
       'VISUAL_SMOKE_FLAG_INVALID',
     )
+  })
+
+  it('returns the isolated density fixture only after the trusted real Open activation', async () => {
+    const dialog = { showOpenDialog: vi.fn() }
+    expect(
+      smoke.createVisualSmokeDialogAdapter(dialog, {
+        scenario: smoke.BASELINE_SCENARIO,
+        userData: '/safe/profile',
+      }),
+    ).toBe(dialog)
+
+    const executeJavaScript = vi.fn(async (script: string) => {
+      expect(script).toBe(smoke.TIMELINE_DENSITY_DIALOG_ACTIVATION_SCRIPT)
+      return true
+    })
+    const owner = {
+      isDestroyed: () => false,
+      webContents: {
+        executeJavaScript,
+        getURL: () => smoke.PACKAGED_APP_URL,
+        isDestroyed: () => false,
+      },
+    }
+    const adapter = smoke.createVisualSmokeDialogAdapter(dialog, {
+      scenario: smoke.TIMELINE_DENSITY_SCENARIO,
+      userData: '/safe/profile',
+    })
+    const options = {
+      title: 'Open Karaoke Project',
+      buttonLabel: 'Open Project',
+      properties: ['openFile'],
+      filters: savePaths.PROJECT_OPEN_FILTERS,
+    }
+    await expect(adapter.showOpenDialog(owner, options)).resolves.toEqual({
+      canceled: false,
+      filePaths: ['/safe/profile/timeline-density-5000.oks'],
+    })
+    expect(executeJavaScript).toHaveBeenCalledWith(
+      smoke.TIMELINE_DENSITY_DIALOG_ACTIVATION_SCRIPT,
+      false,
+    )
+    expect(dialog.showOpenDialog).not.toHaveBeenCalled()
+    await expect(adapter.showOpenDialog(owner, options)).rejects.toThrow(
+      'VISUAL_SMOKE_DIALOG_INVALID',
+    )
+
+    const untrusted = smoke.createVisualSmokeDialogAdapter(dialog, {
+      scenario: smoke.TIMELINE_DENSITY_SCENARIO,
+      userData: '/safe/profile',
+    })
+    await expect(
+      untrusted.showOpenDialog(
+        {
+          ...owner,
+          webContents: { ...owner.webContents, executeJavaScript: vi.fn(async () => false) },
+        },
+        options,
+      ),
+    ).rejects.toThrow('VISUAL_SMOKE_DIALOG_INVALID')
+  })
+
+  it('validates the owned Timeline-density profile while preserving its launcher fixture', async () => {
+    const { argv } = await configuredArguments()
+    const scenarioIndex = argv.findIndex((argument) => argument.startsWith(smoke.OPTIONS.scenario))
+    argv[scenarioIndex] = `${smoke.OPTIONS.scenario}${smoke.TIMELINE_DENSITY_SCENARIO}`
+    const config = smoke.parseVisualSmokeArguments(argv)
+    await launcher.writeTimelineDensityFixture({ path: config.userData })
+    const fixturePath = join(config.userData, smoke.TIMELINE_DENSITY_FIXTURE_NAME)
+    const before = await readFile(fixturePath)
+    const setPath = vi.fn()
+
+    expect(
+      smoke.configureVisualSmokeBeforeReady(
+        {
+          commandLine: { appendSwitch: vi.fn() },
+          getPath: (name: string) => join(tmpdir(), `default-${name}`),
+          isReady: () => false,
+          setPath,
+        },
+        config,
+      ),
+    ).toMatchObject({ scenario: smoke.TIMELINE_DENSITY_SCENARIO })
+    expect(await readFile(fixturePath)).toEqual(before)
+    expect(setPath.mock.calls.map(([name]) => name)).toEqual(['userData', 'sessionData'])
   })
 
   it('publishes a baseline after immediate consecutive-frame stability', async () => {
@@ -1564,6 +1656,9 @@ describe('production-window visual smoke', () => {
     )
     expect(source).toContain('await window.loadURL(PACKAGED_APP_URL)')
     expect(source).toContain('getWindows: () => BrowserWindow.getAllWindows()')
+    expect(source).toContain(
+      'visualSmokeModule?.createVisualSmokeDialogAdapter(dialog, visualSmokeConfig)',
+    )
     expect(startup).toContain('module.installVisualSmokeFatalObserver(processHandle)')
     expect(
       source.indexOf('visualSmokeFatalObserver.observeRenderer(window.webContents)'),

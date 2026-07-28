@@ -9,7 +9,7 @@ const MAX_PROJECT_DURATION_MS = 4 * 60 * 60 * 1_000
 const MAX_OPENING_LEAD_IN_MS = MAX_PROJECT_DURATION_MS
 const MAX_PROJECT_TRACKS = 8
 const MAX_PROJECT_LINES = 20_000
-const MAX_PROJECT_WORDS = 150_000
+const MAX_PROJECT_WORDS = 5_000
 
 function record(value, path) {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {

@@ -438,6 +438,21 @@
   pointer-events: none;
 }
 
+.timeline-density-aggregate {
+  position: absolute;
+  z-index: 1;
+  top: 3px;
+  right: auto;
+  padding: 2px 5px;
+  border: 1px solid color-mix(in srgb, var(--cyan) 45%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--cyan) 9%, transparent);
+  color: var(--muted-strong);
+  font-family: 'DM Mono', ui-monospace, monospace;
+  font-size: 7px;
+  pointer-events: none;
+}
+
 .timeline-playhead {
   position: absolute;
   top: 0;

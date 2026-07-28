@@ -168,6 +168,86 @@ function preloadBridgeKeys() {
   return Object.keys(exposed.api ?? {}).sort()
 }
 
+const timelineDensityViewport = { height: 576, width: 1024 }
+const timelineDensityProfile = { devicePixelRatio: 1.25, name: '125' }
+
+function timelineDensityState(overrides: Record<string, unknown> = {}) {
+  return {
+    aggregateVisible: true,
+    bridgeFrozen: true,
+    bridgeFunctions: true,
+    bridgeKeys: contracts.STUDIO_BRIDGE_KEYS,
+    devicePixelRatio: 1.25,
+    dividerAtMinimum: true,
+    finalScrollLeft: 4_100,
+    finalScrollTop: 700,
+    geometryStable: true,
+    height: 576,
+    href: contracts.PACKAGED_APP_URL,
+    ipcReady: true,
+    labelCount: 5_000,
+    maxScrollLeft: 8_200,
+    maxScrollTop: 1_400,
+    nodeAccess: false,
+    profileName: '125',
+    readyState: 'complete',
+    timelineClientHeight: 260,
+    timelineClientWidth: 800,
+    timelineScrollHeight: 1_660,
+    timelineScrollWidth: 9_000,
+    title: contracts.TIMELINE_DENSITY_TITLE,
+    tracks: Array.from({ length: 8 }, (_, index) => ({
+      id: `timeline-density-track-${String(index + 1).padStart(2, '0')}`,
+      labelCount: 625,
+      maxMountedLabels: 96,
+      maxMountedWords: 96,
+      name: `Density Vocal ${index + 1}`,
+      wordCount: 625,
+    })),
+    width: 1024,
+    wordCount: 5_000,
+    ...overrides,
+  }
+}
+
+function timelineDensityCaptureState(
+  readiness = timelineDensityState(),
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    aggregateVisible: true,
+    bridgeFrozen: true,
+    bridgeFunctions: true,
+    bridgeKeys: contracts.STUDIO_BRIDGE_KEYS,
+    devicePixelRatio: 1.25,
+    dividerAtMinimum: true,
+    dirty: false,
+    finalScrollLeft: readiness.finalScrollLeft,
+    finalScrollTop: readiness.finalScrollTop,
+    height: 576,
+    href: contracts.PACKAGED_APP_URL,
+    ipcReady: true,
+    issue: false,
+    labels: Array.from({ length: 8 }, (_, index) => `Density Vocal ${index + 1}`),
+    lanes: Array.from({ length: 8 }, (_, index) => ({
+      id: `timeline-density-track-${String(index + 1).padStart(2, '0')}`,
+      mountedLabels: 64,
+      mountedWords: 64,
+    })),
+    nodeAccess: false,
+    profileName: '125',
+    readyState: 'complete',
+    stable: true,
+    timelineClientHeight: readiness.timelineClientHeight,
+    timelineClientWidth: readiness.timelineClientWidth,
+    timelineScrollHeight: readiness.timelineScrollHeight,
+    timelineScrollWidth: readiness.timelineScrollWidth,
+    title: contracts.TIMELINE_DENSITY_TITLE,
+    width: 1024,
+    ...overrides,
+  }
+}
+
 describe('visual smoke renderer contracts', () => {
   it('requires a lead-in region to fill the responsive waveform below the ruler', () => {
     for (const leadHeight of [76, 62, 48]) {
@@ -756,6 +836,154 @@ describe('visual smoke renderer contracts', () => {
     expect(template).toContain('Saved “')
     expect(templateForm).toContain('MutationObserver')
     expect(templateForm).toContain('aria-busy')
+  })
+
+  it('arms Timeline-density Open only for a trusted focused Enter activation', () => {
+    const target = {
+      active: true,
+      boundsHeight: 28,
+      boundsWidth: 32,
+      devicePixelRatio: 1.25,
+      height: 576,
+      href: contracts.PACKAGED_APP_URL,
+      readyState: 'complete',
+      trustedMarkerArmed: true,
+      width: 1024,
+    }
+    expect(
+      contracts.validTimelineDensityOpenTarget(
+        target,
+        timelineDensityViewport,
+        timelineDensityProfile.devicePixelRatio,
+      ),
+    ).toBe(true)
+    expect(
+      contracts.validTimelineDensityOpenTarget(
+        { ...target, active: false },
+        timelineDensityViewport,
+        timelineDensityProfile.devicePixelRatio,
+      ),
+    ).toBe(false)
+    expect(contracts.TIMELINE_DENSITY_OPEN_TARGET_SCRIPT).toContain('event.isTrusted')
+    expect(contracts.TIMELINE_DENSITY_OPEN_TARGET_SCRIPT).toContain("event.key === 'Enter'")
+    expect(contracts.TIMELINE_DENSITY_OPEN_TARGET_SCRIPT).toContain(
+      'document.activeElement === target',
+    )
+    expect(contracts.TIMELINE_DENSITY_DIALOG_ACTIVATION_SCRIPT).toContain('trusted-enter')
+    expect(contracts.TIMELINE_DENSITY_OPEN_TARGET_SCRIPT).not.toContain('.click(')
+    expect(
+      contracts.validTimelineDensityTimingTarget(
+        {
+          ...target,
+          maximum: 58,
+          minimum: 30,
+          value: 42,
+        },
+        timelineDensityViewport,
+        timelineDensityProfile.devicePixelRatio,
+      ),
+    ).toBe(true)
+    expect(contracts.TIMELINE_DENSITY_TIMING_TARGET_SCRIPT).toContain(
+      'Stage Monitor and Lyric Timing height',
+    )
+  })
+
+  it('requires exact logical density, mounted caps, aggregate status, scrolling, and security', () => {
+    const valid = timelineDensityState()
+    expect(
+      contracts.validTimelineDensityState(valid, timelineDensityViewport, timelineDensityProfile),
+    ).toBe(true)
+
+    const wrongWordCount = timelineDensityState({
+      tracks: valid.tracks.map((track: Record<string, unknown>, index: number) =>
+        index === 0 ? { ...track, wordCount: 624 } : track,
+      ),
+    })
+    const overCap = timelineDensityState({
+      tracks: valid.tracks.map((track: Record<string, unknown>, index: number) =>
+        index === 0 ? { ...track, maxMountedLabels: 97 } : track,
+      ),
+    })
+    for (const invalid of [
+      wrongWordCount,
+      overCap,
+      timelineDensityState({ aggregateVisible: false }),
+      timelineDensityState({ maxScrollLeft: 0 }),
+      timelineDensityState({ maxScrollTop: 0 }),
+      timelineDensityState({ geometryStable: false }),
+      timelineDensityState({ dividerAtMinimum: false }),
+      timelineDensityState({ bridgeFrozen: false }),
+      timelineDensityState({ nodeAccess: true }),
+      timelineDensityState({ profileName: '150' }),
+    ]) {
+      expect(
+        contracts.validTimelineDensityState(
+          invalid,
+          timelineDensityViewport,
+          timelineDensityProfile,
+        ),
+      ).toBe(false)
+    }
+  })
+
+  it('revalidates the settled Timeline-density state after capture', () => {
+    const readiness = timelineDensityState()
+    const valid = timelineDensityCaptureState(readiness)
+    expect(
+      contracts.validTimelineDensityCaptureState(
+        valid,
+        timelineDensityViewport,
+        timelineDensityProfile,
+        readiness,
+      ),
+    ).toBe(true)
+    for (const invalid of [
+      timelineDensityCaptureState(readiness, { dirty: true }),
+      timelineDensityCaptureState(readiness, { dividerAtMinimum: false }),
+      timelineDensityCaptureState(readiness, { issue: true }),
+      timelineDensityCaptureState(readiness, { finalScrollLeft: 0 }),
+      timelineDensityCaptureState(readiness, { title: 'Stale project' }),
+      timelineDensityCaptureState(readiness, {
+        lanes: valid.lanes.map((lane: Record<string, unknown>, index: number) =>
+          index === 0 ? { ...lane, mountedWords: 97 } : lane,
+        ),
+      }),
+      timelineDensityCaptureState(readiness, { stable: false }),
+    ]) {
+      expect(
+        contracts.validTimelineDensityCaptureState(
+          invalid,
+          timelineDensityViewport,
+          timelineDensityProfile,
+          readiness,
+        ),
+      ).toBe(false)
+    }
+  })
+
+  it('scans the real virtualized Timeline across both axes without renderer authority', () => {
+    const readiness = contracts.timelineDensityReadinessScript(
+      timelineDensityViewport,
+      timelineDensityProfile,
+    )
+    const capture = contracts.timelineDensityCaptureStateScript(
+      timelineDensityViewport,
+      timelineDensityProfile,
+      timelineDensityState(),
+    )
+    for (const script of [readiness, capture]) {
+      expect(script).toContain('.timeline-viewport')
+      expect(script).toContain('.timeline-lane[data-track-id]')
+      expect(script).toContain('.timeline-density-aggregate')
+      expect(script).toContain('getPendingWindowClose')
+      expect(script).not.toContain('require(')
+      expect(script).not.toContain('setTimeout')
+    }
+    expect(readiness).toContain("timeline.scrollTo({ behavior: 'auto', left, top })")
+    expect(readiness).toContain('track.maxMountedWords > 96')
+    expect(readiness).toContain('track.maxMountedLabels > 96')
+    expect(readiness).toContain('track.logicalWords.has(token)')
+    expect(readiness).toContain('track.labels.has(token)')
   })
 
   it('validates compact layout reachability across zoom-expected viewport profiles', () => {

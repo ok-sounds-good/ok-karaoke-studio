@@ -865,13 +865,21 @@ export default function App() {
 
   const replaceTrack = useCallback(
     (trackId: string, nextTrack: VocalTrack) => {
-      commit((current) => ({
+      const updatedAt = new Date().toISOString()
+      const projectWithReplacement = (current: KaraokeProject): KaraokeProject => ({
         ...current,
-        updatedAt: new Date().toISOString(),
+        updatedAt,
         tracks: current.tracks.map((track) => (track.id === trackId ? nextTrack : track)),
-      }))
+      })
+      const projected = projectWithReplacement(projectRef.current)
+      const blockingIssue = validateProject(projected).find((issue) => issue.severity === 'error')
+      if (blockingIssue) {
+        showToast(blockingIssue.message, 'warning')
+        return false
+      }
+      return commit(projectWithReplacement) !== null
     },
-    [commit],
+    [commit, showToast],
   )
 
   const updateProject = useCallback(
@@ -1272,20 +1280,12 @@ export default function App() {
       if (!activeTrack) return
       try {
         const imported = importLrc(contents, activeTrack.id, project.offsetMs)
-        const committed = commit((current) => ({
-          ...current,
-          updatedAt: new Date().toISOString(),
-          tracks: current.tracks.map((track) =>
-            track.id === activeTrack.id
-              ? {
-                  ...imported,
-                  name: activeTrack.name,
-                  vocalStyle: cloneVocalStyle(activeTrack.vocalStyle),
-                }
-              : track,
-          ),
-        }))
-        if (!committed) return false
+        const nextTrack = {
+          ...imported,
+          name: activeTrack.name,
+          vocalStyle: cloneVocalStyle(activeTrack.vocalStyle),
+        }
+        if (!replaceTrack(activeTrack.id, nextTrack)) return false
         setSelectedWordIds(new Set())
         syncSpaceHeldRef.current = false
         syncScopeRef.current = null
@@ -1300,7 +1300,7 @@ export default function App() {
         return false
       }
     },
-    [activeTrack, commit, project.offsetMs, showToast],
+    [activeTrack, project.offsetMs, replaceTrack, showToast],
   )
 
   const handleImportLrc = useCallback(async () => {
@@ -1689,7 +1689,7 @@ export default function App() {
       cancelHeldSync()
       setSyncMode(false)
       setSelectedWordIds(new Set())
-      replaceTrack(currentTrack.id, nextTrack)
+      if (!replaceTrack(currentTrack.id, nextTrack)) return
       showToast(successMessage, 'success')
     },
     [
@@ -2274,6 +2274,7 @@ export default function App() {
               )
               return
             }
+            if (!replaceTrack(currentTrack.id, reconciliation.track)) return
             const nextWords = flattenTrack(reconciliation.track).map(({ word }) => word)
             const nextSyncCursor = syncWordIndexFromLyricTime(
               nextWords,
@@ -2283,7 +2284,6 @@ export default function App() {
                 project.opening.leadInMs,
               ),
             )
-            replaceTrack(currentTrack.id, reconciliation.track)
             setSyncCursor(nextSyncCursor >= 0 ? nextSyncCursor : nextWords.length)
             setSelectedWordIds(new Set())
             setLyricsDialogOpen(false)

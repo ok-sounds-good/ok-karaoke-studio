@@ -7,6 +7,12 @@ const { VIEWPORT } = require('../scripts/visual-result-validation.cjs')
 const PACKAGED_APP_URL = 'studio-app://app/index.html'
 const STYLE_SESSION_READINESS_TIMEOUT_MS = 10_000
 const STYLE_TEMPLATE_NAME = 'Smoke 158'
+const TIMELINE_DENSITY_TITLE = 'Timeline Density 5000'
+const TIMELINE_DENSITY_TRACK_COUNT = 8
+const TIMELINE_DENSITY_WORDS_PER_TRACK = 625
+const TIMELINE_DENSITY_WORD_COUNT = TIMELINE_DENSITY_TRACK_COUNT * TIMELINE_DENSITY_WORDS_PER_TRACK
+const TIMELINE_DENSITY_DOM_CAP_PER_TRACK = 96
+const TIMELINE_DENSITY_OPEN_MARKER = 'oksTimelineDensityTrustedOpen'
 const STYLE_DESTINATION_STATE_SCRIPT = `(() => {
   const selected = document.querySelector('[role="tab"][aria-selected="true"][data-style-destination]')
   const destination = selected?.getAttribute('data-style-destination')
@@ -1905,6 +1911,681 @@ function validTimelineLeadInGeometryState(value) {
   )
 }
 
+const TIMELINE_DENSITY_OPEN_TARGET_SCRIPT = `(() => {
+  const marker = ${JSON.stringify(TIMELINE_DENSITY_OPEN_MARKER)}
+  const target = document.querySelector('button[aria-label="Open project"]')
+  const styleButton = document.querySelector(
+    'button.style-button[aria-label="Edit project Style"]',
+  )
+  if (
+    !(target instanceof HTMLButtonElement) ||
+    target.disabled ||
+    !(styleButton instanceof HTMLButtonElement) ||
+    styleButton.getAttribute('aria-disabled') === 'true' ||
+    document.querySelector('[role="dialog"], [role="alert"]')
+  ) return null
+  const bounds = target.getBoundingClientRect()
+  const style = getComputedStyle(target)
+  if (
+    bounds.width <= 0 ||
+    bounds.height <= 0 ||
+    bounds.left < 0 ||
+    bounds.top < 0 ||
+    bounds.right > document.documentElement.clientWidth ||
+    bounds.bottom > document.documentElement.clientHeight ||
+    style.display === 'none' ||
+    style.visibility !== 'visible' ||
+    style.pointerEvents === 'none'
+  ) return null
+  delete document.documentElement.dataset[marker]
+  document.addEventListener(
+    'keydown',
+    (event) => {
+      if (
+        event.isTrusted &&
+        event.key === 'Enter' &&
+        !event.repeat &&
+        document.activeElement === target
+      ) document.documentElement.dataset[marker] = 'trusted-enter'
+    },
+    { capture: true, once: true },
+  )
+  target.focus({ preventScroll: true })
+  return {
+    active: document.activeElement === target,
+    boundsHeight: bounds.height,
+    boundsWidth: bounds.width,
+    devicePixelRatio: window.devicePixelRatio,
+    height: document.documentElement.clientHeight,
+    href: window.location.href,
+    readyState: document.readyState,
+    trustedMarkerArmed: !document.documentElement.dataset[marker],
+    width: document.documentElement.clientWidth,
+  }
+})()`
+
+const TIMELINE_DENSITY_DIALOG_ACTIVATION_SCRIPT = `(() => {
+  const marker = ${JSON.stringify(TIMELINE_DENSITY_OPEN_MARKER)}
+  const target = document.querySelector('button[aria-label="Open project"]')
+  const trusted =
+    document.documentElement.dataset[marker] === 'trusted-enter' &&
+    target instanceof HTMLButtonElement &&
+    document.activeElement === target
+  delete document.documentElement.dataset[marker]
+  return trusted
+})()`
+
+const TIMELINE_DENSITY_TIMING_TARGET_SCRIPT = `(() => {
+  const target = document.querySelector(
+    '[role="separator"][aria-label="Stage Monitor and Lyric Timing height"]',
+  )
+  if (
+    !(target instanceof HTMLElement) ||
+    target.getAttribute('aria-disabled') === 'true' ||
+    target.getAttribute('aria-orientation') !== 'horizontal'
+  ) return null
+  const minimum = Number(target.getAttribute('aria-valuemin'))
+  const maximum = Number(target.getAttribute('aria-valuemax'))
+  const value = Number(target.getAttribute('aria-valuenow'))
+  const bounds = target.getBoundingClientRect()
+  const style = getComputedStyle(target)
+  if (
+    !Number.isFinite(minimum) ||
+    !Number.isFinite(maximum) ||
+    !Number.isFinite(value) ||
+    minimum > value ||
+    value > maximum ||
+    bounds.width <= 0 ||
+    bounds.height <= 0 ||
+    bounds.left < 0 ||
+    bounds.top < 0 ||
+    bounds.right > document.documentElement.clientWidth ||
+    bounds.bottom > document.documentElement.clientHeight ||
+    style.display === 'none' ||
+    style.visibility !== 'visible'
+  ) return null
+  target.focus({ preventScroll: true })
+  return {
+    active: document.activeElement === target,
+    boundsHeight: bounds.height,
+    boundsWidth: bounds.width,
+    devicePixelRatio: window.devicePixelRatio,
+    height: document.documentElement.clientHeight,
+    href: window.location.href,
+    maximum,
+    minimum,
+    readyState: document.readyState,
+    value,
+    width: document.documentElement.clientWidth,
+  }
+})()`
+
+function validTimelineDensityOpenTarget(value, viewport, devicePixelRatio) {
+  return Boolean(
+    value &&
+    typeof value === 'object' &&
+    value.active === true &&
+    Number.isFinite(value.boundsHeight) &&
+    value.boundsHeight > 0 &&
+    Number.isFinite(value.boundsWidth) &&
+    value.boundsWidth > 0 &&
+    value.devicePixelRatio === devicePixelRatio &&
+    value.height === viewport.height &&
+    value.href === PACKAGED_APP_URL &&
+    value.readyState === 'complete' &&
+    value.trustedMarkerArmed === true &&
+    value.width === viewport.width,
+  )
+}
+
+function validTimelineDensityTimingTarget(value, viewport, devicePixelRatio) {
+  return Boolean(
+    value &&
+    typeof value === 'object' &&
+    value.active === true &&
+    Number.isFinite(value.boundsHeight) &&
+    value.boundsHeight > 0 &&
+    Number.isFinite(value.boundsWidth) &&
+    value.boundsWidth > 0 &&
+    value.devicePixelRatio === devicePixelRatio &&
+    value.height === viewport.height &&
+    value.href === PACKAGED_APP_URL &&
+    Number.isFinite(value.maximum) &&
+    Number.isFinite(value.minimum) &&
+    value.minimum <= value.value &&
+    value.value <= value.maximum &&
+    value.readyState === 'complete' &&
+    value.width === viewport.width,
+  )
+}
+
+function timelineDensityReadinessScript(viewport, profile) {
+  const expected = {
+    devicePixelRatio: profile.devicePixelRatio,
+    height: viewport.height,
+    profileName: profile.name,
+    title: TIMELINE_DENSITY_TITLE,
+    trackCount: TIMELINE_DENSITY_TRACK_COUNT,
+    width: viewport.width,
+    wordsPerTrack: TIMELINE_DENSITY_WORDS_PER_TRACK,
+  }
+  return `(() => new Promise((resolve) => {
+    const expected = ${JSON.stringify(expected)}
+    const expectedBridgeKeys = ${JSON.stringify(STUDIO_BRIDGE_KEYS)}
+    const frame = () => new Promise((done) => requestAnimationFrame(() => done()))
+    const mutationObserver = new MutationObserver(() => schedule())
+    const resizeObserver = new ResizeObserver(() => schedule())
+    const fontSet = document.fonts
+    let checking = false
+    let finished = false
+    let rerun = false
+    const geometry = (viewport) => ({
+      clientHeight: viewport.clientHeight,
+      clientWidth: viewport.clientWidth,
+      scrollHeight: viewport.scrollHeight,
+      scrollWidth: viewport.scrollWidth,
+    })
+    const sameGeometry = (left, right) =>
+      left.clientHeight === right.clientHeight &&
+      left.clientWidth === right.clientWidth &&
+      left.scrollHeight === right.scrollHeight &&
+      left.scrollWidth === right.scrollWidth
+    const positions = (maximum, span, minimumStep = 0) => {
+      const values = new Set([0, maximum])
+      const step = Math.max(1, minimumStep, Math.floor(span * 0.85))
+      for (let value = step; value < maximum; value += step) values.add(value)
+      return [...values].sort((left, right) => left - right)
+    }
+    const visible = (element, viewportBounds) => {
+      if (!(element instanceof HTMLElement)) return false
+      const bounds = element.getBoundingClientRect()
+      const style = getComputedStyle(element)
+      return (
+        bounds.width > 0 &&
+        bounds.height > 0 &&
+        bounds.left < viewportBounds.right &&
+        bounds.right > viewportBounds.left &&
+        bounds.top < viewportBounds.bottom &&
+        bounds.bottom > viewportBounds.top &&
+        style.display !== 'none' &&
+        style.visibility === 'visible'
+      )
+    }
+    const unsafeUi = () =>
+      Boolean(
+        document.querySelector(
+          '[role="dialog"], [role="alert"], .toast--warning, .toast--error',
+        ),
+      )
+    const collect = async () => {
+      const title = document.querySelector('.topbar__document > span')
+      const dirty = document.querySelector('.topbar__document > i')
+      const styleButton = document.querySelector(
+        'button.style-button[aria-label="Edit project Style"]',
+      )
+      const divider = document.querySelector(
+        '[role="separator"][aria-label="Stage Monitor and Lyric Timing height"]',
+      )
+      const timeline = document.querySelector('.timeline-viewport')
+      const lanes = [...document.querySelectorAll('.timeline-lane[data-track-id]')]
+      const labels = [...document.querySelectorAll('.timeline-track-label strong')]
+      if (
+        !(title instanceof HTMLElement) ||
+        title.textContent?.trim() !== expected.title ||
+        dirty ||
+        !(styleButton instanceof HTMLButtonElement) ||
+        styleButton.getAttribute('aria-disabled') === 'true' ||
+        !(divider instanceof HTMLElement) ||
+        divider.getAttribute('aria-disabled') === 'true' ||
+        Number(divider.getAttribute('aria-valuenow')) !==
+          Number(divider.getAttribute('aria-valuemin')) ||
+        !(timeline instanceof HTMLElement) ||
+        lanes.length !== expected.trackCount ||
+        labels.length !== expected.trackCount ||
+        unsafeUi() ||
+        document.readyState !== 'complete' ||
+        fontSet?.status !== 'loaded' ||
+        document.documentElement.clientWidth !== expected.width ||
+        document.documentElement.clientHeight !== expected.height ||
+        window.devicePixelRatio !== expected.devicePixelRatio ||
+        window.location.href !== '${PACKAGED_APP_URL}' ||
+        Array.from(document.images).some(
+          (image) => !image.complete || image.naturalWidth <= 0 || image.naturalHeight <= 0,
+        )
+      ) return null
+      const expectedIds = Array.from(
+        { length: expected.trackCount },
+        (_, index) => 'timeline-density-track-' + String(index + 1).padStart(2, '0'),
+      )
+      const expectedNames = Array.from(
+        { length: expected.trackCount },
+        (_, index) => 'Density Vocal ' + (index + 1),
+      )
+      if (
+        lanes.some((lane, index) => lane.getAttribute('data-track-id') !== expectedIds[index]) ||
+        labels.some((label, index) => label.textContent?.trim() !== expectedNames[index])
+      ) return null
+      const initialGeometry = geometry(timeline)
+      const maxLeft = initialGeometry.scrollWidth - initialGeometry.clientWidth
+      const maxTop = initialGeometry.scrollHeight - initialGeometry.clientHeight
+      if (maxLeft <= 0 || maxTop <= 0) return null
+      const tracks = expectedIds.map((id, index) => ({
+        id,
+        name: expectedNames[index],
+        labels: new Set(),
+        logicalWords: new Set(),
+        maxMountedLabels: 0,
+        maxMountedWords: 0,
+      }))
+      let aggregateVisible = false
+      let aggregatePosition = null
+      const xPositions = positions(maxLeft, initialGeometry.clientWidth, 300)
+      const yPositions = positions(maxTop, initialGeometry.clientHeight)
+      for (const top of yPositions) {
+        for (const left of xPositions) {
+          timeline.scrollTo({ behavior: 'auto', left, top })
+          await frame()
+          await frame()
+          const currentLanes = [...document.querySelectorAll('.timeline-lane[data-track-id]')]
+          if (
+            currentLanes.length !== expected.trackCount ||
+            currentLanes.some(
+              (lane, index) => lane.getAttribute('data-track-id') !== expectedIds[index],
+            )
+          ) return null
+          const viewportBounds = timeline.getBoundingClientRect()
+          let sliceAggregateVisible = false
+          currentLanes.forEach((lane, index) => {
+            const track = tracks[index]
+            const mountedWords = [...lane.querySelectorAll('.timeline-word')]
+            const mountedLabels = [...lane.querySelectorAll('.timeline-line-label__word')]
+            track.maxMountedWords = Math.max(track.maxMountedWords, mountedWords.length)
+            track.maxMountedLabels = Math.max(track.maxMountedLabels, mountedLabels.length)
+            if (
+              mountedWords.length > ${TIMELINE_DENSITY_DOM_CAP_PER_TRACK} ||
+              mountedLabels.length > ${TIMELINE_DENSITY_DOM_CAP_PER_TRACK}
+            ) return
+            for (const word of mountedWords) {
+              const token = word
+                .getAttribute('aria-label')
+                ?.match(/^[0-9a-z]{2}\\b/u)?.[0]
+              if (!token) {
+                track.invalid = true
+                continue
+              }
+              track.logicalWords.add(token)
+            }
+            for (const label of mountedLabels) {
+              const token = label.textContent?.trim()
+              if (!/^[0-9a-z]{2}$/u.test(token ?? '')) {
+                track.invalid = true
+                continue
+              }
+              track.labels.add(token)
+              // Word labels retain the same unique current-project word identity even
+              // when vertical virtualization mounts no timing button for a lane slice.
+              track.logicalWords.add(token)
+            }
+            const aggregates = [...lane.querySelectorAll('.timeline-density-aggregate')]
+            sliceAggregateVisible ||= aggregates.some((aggregate) =>
+              visible(aggregate, viewportBounds),
+            )
+          })
+          aggregateVisible ||= sliceAggregateVisible
+          if (
+            sliceAggregateVisible &&
+            !aggregatePosition &&
+            timeline.scrollLeft > 0 &&
+            timeline.scrollTop > 0
+          ) {
+            aggregatePosition = {
+              left: timeline.scrollLeft,
+              top: timeline.scrollTop,
+            }
+          }
+          if (
+            tracks.some(
+              (track) =>
+                track.invalid ||
+                track.maxMountedWords > ${TIMELINE_DENSITY_DOM_CAP_PER_TRACK} ||
+                track.maxMountedLabels > ${TIMELINE_DENSITY_DOM_CAP_PER_TRACK},
+            )
+          ) return null
+        }
+      }
+      for (let trackIndex = 0; trackIndex < expected.trackCount; trackIndex += 1) {
+        const track = tracks[trackIndex]
+        for (let ordinal = 0; ordinal < expected.wordsPerTrack; ordinal += 1) {
+          const token = ordinal.toString(36).padStart(2, '0')
+          if (!track.logicalWords.has(token) || !track.labels.has(token)) return null
+        }
+        if (
+          track.logicalWords.size !== expected.wordsPerTrack ||
+          track.labels.size !== expected.wordsPerTrack
+        ) return null
+      }
+      if (!aggregatePosition) return null
+      const finalLeft = aggregatePosition.left
+      const finalTop = aggregatePosition.top
+      timeline.scrollTo({ behavior: 'auto', left: finalLeft, top: finalTop })
+      await frame()
+      await frame()
+      const finalGeometry = geometry(timeline)
+      const bridge = window.studio
+      const bridgeKeys =
+        bridge && typeof bridge === 'object' ? Object.keys(bridge).sort() : []
+      let ipcReady = false
+      try {
+        ipcReady = (await bridge?.getPendingWindowClose?.()) === null
+      } catch {}
+      const resultTracks = tracks.map((track) => ({
+        id: track.id,
+        labelCount: track.labels.size,
+        maxMountedLabels: track.maxMountedLabels,
+        maxMountedWords: track.maxMountedWords,
+        name: track.name,
+        wordCount: track.logicalWords.size,
+      }))
+      return {
+        aggregateVisible,
+        bridgeFrozen: Object.isFrozen(bridge),
+        bridgeFunctions:
+          bridgeKeys.length === expectedBridgeKeys.length &&
+          bridgeKeys.every((key) => typeof bridge[key] === 'function'),
+        bridgeKeys,
+        devicePixelRatio: window.devicePixelRatio,
+        dividerAtMinimum: true,
+        finalScrollLeft: timeline.scrollLeft,
+        finalScrollTop: timeline.scrollTop,
+        geometryStable: sameGeometry(initialGeometry, finalGeometry),
+        height: document.documentElement.clientHeight,
+        href: window.location.href,
+        ipcReady,
+        labelCount: resultTracks.reduce((total, track) => total + track.labelCount, 0),
+        maxScrollLeft: maxLeft,
+        maxScrollTop: maxTop,
+        nodeAccess:
+          typeof window.process !== 'undefined' || typeof window.require !== 'undefined',
+        profileName: expected.profileName,
+        readyState: document.readyState,
+        timelineClientHeight: finalGeometry.clientHeight,
+        timelineClientWidth: finalGeometry.clientWidth,
+        timelineScrollHeight: finalGeometry.scrollHeight,
+        timelineScrollWidth: finalGeometry.scrollWidth,
+        title: title.textContent.trim(),
+        tracks: resultTracks,
+        width: document.documentElement.clientWidth,
+        wordCount: resultTracks.reduce((total, track) => total + track.wordCount, 0),
+      }
+    }
+    const cleanup = () => {
+      mutationObserver.disconnect()
+      resizeObserver.disconnect()
+      fontSet?.removeEventListener?.('loadingdone', schedule)
+      fontSet?.removeEventListener?.('loadingerror', schedule)
+    }
+    const finish = (value) => {
+      if (finished) return
+      finished = true
+      cleanup()
+      resolve(value)
+    }
+    async function check() {
+      if (finished) return
+      if (checking) {
+        rerun = true
+        return
+      }
+      checking = true
+      try {
+        await fontSet?.ready
+        await frame()
+        await frame()
+        const value = await collect()
+        if (value) finish(value)
+      } catch {
+        // A renderer, resource, scrolling, or IPC failure remains non-ready.
+      } finally {
+        checking = false
+        if (rerun && !finished) {
+          rerun = false
+          queueMicrotask(check)
+        }
+      }
+    }
+    function schedule() { void check() }
+    mutationObserver.observe(document.documentElement, {
+      attributes: true,
+      childList: true,
+      characterData: true,
+      subtree: true,
+    })
+    resizeObserver.observe(document.documentElement)
+    fontSet?.addEventListener?.('loadingdone', schedule)
+    fontSet?.addEventListener?.('loadingerror', schedule)
+    schedule()
+  }))()`
+}
+
+function validTimelineDensityState(value, viewport, profile) {
+  const tracks = Array.isArray(value?.tracks) ? value.tracks : []
+  const trackContract = tracks.every((track, index) => {
+    const ordinal = index + 1
+    return Boolean(
+      track &&
+      track.id === `timeline-density-track-${String(ordinal).padStart(2, '0')}` &&
+      track.name === `Density Vocal ${ordinal}` &&
+      track.wordCount === TIMELINE_DENSITY_WORDS_PER_TRACK &&
+      track.labelCount === TIMELINE_DENSITY_WORDS_PER_TRACK &&
+      Number.isSafeInteger(track.maxMountedWords) &&
+      track.maxMountedWords >= 0 &&
+      track.maxMountedWords <= TIMELINE_DENSITY_DOM_CAP_PER_TRACK &&
+      Number.isSafeInteger(track.maxMountedLabels) &&
+      track.maxMountedLabels > 0 &&
+      track.maxMountedLabels <= TIMELINE_DENSITY_DOM_CAP_PER_TRACK,
+    )
+  })
+  return Boolean(
+    value &&
+    typeof value === 'object' &&
+    value.aggregateVisible === true &&
+    value.bridgeFrozen === true &&
+    value.bridgeFunctions === true &&
+    JSON.stringify(value.bridgeKeys) === JSON.stringify(STUDIO_BRIDGE_KEYS) &&
+    value.devicePixelRatio === profile.devicePixelRatio &&
+    value.dividerAtMinimum === true &&
+    Number.isFinite(value.finalScrollLeft) &&
+    value.finalScrollLeft > 0 &&
+    value.finalScrollLeft <= value.maxScrollLeft &&
+    Number.isFinite(value.finalScrollTop) &&
+    value.finalScrollTop > 0 &&
+    value.finalScrollTop <= value.maxScrollTop &&
+    value.geometryStable === true &&
+    value.height === viewport.height &&
+    value.href === PACKAGED_APP_URL &&
+    value.ipcReady === true &&
+    value.labelCount === TIMELINE_DENSITY_WORD_COUNT &&
+    Number.isFinite(value.maxScrollLeft) &&
+    value.maxScrollLeft > 0 &&
+    Number.isFinite(value.maxScrollTop) &&
+    value.maxScrollTop > 0 &&
+    value.nodeAccess === false &&
+    value.profileName === profile.name &&
+    value.readyState === 'complete' &&
+    Number.isSafeInteger(value.timelineClientHeight) &&
+    value.timelineClientHeight > 0 &&
+    Number.isSafeInteger(value.timelineClientWidth) &&
+    value.timelineClientWidth > 0 &&
+    value.timelineScrollHeight > value.timelineClientHeight &&
+    value.timelineScrollWidth > value.timelineClientWidth &&
+    value.title === TIMELINE_DENSITY_TITLE &&
+    tracks.length === TIMELINE_DENSITY_TRACK_COUNT &&
+    trackContract &&
+    tracks.some((track) => track.maxMountedWords > 0) &&
+    value.width === viewport.width &&
+    value.wordCount === TIMELINE_DENSITY_WORD_COUNT,
+  )
+}
+
+function timelineDensityCaptureStateScript(viewport, profile, readiness) {
+  const expected = {
+    devicePixelRatio: profile.devicePixelRatio,
+    finalScrollLeft: readiness.finalScrollLeft,
+    finalScrollTop: readiness.finalScrollTop,
+    height: viewport.height,
+    profileName: profile.name,
+    timelineClientHeight: readiness.timelineClientHeight,
+    timelineClientWidth: readiness.timelineClientWidth,
+    timelineScrollHeight: readiness.timelineScrollHeight,
+    timelineScrollWidth: readiness.timelineScrollWidth,
+    title: TIMELINE_DENSITY_TITLE,
+    width: viewport.width,
+  }
+  return `(() => {
+    const expected = ${JSON.stringify(expected)}
+    const expectedBridgeKeys = ${JSON.stringify(STUDIO_BRIDGE_KEYS)}
+    const frame = () => new Promise((done) => requestAnimationFrame(() => done()))
+    const visible = (element, viewportBounds) => {
+      const bounds = element.getBoundingClientRect()
+      const style = getComputedStyle(element)
+      return (
+        bounds.width > 0 &&
+        bounds.height > 0 &&
+        bounds.left < viewportBounds.right &&
+        bounds.right > viewportBounds.left &&
+        bounds.top < viewportBounds.bottom &&
+        bounds.bottom > viewportBounds.top &&
+        style.display !== 'none' &&
+        style.visibility === 'visible'
+      )
+    }
+    const sample = async () => {
+      const title = document.querySelector('.topbar__document > span')
+      const styleButton = document.querySelector(
+        'button.style-button[aria-label="Edit project Style"]',
+      )
+      const divider = document.querySelector(
+        '[role="separator"][aria-label="Stage Monitor and Lyric Timing height"]',
+      )
+      const timeline = document.querySelector('.timeline-viewport')
+      const lanes = [...document.querySelectorAll('.timeline-lane[data-track-id]')]
+      const labels = [...document.querySelectorAll('.timeline-track-label strong')]
+      const bridge = window.studio
+      const bridgeKeys =
+        bridge && typeof bridge === 'object' ? Object.keys(bridge).sort() : []
+      let ipcReady = false
+      try {
+        ipcReady = (await bridge?.getPendingWindowClose?.()) === null
+      } catch {}
+      const viewportBounds = timeline?.getBoundingClientRect()
+      return {
+        aggregateVisible:
+          viewportBounds &&
+          lanes.some((lane) =>
+            [...lane.querySelectorAll('.timeline-density-aggregate')].some((aggregate) =>
+              visible(aggregate, viewportBounds),
+            ),
+          ),
+        bridgeFrozen: Object.isFrozen(bridge),
+        bridgeFunctions:
+          bridgeKeys.length === expectedBridgeKeys.length &&
+          bridgeKeys.every((key) => typeof bridge[key] === 'function'),
+        bridgeKeys,
+        devicePixelRatio: window.devicePixelRatio,
+        dividerAtMinimum:
+          divider instanceof HTMLElement &&
+          divider.getAttribute('aria-disabled') !== 'true' &&
+          Number(divider.getAttribute('aria-valuenow')) ===
+            Number(divider.getAttribute('aria-valuemin')),
+        dirty: Boolean(document.querySelector('.topbar__document > i')),
+        finalScrollLeft: timeline?.scrollLeft ?? -1,
+        finalScrollTop: timeline?.scrollTop ?? -1,
+        height: document.documentElement.clientHeight,
+        href: window.location.href,
+        ipcReady,
+        issue:
+          Boolean(
+            document.querySelector(
+              '[role="dialog"], [role="alert"], .toast--warning, .toast--error',
+            ),
+          ) ||
+          !(styleButton instanceof HTMLButtonElement) ||
+          styleButton.getAttribute('aria-disabled') === 'true',
+        labels: labels.map((label) => label.textContent?.trim() ?? ''),
+        lanes: lanes.map((lane) => ({
+          id: lane.getAttribute('data-track-id') ?? '',
+          mountedLabels: lane.querySelectorAll('.timeline-line-label__word').length,
+          mountedWords: lane.querySelectorAll('.timeline-word').length,
+        })),
+        nodeAccess:
+          typeof window.process !== 'undefined' || typeof window.require !== 'undefined',
+        profileName: expected.profileName,
+        readyState: document.readyState,
+        timelineClientHeight: timeline?.clientHeight ?? -1,
+        timelineClientWidth: timeline?.clientWidth ?? -1,
+        timelineScrollHeight: timeline?.scrollHeight ?? -1,
+        timelineScrollWidth: timeline?.scrollWidth ?? -1,
+        title: title?.textContent?.trim() ?? '',
+        width: document.documentElement.clientWidth,
+      }
+    }
+    return (async () => {
+      await document.fonts?.ready
+      await frame()
+      await frame()
+      const first = await sample()
+      await frame()
+      const second = await sample()
+      return { ...second, stable: JSON.stringify(first) === JSON.stringify(second) }
+    })()
+  })()`
+}
+
+function validTimelineDensityCaptureState(value, viewport, profile, readiness) {
+  const lanes = Array.isArray(value?.lanes) ? value.lanes : []
+  const labels = Array.isArray(value?.labels) ? value.labels : []
+  return Boolean(
+    value &&
+    typeof value === 'object' &&
+    value.aggregateVisible === true &&
+    value.bridgeFrozen === true &&
+    value.bridgeFunctions === true &&
+    JSON.stringify(value.bridgeKeys) === JSON.stringify(STUDIO_BRIDGE_KEYS) &&
+    value.devicePixelRatio === profile.devicePixelRatio &&
+    value.dividerAtMinimum === true &&
+    value.dirty === false &&
+    value.finalScrollLeft === readiness.finalScrollLeft &&
+    value.finalScrollTop === readiness.finalScrollTop &&
+    value.height === viewport.height &&
+    value.href === PACKAGED_APP_URL &&
+    value.ipcReady === true &&
+    value.issue === false &&
+    labels.length === TIMELINE_DENSITY_TRACK_COUNT &&
+    labels.every((label, index) => label === `Density Vocal ${index + 1}`) &&
+    lanes.length === TIMELINE_DENSITY_TRACK_COUNT &&
+    lanes.every(
+      (lane, index) =>
+        lane.id === `timeline-density-track-${String(index + 1).padStart(2, '0')}` &&
+        Number.isSafeInteger(lane.mountedLabels) &&
+        lane.mountedLabels >= 0 &&
+        lane.mountedLabels <= TIMELINE_DENSITY_DOM_CAP_PER_TRACK &&
+        Number.isSafeInteger(lane.mountedWords) &&
+        lane.mountedWords >= 0 &&
+        lane.mountedWords <= TIMELINE_DENSITY_DOM_CAP_PER_TRACK,
+    ) &&
+    value.nodeAccess === false &&
+    value.profileName === profile.name &&
+    value.readyState === 'complete' &&
+    value.stable === true &&
+    value.timelineClientHeight === readiness.timelineClientHeight &&
+    value.timelineClientWidth === readiness.timelineClientWidth &&
+    value.timelineScrollHeight === readiness.timelineScrollHeight &&
+    value.timelineScrollWidth === readiness.timelineScrollWidth &&
+    value.title === TIMELINE_DENSITY_TITLE &&
+    value.width === viewport.width,
+  )
+}
+
 function executeBeforeDeadline(operation, timeoutMs) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
     throw readinessError()
@@ -1939,6 +2620,14 @@ module.exports = {
   STYLE_SESSION_READINESS_TIMEOUT_MS,
   STYLE_TEMPLATE_NAME,
   STYLE_TARGET_SCRIPT,
+  TIMELINE_DENSITY_DIALOG_ACTIVATION_SCRIPT,
+  TIMELINE_DENSITY_DOM_CAP_PER_TRACK,
+  TIMELINE_DENSITY_OPEN_TARGET_SCRIPT,
+  TIMELINE_DENSITY_TIMING_TARGET_SCRIPT,
+  TIMELINE_DENSITY_TITLE,
+  TIMELINE_DENSITY_TRACK_COUNT,
+  TIMELINE_DENSITY_WORD_COUNT,
+  TIMELINE_DENSITY_WORDS_PER_TRACK,
   executeBeforeDeadline,
   projectLyricsReadinessScript,
   styleDestinationLayoutScript,
@@ -1946,6 +2635,8 @@ module.exports = {
   styleTemplateFormReadinessScript,
   styleTemplateReadinessScript,
   timelineLeadInGeometryScript,
+  timelineDensityCaptureStateScript,
+  timelineDensityReadinessScript,
   validBackgroundState,
   validLeadVocalState,
   validProjectLyricsState,
@@ -1958,5 +2649,9 @@ module.exports = {
   validStyleTemplateFormState,
   validStyleTemplateState,
   validStyleTarget,
+  validTimelineDensityCaptureState,
+  validTimelineDensityOpenTarget,
+  validTimelineDensityState,
+  validTimelineDensityTimingTarget,
   validTimelineLeadInGeometryState,
 }

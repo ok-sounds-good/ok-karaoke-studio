@@ -93,6 +93,9 @@ Karaoke Studio identity.
 ### Projects and media
 
 - New, open, save, and save-as for current v0 `.oks` JSON project files.
+- Current v0 projects are limited independently to 8 vocal tracks, 20,000 lyric
+  lines, and 5,000 aggregate lyric words. Renderer and Electron/main validators
+  reject over-cap project data consistently.
 - Link MP3, WAV, M4A, FLAC, AAC, or OGG audio without copying it into the project.
 - Link one static background image without copying it into the project. A
   missing, animated, or decoder-invalid linked image must be reported before

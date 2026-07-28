@@ -8,7 +8,9 @@ const { validateFreshOutputPath } = require('../electron/smoke-artifacts.cjs')
 
 const BASELINE_SCENARIO = 'baseline'
 const STYLE_SESSION_SCENARIO = 'style-session'
+const TIMELINE_DENSITY_SCENARIO = 'timeline-density'
 const BASELINE_NAME = '01-baseline.png'
+const TIMELINE_DENSITY_NAME = '01-timeline-density-5000.png'
 const STYLE_SESSION_NAMES = Object.freeze([
   '01-project-lyrics-1280x720.png',
   '02-project-lyrics-1440x900.png',
@@ -57,6 +59,9 @@ const SCENARIO_CONTRACTS = Object.freeze({
       Object.freeze({ ...viewport, name: STYLE_SESSION_NAMES[index] }),
     ),
   ),
+  [TIMELINE_DENSITY_SCENARIO]: Object.freeze([
+    Object.freeze({ ...VIEWPORT, name: TIMELINE_DENSITY_NAME }),
+  ]),
 })
 const MAX_RESULT_BYTES = 16 * 1024
 const WORKFLOW_EVIDENCE_NAME = 'okay-karaoke-studio-video-style-visual'
@@ -278,7 +283,8 @@ function normalizeManifest(value, scenario = BASELINE_SCENARIO) {
     manifest.ok !== true ||
     manifest.schemaVersion !== 1 ||
     !Array.isArray(manifest.artifacts) ||
-    manifest.artifacts.length !== contract.length
+    manifest.artifacts.length !== contract.length ||
+    (scenario === TIMELINE_DENSITY_SCENARIO && !manifest.profile)
   )
     throw resultError()
   const artifacts = manifest.artifacts.map((value, index) => {
@@ -534,6 +540,8 @@ module.exports = {
   STYLE_SESSION_NAMES,
   STYLE_SESSION_SCENARIO,
   STYLE_SESSION_VIEWPORTS,
+  TIMELINE_DENSITY_NAME,
+  TIMELINE_DENSITY_SCENARIO,
   VIEWPORT,
   createResultArtifacts,
   createScenarioResultArtifacts,

@@ -6,6 +6,7 @@ const {
   BASELINE_SCENARIO,
   STYLE_SESSION_SCENARIO,
   STYLE_SESSION_VIEWPORTS,
+  TIMELINE_DENSITY_SCENARIO,
   VIEWPORT,
   createResultArtifacts,
   createScenarioResultArtifacts,
@@ -23,12 +24,16 @@ const {
   STYLE_SESSION_READINESS_TIMEOUT_MS,
   STYLE_TEMPLATE_NAME,
   STYLE_TARGET_SCRIPT,
+  TIMELINE_DENSITY_OPEN_TARGET_SCRIPT,
+  TIMELINE_DENSITY_TIMING_TARGET_SCRIPT,
   executeBeforeDeadline,
   projectLyricsReadinessScript,
   styleDestinationLayoutScript,
   styleSessionActionScript,
   styleTemplateFormReadinessScript,
   styleTemplateReadinessScript,
+  timelineDensityCaptureStateScript,
+  timelineDensityReadinessScript,
   validBackgroundState,
   validLeadVocalState,
   validProjectLyricsState,
@@ -42,6 +47,10 @@ const {
   validStyleTemplateFormState,
   validStyleTemplateState,
   validStyleTarget,
+  validTimelineDensityCaptureState,
+  validTimelineDensityOpenTarget,
+  validTimelineDensityState,
+  validTimelineDensityTimingTarget,
 } = require('./visual-smoke-renderer-contracts.cjs')
 const { layoutSmokeProfile } = require('./visual-smoke-layout-profiles.cjs')
 const { publishArtifactBuffers, writeFreshLauncherFailure } = require('./smoke-artifacts.cjs')
@@ -385,6 +394,31 @@ function sendTrustedStyleText(contents, text) {
   }
 }
 
+function sendTrustedTimelineDensityOpen(contents) {
+  if (!contents || typeof contents.sendInputEvent !== 'function') {
+    throw smokeError('VISUAL_SMOKE_ACTIVATION_INVALID')
+  }
+  try {
+    contents.sendInputEvent({ keyCode: 'Enter', type: 'keyDown' })
+    contents.sendInputEvent({ keyCode: 'Enter', type: 'char' })
+    contents.sendInputEvent({ keyCode: 'Enter', type: 'keyUp' })
+  } catch {
+    throw smokeError('VISUAL_SMOKE_ACTIVATION_INVALID')
+  }
+}
+
+function sendTrustedTimelineDensityTiming(contents) {
+  if (!contents || typeof contents.sendInputEvent !== 'function') {
+    throw smokeError('VISUAL_SMOKE_ACTIVATION_INVALID')
+  }
+  try {
+    contents.sendInputEvent({ keyCode: 'Home', type: 'keyDown' })
+    contents.sendInputEvent({ keyCode: 'Home', type: 'keyUp' })
+  } catch {
+    throw smokeError('VISUAL_SMOKE_ACTIVATION_INVALID')
+  }
+}
+
 async function captureStyleSession(window, app, options, config) {
   const prepared = await prepareCaptureWindow(window, app, options, config)
   const displayScale = prepared.nativeScale
@@ -691,6 +725,77 @@ async function captureStyleSession(window, app, options, config) {
   }
 }
 
+async function captureTimelineDensity(window, app, options, config) {
+  const prepared = await prepareCaptureWindow(window, app, options, config)
+  try {
+    await validateLayoutReachability(window, options, prepared.viewport, false, {
+      requireInitialViewport: prepared.profile.requireInitialViewport,
+    })
+    const timingTarget = await executeBeforeDeadline(
+      () => window.webContents.executeJavaScript(TIMELINE_DENSITY_TIMING_TARGET_SCRIPT, false),
+      options.readinessTimeoutMs,
+    )
+    if (
+      !validTimelineDensityTimingTarget(
+        timingTarget,
+        prepared.viewport,
+        prepared.observation.devicePixelRatio,
+      )
+    ) {
+      throw smokeError('VISUAL_SMOKE_ACTIVATION_INVALID')
+    }
+    sendTrustedTimelineDensityTiming(window.webContents)
+    const target = await executeBeforeDeadline(
+      () => window.webContents.executeJavaScript(TIMELINE_DENSITY_OPEN_TARGET_SCRIPT, false),
+      options.readinessTimeoutMs,
+    )
+    if (
+      !validTimelineDensityOpenTarget(
+        target,
+        prepared.viewport,
+        prepared.observation.devicePixelRatio,
+      )
+    ) {
+      throw smokeError('VISUAL_SMOKE_ACTIVATION_INVALID')
+    }
+    sendTrustedTimelineDensityOpen(window.webContents)
+    const rendererState = await executeBeforeDeadline(
+      () =>
+        window.webContents.executeJavaScript(
+          timelineDensityReadinessScript(prepared.viewport, prepared.observation),
+          false,
+        ),
+      options.readinessTimeoutMs,
+    )
+    if (!validTimelineDensityState(rendererState, prepared.viewport, prepared.observation)) {
+      throw smokeError('VISUAL_SMOKE_READINESS_INVALID')
+    }
+    const png = await captureViewport(window, VIEWPORT, options.captureSettle)
+    const captureState = await executeBeforeDeadline(
+      () =>
+        window.webContents.executeJavaScript(
+          timelineDensityCaptureStateScript(prepared.viewport, prepared.observation, rendererState),
+          false,
+        ),
+      options.readinessTimeoutMs,
+    )
+    if (
+      !validTimelineDensityCaptureState(
+        captureState,
+        prepared.viewport,
+        prepared.observation,
+        rendererState,
+      )
+    ) {
+      throw smokeError('VISUAL_SMOKE_CAPTURE_INVALID')
+    }
+    return options.createScenarioArtifacts(TIMELINE_DENSITY_SCENARIO, [png], prepared.observation)
+      .artifacts
+  } finally {
+    restoreCaptureGeometry(window, window.webContents, prepared.original)
+  }
+}
+
 function destroyWindow(window) {
   try {
     if (!window || typeof window.isDestroyed !== 'function' || typeof window.destroy !== 'function')
@@ -736,6 +841,8 @@ async function runVisualSmoke(
         artifacts = await captureBaseline(window, app, options, config)
       else if (scenario === STYLE_SESSION_SCENARIO)
         artifacts = await captureStyleSession(window, app, options, config)
+      else if (scenario === TIMELINE_DENSITY_SCENARIO)
+        artifacts = await captureTimelineDensity(window, app, options, config)
       else throw smokeError('VISUAL_SMOKE_SCENARIO_INVALID')
     } catch {
       failed = true
@@ -782,7 +889,10 @@ module.exports = {
   PUBLIC_FAILURE,
   captureBaseline,
   captureStyleSession,
+  captureTimelineDensity,
   runVisualSmoke,
   sendTrustedStyleActivation,
   sendTrustedStyleText,
+  sendTrustedTimelineDensityOpen,
+  sendTrustedTimelineDensityTiming,
 }
