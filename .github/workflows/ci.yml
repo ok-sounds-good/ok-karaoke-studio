@@ -19,7 +19,7 @@ jobs:
   unit-tests:
     name: unit tests
     runs-on: ubuntu-slim
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       FORMAT_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
 
@@ -68,11 +68,14 @@ jobs:
             --exclude tests/visual-smoke-renderer-fatal-live.test.ts \
             --exclude tests/app-workflow.test.tsx \
             --exclude tests/format-diff.test.ts \
+            --exclude tests/png-validation.test.ts \
             --exclude tests/project-style-workflow.test.tsx \
+            --exclude tests/sync-session.test.ts \
             --exclude tests/timeline-density-mounted.test.tsx \
             --exclude tests/video-style-visual-smoke.test.ts \
             --exclude tests/visual-result-validation.test.ts \
             --exclude tests/visual-smoke-launcher.test.ts \
+            --exclude tests/visual-smoke-launcher-retention.test.ts \
             --exclude tests/windows-package-smoke.test.ts
 
       - name: Build renderer
@@ -112,9 +115,12 @@ jobs:
           bun run test -- \
             tests/app-workflow.test.tsx \
             tests/format-diff.test.ts \
+            tests/png-validation.test.ts \
             tests/project-style-workflow.test.tsx \
+            tests/sync-session.test.ts \
             tests/timeline-density-mounted.test.tsx \
             tests/video-style-visual-smoke.test.ts \
             tests/visual-result-validation.test.ts \
             tests/visual-smoke-launcher.test.ts \
+            tests/visual-smoke-launcher-retention.test.ts \
             tests/windows-package-smoke.test.ts
