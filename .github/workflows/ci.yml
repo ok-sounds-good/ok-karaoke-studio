@@ -19,6 +19,7 @@ jobs:
   unit-tests:
     name: unit tests
     runs-on: ubuntu-slim
+    timeout-minutes: 10
     env:
       FORMAT_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
 
@@ -62,7 +63,58 @@ jobs:
             --path scripts
 
       - name: Run portable test suite
-        run: bun run test -- --exclude tests/visual-smoke-renderer-fatal-live.test.ts
+        run: |
+          bun run test -- \
+            --exclude tests/visual-smoke-renderer-fatal-live.test.ts \
+            --exclude tests/app-workflow.test.tsx \
+            --exclude tests/format-diff.test.ts \
+            --exclude tests/project-style-workflow.test.tsx \
+            --exclude tests/timeline-density-mounted.test.tsx \
+            --exclude tests/video-style-visual-smoke.test.ts \
+            --exclude tests/visual-result-validation.test.ts \
+            --exclude tests/visual-smoke-launcher.test.ts \
+            --exclude tests/windows-package-smoke.test.ts
 
       - name: Build renderer
         run: bun run build
+
+  heavy-tests:
+    name: heavy tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Configure Node.js 24.0.2
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.0.2
+
+      - name: Configure Bun 1.3.14
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Validate toolchain
+        run: |
+          test "$(node --version)" = "v24.0.2"
+          test "$(bun --version)" = "1.3.14"
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run heavy test suite
+        run: |
+          bun run test -- \
+            tests/app-workflow.test.tsx \
+            tests/format-diff.test.ts \
+            tests/project-style-workflow.test.tsx \
+            tests/timeline-density-mounted.test.tsx \
+            tests/video-style-visual-smoke.test.ts \
+            tests/visual-result-validation.test.ts \
+            tests/visual-smoke-launcher.test.ts \
+            tests/windows-package-smoke.test.ts
