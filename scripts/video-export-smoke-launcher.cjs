@@ -11,6 +11,7 @@ const MAX_CAPTURE_BYTES = 64 * 1_024
 const EXPECTED_MATRIX = presets.resolutions.flatMap((preset) =>
   presets.frameRates.map((fps) => ({ ...preset, fps })),
 )
+const EXPECTED_SCROLL_CASES = Object.freeze([30, 60])
 function validTransition(value, boundaryFrame) {
   return (
     value &&
@@ -22,6 +23,34 @@ function validTransition(value, boundaryFrame) {
     value.totalDifference > 0
   )
 }
+function validScrollEvidence(value, fps) {
+  const samples = value?.samples
+  return (
+    Number.isFinite(value?.slotPx) &&
+    value.slotPx > 0 &&
+    Array.isArray(samples) &&
+    samples.length === 3 &&
+    samples.every((sample, index) => {
+      const timeMs = [300, 500, 700][index]
+      const expectedBands = [2, 3, 2][index]
+      return (
+        sample?.timeMs === timeMs &&
+        sample?.frameIndex === (timeMs * fps) / 1_000 &&
+        Array.isArray(sample?.bands) &&
+        sample.bands.length === expectedBands &&
+        sample.bands.every(
+          (band) =>
+            Number.isFinite(band?.top) &&
+            Number.isFinite(band?.bottom) &&
+            Number.isFinite(band?.center) &&
+            Number.isSafeInteger(band?.pixels) &&
+            band.pixels > 0 &&
+            band.bottom >= band.top,
+        )
+      )
+    })
+  )
+}
 function validateManifest(value) {
   if (
     !value ||
@@ -30,7 +59,9 @@ function validateManifest(value) {
     value.fixture?.audioSeconds !== 0.5 ||
     value.fixture?.videoSeconds !== 1 ||
     !Array.isArray(value.cases) ||
-    value.cases.length !== EXPECTED_MATRIX.length
+    value.cases.length !== EXPECTED_MATRIX.length ||
+    !Array.isArray(value.scrollEvidence) ||
+    value.scrollEvidence.length !== EXPECTED_SCROLL_CASES.length
   ) {
     throw new Error('invalid manifest envelope')
   }
@@ -87,6 +118,28 @@ function validateManifest(value) {
       throw new Error(`invalid case ${index + 1}`)
     }
   })
+  value.scrollEvidence.forEach((item, index) => {
+    const fps = EXPECTED_SCROLL_CASES[index]
+    if (
+      item?.fps !== fps ||
+      item.observedDimensions?.width !== 426 ||
+      item.observedDimensions?.height !== 240 ||
+      item.codecs?.video !== 'h264' ||
+      item.codecs?.audio !== 'aac' ||
+      item.rationalRate?.frames !== fps ||
+      item.rationalRate?.rendered !== `${fps}/1` ||
+      !Number.isFinite(item.durationSeconds) ||
+      Math.abs(item.durationSeconds - 1) > 0.05 ||
+      !validScrollEvidence(item.evidence, fps)
+    ) {
+      throw new Error(`invalid Scroll case ${index + 1}`)
+    }
+  })
+  if (
+    Math.abs(value.scrollEvidence[0].evidence.slotPx - value.scrollEvidence[1].evidence.slotPx) > 2
+  ) {
+    throw new Error('Scroll slot parity mismatch')
+  }
   return value
 }
 function validFailure(value) {
@@ -167,4 +220,10 @@ if (require.main === module) {
     },
   )
 }
-module.exports = { DEFAULT_TIMEOUT_MS, EXPECTED_MATRIX, runLauncher, validateManifest }
+module.exports = {
+  DEFAULT_TIMEOUT_MS,
+  EXPECTED_MATRIX,
+  EXPECTED_SCROLL_CASES,
+  runLauncher,
+  validateManifest,
+}

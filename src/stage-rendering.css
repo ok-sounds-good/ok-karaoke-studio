@@ -129,7 +129,14 @@
   display: grid;
   align-content: start;
   gap: var(--stage-lyric-gap);
+  overflow: hidden;
   pointer-events: none;
+}
+
+.karaoke-stage .active-lines__content .stage-line {
+  position: absolute;
+  right: 0;
+  left: 0;
 }
 
 .karaoke-stage [data-display-object-interactive='true'] {

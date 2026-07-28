@@ -11,6 +11,8 @@ export interface StageFrameWord {
 export interface StageFrameLine {
   id: string
   trackId: string
+  /** Vertical lyric-block slot; fractional values are an active Scroll handoff. */
+  slot?: number
   text: string
   style: ResolvedVocalStyle
   words: StageFrameWord[]
@@ -52,12 +54,15 @@ const planner = Reflect.get(globalThis, Symbol.for('studio.okay-karaoke.stage-fr
   | undefined
   | {
       frameStateAt(project: KaraokeProject, playbackMs: number): StageFrameState
+      SCROLL_TRANSITION_MS: number
       titleEndForProject(project: KaraokeProject): number
       openingTimingAdvisoryForProject(project: KaraokeProject): OpeningTimingAdvisoryInterval[]
       openingTimingFactsForProject(project: KaraokeProject): OpeningTimingFacts
     }
 if (!planner || !Object.isFrozen(planner))
   throw new Error('Shared stage planner was not installed.')
+
+export const SCROLL_TRANSITION_MS = planner!.SCROLL_TRANSITION_MS
 
 export function previewFrameStateAt(project: KaraokeProject, playbackMs: number): StageFrameState {
   return planner!.frameStateAt(project, playbackMs)

@@ -32,6 +32,7 @@ import {
 } from '../lib/display-placement'
 import {
   logicalStagePx,
+  lyricGapPx,
   lyricObjectHeightPx,
   normalizedLyricLineCount,
   previewStageLayoutVariables,
@@ -465,12 +466,24 @@ function PreviewLine({
   line,
   selectedWordIds,
   aliases,
+  slot,
+  lineCount,
 }: {
   line: StageFrameLine
   selectedWordIds: Set<string>
   aliases: Record<string, string | null>
+  slot?: number
+  lineCount?: number
 }) {
   const face = resolveFontFace(line.style.typeface, line.style.fontStyle)
+  const translatedSlot = slot ?? line.slot
+  const translateY =
+    translatedSlot === undefined || lineCount === undefined
+      ? undefined
+      : logicalStagePx(
+          translatedSlot *
+            (line.style.sizePx * STAGE_LAYOUT.lyric.lineBoxEm + lyricGapPx(lineCount)),
+        )
   return (
     <div
       className={`stage-line stage-line--${line.style.alignment}`}
@@ -487,6 +500,7 @@ function PreviewLine({
           fontStyle: face.slant,
           fontWeight: face.weight,
           fontSynthesis: 'none',
+          transform: translateY ? `translateY(${translateY})` : undefined,
         } as CSSProperties
       }
     >
@@ -569,12 +583,14 @@ function LyricDisplayObject({
         ))}
       </div>
       <div className="active-lines__content" data-lyric-object-content>
-        {lines.map((line) => (
+        {lines.map((line, index) => (
           <PreviewLine
             key={lineKey(line.trackId, line.id)}
             line={line}
             selectedWordIds={selectedWordIds}
             aliases={aliases}
+            slot={line.slot ?? index}
+            lineCount={lineCount}
           />
         ))}
       </div>

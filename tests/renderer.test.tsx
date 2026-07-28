@@ -120,6 +120,37 @@ describe('offset-aware renderer state', () => {
     expect(markup).not.toContain('stage-progress')
   })
 
+  it('renders shared fractional Scroll slots inside a clipped Preview lyric block', () => {
+    const track = createVocalTrack({
+      id: 'scroll-lead',
+      lines: [
+        retimeLine(createLyricLine('One'), 0, 1_000),
+        retimeLine(createLyricLine('Two'), 1_000, 2_000),
+        retimeLine(createLyricLine('Three'), 2_000, 3_000),
+      ],
+    })
+    track.vocalStyle.previewMs = 0
+    const project = createProject({
+      lyricDisplay: { lineCount: 2, advanceMode: 'scroll' },
+      tracks: [track],
+    })
+    const markup = renderToStaticMarkup(
+      <KaraokePreview
+        project={project}
+        playbackMs={2_150}
+        lyricMs={2_150}
+        selectedWordIds={new Set()}
+      />,
+    )
+    const rendering = readFileSync(new URL('../src/stage-rendering.css', import.meta.url), 'utf8')
+
+    expect(markup).toContain('One')
+    expect(markup).toContain('Two')
+    expect(markup).toContain('Three')
+    expect(markup).toContain('transform:translateY(-')
+    expect(rendering).toMatch(/\.active-lines__content\s*\{[\s\S]*?overflow:\s*hidden;[\s\S]*?\}/u)
+  })
+
   it('uses lyric time for current-word editor highlighting', () => {
     const project = offsetProject()
     const props = {

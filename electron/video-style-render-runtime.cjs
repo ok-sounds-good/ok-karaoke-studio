@@ -11,6 +11,7 @@ function installKaraokeRuntime() {
   let nextFontAlias = 0
   let layoutKey = ''
   let wordNodes = new Map()
+  let lineNodes = new Map()
   let lineTextNodes = new Map()
   let syncNodes = []
 
@@ -329,7 +330,8 @@ function installKaraokeRuntime() {
 
       const lineContent = node('div', 'line-content')
       lineContent.style.gap = gap
-      for (const item of entries) {
+      lineContent.style.overflow = 'hidden'
+      for (const [index, item] of entries.entries()) {
         const lyric = node('div', `lyric ${item.style.alignment}`)
         const text = node('span', 'lyric-text')
         const fills = []
@@ -346,6 +348,13 @@ function installKaraokeRuntime() {
         })
         lyric.append(text)
         wordNodes.set(lineKey(item.trackId, item.id), fills)
+        lineNodes.set(lineKey(item.trackId, item.id), {
+          lyric,
+          slotPx:
+            item.style.sizePx * window.stageLayout.lyric.lineBoxEm +
+            window.stageLayout.lyric.gapsPx[lineCount],
+          stableSlot: index,
+        })
         lineTextNodes.set(lineKey(item.trackId, item.id), text)
         lineContent.append(lyric)
       }
@@ -418,6 +427,7 @@ function installKaraokeRuntime() {
     const content = byId('content')
     const syncLayer = byId('syncs')
     wordNodes = new Map()
+    lineNodes = new Map()
     lineTextNodes = new Map()
     syncNodes = []
     content.replaceChildren()
@@ -429,6 +439,11 @@ function installKaraokeRuntime() {
 
   const updateFrameProgress = (state) => {
     for (const line of state.lines) {
+      const lineNode = lineNodes.get(lineKey(line.trackId, line.id))
+      if (lineNode) {
+        const slot = Number.isFinite(line.slot) ? line.slot : lineNode.stableSlot
+        lineNode.lyric.style.transform = `translateY(${slot * lineNode.slotPx}px)`
+      }
       const fills = wordNodes.get(lineKey(line.trackId, line.id)) ?? []
       line.words.forEach((word, index) => {
         const progress = Number.isFinite(word.progress)
