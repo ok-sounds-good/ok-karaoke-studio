@@ -210,7 +210,7 @@ function effectiveWordEnd(word: LyricWord): number | null {
   return Math.max(word.startMs + 1, word.endMs ?? word.startMs + 300)
 }
 
-function projectRawTimingCeiling(project: KaraokeProject): number {
+export function projectRawTimingCeiling(project: KaraokeProject): number {
   if (
     !Number.isSafeInteger(project.opening.leadInMs) ||
     project.opening.leadInMs < 0 ||

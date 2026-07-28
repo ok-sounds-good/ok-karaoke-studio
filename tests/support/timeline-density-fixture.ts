@@ -13,6 +13,40 @@ export const DENSITY_LINES_PER_TRACK = DENSITY_LINE_COUNT / DENSITY_TRACK_COUNT
 export const DENSITY_WORDS_PER_LINE = 5
 
 /**
+ * The gesture budget is scoped to one valid active authoring track. Keep this
+ * separate from the eight-track viewport fixture so selection work is exact.
+ */
+export function createOneTrackMaximumDensityProject(): KaraokeProject {
+  const lines: LyricLine[] = Array.from({ length: DENSITY_LINE_COUNT }, (_, lineIndex) => {
+    const firstOrdinal = lineIndex * DENSITY_WORDS_PER_LINE
+    const words = Array.from({ length: DENSITY_WORDS_PER_LINE }, (_, offset) => {
+      const ordinal = firstOrdinal + offset
+      const startMs = ordinal * 120
+      return {
+        id: `one-track-density-${ordinal}`,
+        text: `W${ordinal}`,
+        startMs,
+        endMs: startMs + 100,
+      }
+    })
+    return {
+      id: `one-track-density-line-${lineIndex}`,
+      text: words.map((word) => word.text).join(' '),
+      startMs: words[0]!.startMs,
+      endMs: words.at(-1)!.endMs,
+      words,
+    }
+  })
+  return createProject({
+    id: 'current-v0-one-track-density-5k',
+    durationMs: DENSITY_WORD_COUNT * 120,
+    tracks: [
+      createVocalTrack({ id: 'one-track-density', name: 'Density Lead', lines }),
+    ],
+  })
+}
+
+/**
  * Synthetic current-v0 data only: named tracks, unique identities, and valid
  * sequential word timing. It contains no media or lyrics that need licensing.
  */
