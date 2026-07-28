@@ -4,7 +4,9 @@ import { describe, expect, it } from 'vitest'
 
 import {
   decodeProject,
+  MAX_PROJECT_LINES,
   MAX_PROJECT_TRACKS,
+  MAX_PROJECT_WORDS,
   parseProject,
   serializeProject,
   UNSUPPORTED_PROJECT_FORMAT_ERROR,
@@ -63,6 +65,34 @@ function malformedCurrentProjectJson(): string {
   const malformed = clone()
   malformed.title = 42
   return JSON.stringify(malformed)
+}
+
+function cardinalityProject(lineCount: number, wordsPerLine: number): JsonObject {
+  const project = clone()
+  const sourceTrack = objectAt(project, ['tracks', 0])
+  const sourceLine = objectAt(sourceTrack, ['lines', 0])
+  const sourceWord = objectAt(sourceLine, ['words', 0])
+  project.tracks = [
+    {
+      ...structuredClone(sourceTrack),
+      id: 'cardinality-track',
+      lines: Array.from({ length: lineCount }, (_, lineIndex) => ({
+        ...structuredClone(sourceLine),
+        id: `cardinality-line-${lineIndex}`,
+        text: '',
+        startMs: null,
+        endMs: null,
+        words: Array.from({ length: wordsPerLine }, (_, wordIndex) => ({
+          ...structuredClone(sourceWord),
+          id: `cardinality-word-${lineIndex}-${wordIndex}`,
+          text: 'x',
+          startMs: null,
+          endMs: null,
+        })),
+      })),
+    },
+  ]
+  return project
 }
 
 function representativeRejectedProjectJson(): string[] {
@@ -226,6 +256,50 @@ describe('current project schema parity', () => {
       unsupportedOpeningMode,
     ])
       parity(JSON.stringify(invalid), false)
+  })
+
+  it('round-trips the exact word cap and preserves the independent line cap', () => {
+    const exactWords = cardinalityProject(1_000, 5)
+    const wordOutcomes = parity(JSON.stringify(exactWords), true)
+    expect(
+      (wordOutcomes[0].value as KaraokeProject).tracks.flatMap((track) =>
+        track.lines.flatMap((line) => line.words),
+      ),
+    ).toHaveLength(MAX_PROJECT_WORDS)
+    expect(parseProject(serializeProject(wordOutcomes[0].value as KaraokeProject))).toStrictEqual(
+      exactWords,
+    )
+
+    const overWords = structuredClone(exactWords)
+    const finalWords = objectAt(overWords, ['tracks', 0, 'lines', 999]).words as unknown[]
+    finalWords.push({
+      ...structuredClone(finalWords[0]),
+      id: 'cardinality-word-over-limit',
+    })
+    const wordRejections = parity(JSON.stringify(overWords), false)
+    expect(wordRejections.map(({ error }) => error)).toEqual([
+      `Projects are limited to ${MAX_PROJECT_WORDS} lyric words.`,
+      `Projects are limited to ${MAX_PROJECT_WORDS} lyric words.`,
+      `Projects are limited to ${MAX_PROJECT_WORDS} lyric words.`,
+    ])
+
+    const exactLines = cardinalityProject(MAX_PROJECT_LINES, 0)
+    expect(parity(JSON.stringify(exactLines), true)[0].value).toMatchObject({
+      tracks: [{ lines: expect.any(Array) }],
+    })
+
+    const overLines = structuredClone(exactLines)
+    const lines = objectAt(overLines, ['tracks', 0]).lines as unknown[]
+    lines.push({
+      ...structuredClone(lines[0]),
+      id: 'cardinality-line-over-limit',
+    })
+    const lineRejections = parity(JSON.stringify(overLines), false)
+    expect(lineRejections.map(({ error }) => error)).toEqual([
+      `Projects are limited to ${MAX_PROJECT_LINES} lyric lines.`,
+      `Projects are limited to ${MAX_PROJECT_LINES} lyric lines.`,
+      `Projects are limited to ${MAX_PROJECT_LINES} lyric lines.`,
+    ])
   })
 
   it('accepts the bounded opening maximum without a duration and rejects a larger lead-in', () => {

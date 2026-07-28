@@ -19,7 +19,14 @@ import {
   serializeProject,
   validateProject,
 } from '../src/lib/model'
-import { createMaximumDensityProject, DENSITY_WORD_COUNT } from './support/timeline-density-fixture'
+import {
+  createMaximumDensityProject,
+  DENSITY_LINE_COUNT,
+  DENSITY_LINES_PER_TRACK,
+  DENSITY_TRACK_COUNT,
+  DENSITY_WORD_COUNT,
+  DENSITY_WORDS_PER_TRACK,
+} from './support/timeline-density-fixture'
 
 const projectSchema = require('../electron/project-schema.cjs') as {
   parseProjectJson(json: string): { tracks: { lines: { words: unknown[] }[] }[] }
@@ -29,13 +36,25 @@ const videoExport = require('../electron/video-export.cjs') as {
 }
 
 describe('Timeline density indexes', () => {
-  it('keeps the complete 150k schedule while ordinal and viewport lookups stay indexed', () => {
+  it('keeps the complete 5k schedule while ordinal and viewport lookups stay indexed', () => {
     const project = createMaximumDensityProject()
     const layouts = project.tracks.map((track) => buildTimelineTrackLayout(track, 0, 72))
     const total = layouts.reduce((count, layout) => count + layout.words.length, 0)
     const target = layouts[4]!.wordById.get('density-4-0')
 
     expect(total).toBe(DENSITY_WORD_COUNT)
+    expect(project.tracks).toHaveLength(DENSITY_TRACK_COUNT)
+    expect(project.tracks.every((track) => track.name.trim().length > 0)).toBe(true)
+    expect(project.tracks.every((track) => track.lines.length === DENSITY_LINES_PER_TRACK)).toBe(
+      true,
+    )
+    expect(
+      project.tracks.every(
+        (track) =>
+          track.lines.reduce((count, line) => count + line.words.length, 0) ===
+          DENSITY_WORDS_PER_TRACK,
+      ),
+    ).toBe(true)
     expect(validateProject(project).filter((issue) => issue.severity === 'error')).toEqual([])
     const serialized = serializeProject(project)
     expect(parseProject(serialized)).toStrictEqual(project)
@@ -44,10 +63,10 @@ describe('Timeline density indexes', () => {
       videoExport.parseProjectForVideo(serialized),
     ]) {
       expect(decoded.tracks).toHaveLength(8)
-      expect(decoded.tracks.flatMap((track) => track.lines)).toHaveLength(20_000)
+      expect(decoded.tracks.flatMap((track) => track.lines)).toHaveLength(DENSITY_LINE_COUNT)
       expect(
         decoded.tracks.flatMap((track) => track.lines).flatMap((line) => line.words),
-      ).toHaveLength(150_000)
+      ).toHaveLength(DENSITY_WORD_COUNT)
     }
     expect(target?.word.id).toBe('density-4-0')
     expect(
@@ -84,7 +103,7 @@ describe('Timeline density indexes', () => {
     expect(mounted.omittedCount).toBe(1)
   })
 
-  it('bounds an accepted 150k-word single-line overlap without spreading dense arrays', () => {
+  it('bounds an accepted 5k-word single-line overlap without spreading dense arrays', () => {
     const line = createLyricLine('', {
       id: 'overlap-boundary',
       words: Array.from({ length: DENSITY_WORD_COUNT }, (_, ordinal) =>

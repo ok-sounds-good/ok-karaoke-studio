@@ -51,8 +51,8 @@ describe('SyncCueStrip', () => {
     ).toBe(true)
   })
 
-  it('renders a bounded, truthful excerpt for a 150k-word source line', async () => {
-    const words = Array.from({ length: 150_000 }, (_, index) =>
+  it('renders a bounded, truthful excerpt for a 5k-word source line', async () => {
+    const words = Array.from({ length: 5_000 }, (_, index) =>
       createLyricWord(`w${index}`, { id: `w${index}` }),
     )
     const session = new SyncSession(
@@ -60,15 +60,15 @@ describe('SyncCueStrip', () => {
         id: 'dense',
         lines: [createLyricLine('', { id: 'dense-line', words })],
       }),
-      75_000,
+      2_500,
       2,
     )
     await mount(session)
     expect(document.querySelectorAll('.sync-cue__token')).toHaveLength(SYNC_CUE_MAX_TOKENS)
     expect(document.querySelector('.sync-cue .is-target')?.getAttribute('data-sync-word-id')).toBe(
-      'w75000',
+      'w2500',
     )
-    expect(document.querySelector('[aria-label="74996 earlier words"]')).not.toBeNull()
-    expect(document.querySelector('[aria-label="74995 later words"]')).not.toBeNull()
+    expect(document.querySelector('[aria-label="2496 earlier words"]')).not.toBeNull()
+    expect(document.querySelector('[aria-label="2495 later words"]')).not.toBeNull()
   })
 })

@@ -568,13 +568,13 @@ describe('timing helpers', () => {
   })
 
   it('recalculates a maximum-size line without spreading timing arrays', () => {
-    const words = Array.from({ length: 150_000 }, (_, index) =>
+    const words = Array.from({ length: 5_000 }, (_, index) =>
       createLyricWord('x', { id: `word-${index}`, startMs: index, endMs: index + 1 }),
     )
 
     expect(recalculateLine(createLyricLine('', { words }))).toMatchObject({
       startMs: 0,
-      endMs: 150_000,
+      endMs: 5_000,
     })
   })
 })

@@ -109,8 +109,8 @@ describe('SyncSession', () => {
   })
 
   it('keeps maximum accepted aggregate-density taps bounded and presentation limited', () => {
-    const activeWordCount = 150_000
-    const wordsPerLine = 3
+    const activeWordCount = 5_000
+    const wordsPerLine = 5
     const sessions = Array.from({ length: 8 }, (_, singer) => {
       const words = Array.from({ length: singer === 0 ? activeWordCount : 0 }, (_, index) =>
         createLyricWord('x', { id: `s${singer}-w${index}` }),
@@ -144,8 +144,8 @@ describe('SyncSession', () => {
     )
   })
 
-  it('publishes a truthful constant-size excerpt for a 150k-word single line', () => {
-    const wordCount = 150_000
+  it('publishes a truthful constant-size excerpt for a 5k-word single line', () => {
+    const wordCount = 5_000
     const words = Array.from({ length: wordCount }, (_, index) =>
       createLyricWord(`word-${index}`, { id: `word-${index}` }),
     )
@@ -154,38 +154,38 @@ describe('SyncSession', () => {
         id: 'single-line',
         lines: [createLyricLine('', { id: 'single-line', words })],
       }),
-      75_000,
+      2_500,
       9,
     )
     const initial = session.getSnapshot()
     expect(initial).toMatchObject({
       total: wordCount,
-      cursor: 75_000,
-      targetWordId: 'word-75000',
+      cursor: 2_500,
+      targetWordId: 'word-2500',
       cueTokenCount: SYNC_CUE_MAX_TOKENS,
     })
     expect(initial.currentLine).toMatchObject({
       id: 'single-line',
       sourceLineIndex: 0,
       sourceWordCount: wordCount,
-      beforeCount: 74_996,
-      afterCount: 74_995,
+      beforeCount: 2_496,
+      afterCount: 2_495,
     })
     expect(initial.currentLine?.tokens.map((token) => token.id)).toEqual([
-      'word-74996',
-      'word-74997',
-      'word-74998',
-      'word-74999',
-      'word-75000',
-      'word-75001',
-      'word-75002',
-      'word-75003',
-      'word-75004',
+      'word-2496',
+      'word-2497',
+      'word-2498',
+      'word-2499',
+      'word-2500',
+      'word-2501',
+      'word-2502',
+      'word-2503',
+      'word-2504',
     ])
     expect(session.start(1_000, false).started).toBe(true)
     expect(session.getSnapshot()).toMatchObject({
-      cursor: 75_001,
-      targetWordId: 'word-75001',
+      cursor: 2_501,
+      targetWordId: 'word-2501',
       cueTokenCount: SYNC_CUE_MAX_TOKENS,
     })
   })

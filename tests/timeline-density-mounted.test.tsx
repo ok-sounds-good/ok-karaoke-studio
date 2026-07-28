@@ -1,7 +1,7 @@
 /** @vitest-environment happy-dom */
 
 import { act } from 'react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { Timeline } from '../src/components/Timeline'
 import { createLyricLine, createLyricWord, createProject, createVocalTrack } from '../src/lib/model'
@@ -12,14 +12,18 @@ import {
 import { mountTimeline } from './support/timeline-mounted-harness'
 
 describe('mounted Timeline density budget', () => {
-  it('keeps all 150k logical words selectable while mounting at most 96 timing buttons per track', () => {
+  it('keeps all 5k logical words selectable while mounting at most 96 timing buttons per track', () => {
     const project = createMaximumDensityProject()
     const allIds = new Set(
       project.tracks.flatMap((track) =>
         track.lines.flatMap((line) => line.words.map((word) => word.id)),
       ),
     )
-    expect(allIds).toHaveLength(150_000)
+    expect(allIds).toHaveLength(5_000)
+    const renderErrors: unknown[][] = []
+    const consoleError = vi
+      .spyOn(console, 'error')
+      .mockImplementation((...arguments_) => renderErrors.push(arguments_))
     const scope = mountTimeline(
       <Timeline
         project={project}
@@ -44,7 +48,9 @@ describe('mounted Timeline density budget', () => {
         onClearTimingAfterCursor={() => undefined}
       />,
     )
+    consoleError.mockRestore()
 
+    expect(renderErrors).toEqual([])
     expect(scope.querySelectorAll('.timeline-word')).toHaveLength(DENSITY_TRACK_COUNT * 96)
     expect(scope.querySelectorAll('.timeline-word__handle')).toHaveLength(
       DENSITY_TRACK_COUNT * 96 * 2,
@@ -69,10 +75,10 @@ describe('mounted Timeline density budget', () => {
       tracks: [
         createVocalTrack({
           id: 'dense-vertical',
-          lines: Array.from({ length: 160 }, (_, ordinal) =>
+          lines: Array.from({ length: 40 }, (_, ordinal) =>
             createLyricLine('', {
               id: `dense-vertical-line-${ordinal}`,
-              words: Array.from({ length: 160 }, (_, wordIndex) =>
+              words: Array.from({ length: 125 }, (_, wordIndex) =>
                 createLyricWord(`W${ordinal}-${wordIndex}`, {
                   id: `dense-vertical-word-${ordinal}-${wordIndex}`,
                   startMs: wordIndex * 10,
@@ -125,8 +131,8 @@ describe('mounted Timeline density budget', () => {
     }
 
     expect(scroll(laneTop + firstWordTop)).toBe(firstWordTop + 3)
-    expect(scroll(laneTop + firstWordTop + 1_500)).toBe(firstWordTop + 1_503)
-    expect(scroll(laneTop + firstWordTop + 3_180)).toBeGreaterThanOrEqual(firstWordTop + 3_180)
+    expect(scroll(laneTop + firstWordTop + 300)).toBe(firstWordTop + 303)
+    expect(scroll(laneTop + firstWordTop + 780)).toBeGreaterThanOrEqual(firstWordTop + 780)
     expect(aggregate().style.left).toBe('8px')
   })
 })

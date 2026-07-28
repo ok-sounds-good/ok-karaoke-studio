@@ -589,6 +589,7 @@ function TimelineDensityLanes({
                 const selected = selectedWordIds.has(word.id)
                 return (
                   <button
+                    key={word.id}
                     ref={registerSyncTargetNode('timing-word', word.id)}
                     className={`timeline-word ${wordLayout.width < 14 ? 'is-compact' : ''} ${selected ? 'is-selected' : ''}`}
                     style={
