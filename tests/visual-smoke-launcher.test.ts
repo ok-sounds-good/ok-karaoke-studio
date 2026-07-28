@@ -3,6 +3,7 @@ import { lstat, mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { buildTimelineTrackLayout, timelineMountedWords } from '../src/components/timeline-geometry'
 import { validPng } from './support/png-fixture'
 
 const require = createRequire(import.meta.url)
@@ -11,6 +12,7 @@ const smoke = require('../electron/video-style-visual-smoke.cjs')
 const layoutProfiles = require('../electron/visual-smoke-layout-profiles.cjs')
 const smokeProfiles = require('../electron/smoke-profile.cjs')
 const visualResults = require('../scripts/visual-result-validation.cjs')
+const projectSchema = require('../electron/project-schema.cjs')
 const { publishArtifactBuffers } = require('../electron/smoke-artifacts.cjs')
 const roots: string[] = []
 
@@ -61,7 +63,9 @@ function validatedArtifacts(scenario = smoke.BASELINE_SCENARIO) {
   const names =
     scenario === smoke.STYLE_SESSION_SCENARIO
       ? visualResults.STYLE_SESSION_NAMES
-      : [visualResults.BASELINE_NAME]
+      : scenario === smoke.TIMELINE_DENSITY_SCENARIO
+        ? [visualResults.TIMELINE_DENSITY_NAME]
+        : [visualResults.BASELINE_NAME]
   return [
     ...names.map((name: string) => ({ bytes: Buffer.from(`png:${name}`), name })),
     { bytes: Buffer.from('{"ok":true}\n'), name: 'result.json' },
@@ -81,6 +85,68 @@ function rawWorkspace(output: string, events: string[] = []) {
 }
 
 describe('visual smoke launcher', () => {
+  it('builds a deterministic current-v0 synthetic fixture at the exact density cap', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'oks-density-fixture-'))
+    roots.push(root)
+    const first = launcher.serializeTimelineDensityProject()
+    const second = launcher.serializeTimelineDensityProject()
+    expect(second).toBe(first)
+    expect(Buffer.byteLength(first)).toBeLessThan(32 * 1024 * 1024)
+
+    const fixturePath = await launcher.writeTimelineDensityFixture({ path: root })
+    expect(fixturePath).toBe(join(root, smoke.TIMELINE_DENSITY_FIXTURE_NAME))
+    expect(await readFile(fixturePath, 'utf8')).toBe(first)
+
+    const project = projectSchema.parseProjectJson(first)
+    expect(project).toMatchObject({
+      audioPath: null,
+      schemaVersion: 0,
+      title: smoke.TIMELINE_DENSITY_TITLE,
+    })
+    expect(project.tracks).toHaveLength(8)
+    expect(project.tracks.map(({ name }: { name: string }) => name)).toEqual(
+      Array.from({ length: 8 }, (_, index) => `Density Vocal ${index + 1}`),
+    )
+    expect(project.tracks.map(({ lines }: { lines: unknown[] }) => lines.length)).toEqual(
+      Array(8).fill(125),
+    )
+    const lines = project.tracks.flatMap(({ lines }: { lines: unknown[] }) => lines)
+    const words = project.tracks.flatMap(
+      ({ lines: trackLines }: { lines: Array<{ words: unknown[] }> }) =>
+        trackLines.flatMap(({ words: lineWords }) => lineWords),
+    )
+    expect(lines).toHaveLength(1_000)
+    expect(words).toHaveLength(5_000)
+    for (const track of project.tracks) {
+      const trackWords = track.lines.flatMap(
+        ({
+          words: lineWords,
+        }: {
+          words: Array<{ endMs: number; startMs: number; text: string }>
+        }) => lineWords,
+      )
+      expect(trackWords).toHaveLength(625)
+      expect(trackWords.map(({ text }: { text: string }) => text)).toEqual(
+        Array.from({ length: 625 }, (_, ordinal) => ordinal.toString(36).padStart(2, '0')),
+      )
+      trackWords.forEach((word: { endMs: number; startMs: number }, ordinal: number) => {
+        expect(word.startMs).toBe(ordinal * 160)
+        expect(word.endMs).toBe(ordinal * 160 + 150)
+      })
+      for (const line of track.lines) {
+        expect(line.words).toHaveLength(5)
+        expect(
+          line.words.every((word: { endMs: number; startMs: number }) => word.endMs > word.startMs),
+        ).toBe(true)
+      }
+    }
+    const layout = buildTimelineTrackLayout(project.tracks[0], 0, 72)
+    const mounted = timelineMountedWords(layout, 120, 1_520, new Set(), 96, 40, 159)
+    expect(layout).toMatchObject({ height: 78 })
+    expect(mounted.words).toHaveLength(96)
+    expect(mounted.omittedCount).toBe(1)
+  })
+
   it('passes only the fixed production-smoke arguments to a bounded child', async () => {
     const output = await outputPath()
     const events: string[] = []
@@ -168,6 +234,115 @@ describe('visual smoke launcher', () => {
     expect(raw.verifyRawRoot).toHaveBeenCalledWith(raw.claim)
     expect(publish).toHaveBeenCalledWith(output, authoritative)
     expect(events).toEqual(['retention', 'publish'])
+  })
+
+  it('runs one selected Timeline-density profile and publishes only its validated bytes', async () => {
+    const output = await outputPath()
+    const events: string[] = []
+    const authoritative = validatedArtifacts(smoke.TIMELINE_DENSITY_SCENARIO)
+    const raw = rawWorkspace(output, events)
+    const created = [profile('density-user'), profile('density-session')]
+    const runChild = vi.fn(async () => {
+      events.push('child')
+      return {
+        code: 0,
+        diagnostics: { fatal: false, overflow: false },
+        signal: null,
+      }
+    })
+    const validateResult = vi.fn(async () => ({
+      ok: true,
+      publishedArtifacts: authoritative,
+    }))
+    const writeDensityFixture = vi.fn(async () => {
+      events.push('fixture')
+    })
+    const publish = vi.fn(async () => {
+      events.push('publish')
+    })
+
+    await expect(
+      launcher.runLauncher(
+        {
+          argv: [
+            `${launcher.SCENARIO_ARGUMENT}${smoke.TIMELINE_DENSITY_SCENARIO}`,
+            `${launcher.PROFILE_ARGUMENT}125`,
+            output,
+          ],
+          executable: '/electron',
+        },
+        {
+          ...raw,
+          createProfile: vi.fn(async () => created.shift()),
+          outputState: vi.fn(async () => ({ output, state: 'absent' })),
+          publish,
+          runChild,
+          validateResult,
+          verifyProfile: vi.fn(async () => ({ retained: true })),
+          writeDensityFixture,
+        },
+      ),
+    ).resolves.toEqual({ ok: true })
+
+    expect(writeDensityFixture).toHaveBeenCalledOnce()
+    expect(writeDensityFixture).toHaveBeenCalledWith(profile('density-user'))
+    expect(runChild).toHaveBeenCalledOnce()
+    const args = runChild.mock.calls[0][0].args
+    expect(args).toContain(`${smoke.OPTIONS.profile}125`)
+    expect(args).toContain(`${smoke.OPTIONS.scenario}${smoke.TIMELINE_DENSITY_SCENARIO}`)
+    expect(args).toContain(`${smoke.OPTIONS.output}${join(raw.claim.path, 'evidence-125')}`)
+    expect(validateResult).toHaveBeenCalledWith(join(raw.claim.path, 'evidence-125'), {
+      expectedProfile: layoutProfiles.layoutSmokeProfile('125'),
+      scenario: smoke.TIMELINE_DENSITY_SCENARIO,
+    })
+    expect(publish).toHaveBeenCalledWith(output, authoritative)
+    expect(events).toEqual(['fixture', 'child', 'retention', 'publish'])
+  })
+
+  it.each([
+    ['missing profile', []],
+    ['empty profile', ['--profile=']],
+    ['unknown profile', ['--profile=200']],
+    ['malformed profile', ['--profile']],
+    ['duplicate profile', ['--profile=100', '--profile=125']],
+  ])('rejects a Timeline-density run with %s before side effects', async (_label, flags) => {
+    const output = await outputPath()
+    const createRawRoot = vi.fn()
+    const createProfile = vi.fn()
+    const outputState = vi.fn()
+    const runChild = vi.fn()
+    await expect(
+      launcher.runLauncher(
+        {
+          argv: [
+            `${launcher.SCENARIO_ARGUMENT}${smoke.TIMELINE_DENSITY_SCENARIO}`,
+            ...flags,
+            output,
+          ],
+        },
+        { createProfile, createRawRoot, outputState, runChild },
+      ),
+    ).resolves.toEqual({ code: 'VISUAL_SMOKE_PROFILE_INVALID', ok: false })
+    expect(createRawRoot).not.toHaveBeenCalled()
+    expect(createProfile).not.toHaveBeenCalled()
+    expect(outputState).not.toHaveBeenCalled()
+    expect(runChild).not.toHaveBeenCalled()
+  })
+
+  it('rejects a profile selector for a non-density scenario before side effects', async () => {
+    const output = await outputPath()
+    const createRawRoot = vi.fn()
+    const createProfile = vi.fn()
+    const runChild = vi.fn()
+    await expect(
+      launcher.runLauncher(
+        { argv: [`${launcher.PROFILE_ARGUMENT}100`, output] },
+        { createProfile, createRawRoot, runChild },
+      ),
+    ).resolves.toEqual({ code: 'VISUAL_SMOKE_PROFILE_INVALID', ok: false })
+    expect(createRawRoot).not.toHaveBeenCalled()
+    expect(createProfile).not.toHaveBeenCalled()
+    expect(runChild).not.toHaveBeenCalled()
   })
 
   it('places the device-scale switch before the source application argument for a development child', () => {

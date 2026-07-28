@@ -592,7 +592,7 @@ function registerIpcHandlers() {
     backgroundImageFilters: BACKGROUND_IMAGE_FILTERS,
     channels: CHANNELS,
     createElectronNativeImageDecoder,
-    dialog,
+    dialog: visualSmokeModule?.createVisualSmokeDialogAdapter(dialog, visualSmokeConfig) ?? dialog,
     fs,
     isNativeCloseRequestId,
     isRecord,

@@ -1,10 +1,14 @@
 'use strict'
 
+const fs = require('node:fs')
+const path = require('node:path')
 const { pathsAreSeparate, validateOwnedSmokeProfile } = require('./smoke-profile.cjs')
 const { validateFreshOutputPath } = require('./smoke-artifacts.cjs')
+const { PROJECT_OPEN_FILTERS } = require('./save-paths.cjs')
 const {
   BASELINE_SCENARIO,
   STYLE_SESSION_SCENARIO,
+  TIMELINE_DENSITY_SCENARIO,
   VIEWPORT,
 } = require('../scripts/visual-result-validation.cjs')
 const { layoutSmokeProfile } = require('./visual-smoke-layout-profiles.cjs')
@@ -16,29 +20,49 @@ const {
   STYLE_TEMPLATE_NAME,
   STYLE_DESTINATION_SCROLL_TOPS,
   STYLE_TARGET_SCRIPT,
+  TIMELINE_DENSITY_DIALOG_ACTIVATION_SCRIPT,
+  TIMELINE_DENSITY_DOM_CAP_PER_TRACK,
+  TIMELINE_DENSITY_OPEN_TARGET_SCRIPT,
+  TIMELINE_DENSITY_TIMING_TARGET_SCRIPT,
+  TIMELINE_DENSITY_TITLE,
+  TIMELINE_DENSITY_TRACK_COUNT,
+  TIMELINE_DENSITY_WORD_COUNT,
+  TIMELINE_DENSITY_WORDS_PER_TRACK,
   executeBeforeDeadline,
   projectLyricsReadinessScript,
   styleDestinationLayoutScript,
   styleTemplateFormReadinessScript,
   styleTemplateReadinessScript,
+  timelineDensityCaptureStateScript,
+  timelineDensityReadinessScript,
   validProjectLyricsState,
   validStyleDestinationLayout,
   validStyleTemplateFormState,
   validStyleTemplateState,
   validStyleTarget,
+  validTimelineDensityCaptureState,
+  validTimelineDensityOpenTarget,
+  validTimelineDensityState,
+  validTimelineDensityTimingTarget,
 } = require('./visual-smoke-renderer-contracts.cjs')
 const {
   PUBLIC_FAILURE,
   captureBaseline,
   captureStyleSession,
+  captureTimelineDensity,
   runVisualSmoke,
   sendTrustedStyleActivation,
   sendTrustedStyleText,
+  sendTrustedTimelineDensityOpen,
+  sendTrustedTimelineDensityTiming,
 } = require('./visual-smoke-orchestration.cjs')
 
 const TRIGGER = '--oks-video-style-visual-smoke'
 const OPTION_PREFIX = '--oks-video-style-visual-'
 const FATAL_DIAGNOSTIC = '[oks-visual-smoke:fatal]\n'
+const TIMELINE_DENSITY_FIXTURE_NAME = 'timeline-density-5000.oks'
+const TIMELINE_DENSITY_FIXTURE_HOLD_NAME = '.oks-timeline-density-fixture-hold'
+const MAX_TIMELINE_DENSITY_FIXTURE_BYTES = 32 * 1024 * 1024
 const OPTIONS = Object.freeze({
   output: '--oks-video-style-visual-output=',
   profile: '--oks-video-style-visual-profile=',
@@ -176,7 +200,11 @@ function parseOption(args, prefix) {
 
 function parseScenario(args) {
   const scenario = parseOption(args, OPTIONS.scenario)
-  if (scenario !== BASELINE_SCENARIO && scenario !== STYLE_SESSION_SCENARIO) {
+  if (
+    scenario !== BASELINE_SCENARIO &&
+    scenario !== STYLE_SESSION_SCENARIO &&
+    scenario !== TIMELINE_DENSITY_SCENARIO
+  ) {
     throw smokeError('VISUAL_SMOKE_FLAG_INVALID')
   }
   return scenario
@@ -221,30 +249,94 @@ function configureVisualSmokeBeforeReady(app, config) {
   try {
     const defaultUserData = app.getPath('userData')
     const defaultSessionData = app.getPath('sessionData')
-    const userData = validateOwnedSmokeProfile(
-      config.userData,
-      defaultUserData,
-      config.userIdentity,
-      'VISUAL_SMOKE_PROFILE_FAILED',
-    )
-    validateOwnedSmokeProfile(
-      userData,
-      defaultSessionData,
-      config.userIdentity,
-      'VISUAL_SMOKE_PROFILE_FAILED',
-    )
-    const sessionData = validateOwnedSmokeProfile(
-      config.sessionData,
-      defaultUserData,
-      config.sessionIdentity,
-      'VISUAL_SMOKE_PROFILE_FAILED',
-    )
-    validateOwnedSmokeProfile(
-      sessionData,
-      defaultSessionData,
-      config.sessionIdentity,
-      'VISUAL_SMOKE_PROFILE_FAILED',
-    )
+    let userData
+    let sessionData
+    if (config.scenario === TIMELINE_DENSITY_SCENARIO) {
+      sessionData = validateOwnedSmokeProfile(
+        config.sessionData,
+        defaultUserData,
+        config.sessionIdentity,
+        'VISUAL_SMOKE_PROFILE_FAILED',
+      )
+      validateOwnedSmokeProfile(
+        sessionData,
+        defaultSessionData,
+        config.sessionIdentity,
+        'VISUAL_SMOKE_PROFILE_FAILED',
+      )
+      const fixturePath = validateFreshOutputPath(
+        path.join(config.userData, TIMELINE_DENSITY_FIXTURE_NAME),
+      )
+      const holdPath = validateFreshOutputPath(
+        path.join(sessionData, TIMELINE_DENSITY_FIXTURE_HOLD_NAME),
+      )
+      const fixtureStats = fs.lstatSync(fixturePath)
+      if (
+        path.dirname(fixturePath) !== path.resolve(config.userData) ||
+        path.dirname(holdPath) !== sessionData ||
+        !fixtureStats.isFile() ||
+        fixtureStats.isSymbolicLink() ||
+        fixtureStats.size < 1 ||
+        fixtureStats.size > MAX_TIMELINE_DENSITY_FIXTURE_BYTES ||
+        fs.existsSync(holdPath)
+      ) {
+        throw smokeError('VISUAL_SMOKE_PROFILE_FAILED')
+      }
+      fs.renameSync(fixturePath, holdPath)
+      try {
+        userData = validateOwnedSmokeProfile(
+          config.userData,
+          defaultUserData,
+          config.userIdentity,
+          'VISUAL_SMOKE_PROFILE_FAILED',
+        )
+        validateOwnedSmokeProfile(
+          userData,
+          defaultSessionData,
+          config.userIdentity,
+          'VISUAL_SMOKE_PROFILE_FAILED',
+        )
+      } finally {
+        fs.renameSync(holdPath, fixturePath)
+      }
+      validateOwnedSmokeProfile(
+        sessionData,
+        defaultUserData,
+        config.sessionIdentity,
+        'VISUAL_SMOKE_PROFILE_FAILED',
+      )
+      validateOwnedSmokeProfile(
+        sessionData,
+        defaultSessionData,
+        config.sessionIdentity,
+        'VISUAL_SMOKE_PROFILE_FAILED',
+      )
+    } else {
+      userData = validateOwnedSmokeProfile(
+        config.userData,
+        defaultUserData,
+        config.userIdentity,
+        'VISUAL_SMOKE_PROFILE_FAILED',
+      )
+      validateOwnedSmokeProfile(
+        userData,
+        defaultSessionData,
+        config.userIdentity,
+        'VISUAL_SMOKE_PROFILE_FAILED',
+      )
+      sessionData = validateOwnedSmokeProfile(
+        config.sessionData,
+        defaultUserData,
+        config.sessionIdentity,
+        'VISUAL_SMOKE_PROFILE_FAILED',
+      )
+      validateOwnedSmokeProfile(
+        sessionData,
+        defaultSessionData,
+        config.sessionIdentity,
+        'VISUAL_SMOKE_PROFILE_FAILED',
+      )
+    }
     if (!pathsAreSeparate(userData, sessionData)) {
       throw smokeError('VISUAL_SMOKE_PROFILE_FAILED')
     }
@@ -255,6 +347,66 @@ function configureVisualSmokeBeforeReady(app, config) {
   } catch {
     throw smokeError('VISUAL_SMOKE_PROFILE_FAILED')
   }
+}
+
+function createVisualSmokeDialogAdapter(dialogApi, config) {
+  if (!config || config.scenario !== TIMELINE_DENSITY_SCENARIO) return dialogApi
+  if (!dialogApi || typeof dialogApi.showOpenDialog !== 'function') {
+    throw smokeError('VISUAL_SMOKE_DIALOG_INVALID')
+  }
+  let profileRoot
+  let fixturePath
+  try {
+    profileRoot = validateFreshOutputPath(config.userData)
+    fixturePath = validateFreshOutputPath(path.join(profileRoot, TIMELINE_DENSITY_FIXTURE_NAME))
+    if (path.dirname(fixturePath) !== profileRoot) {
+      throw smokeError('VISUAL_SMOKE_DIALOG_INVALID')
+    }
+  } catch {
+    throw smokeError('VISUAL_SMOKE_DIALOG_INVALID')
+  }
+  let used = false
+  return Object.freeze({
+    async showOpenDialog(owner, options) {
+      if (used) throw smokeError('VISUAL_SMOKE_DIALOG_INVALID')
+      used = true
+      const expectedKeys = ['buttonLabel', 'filters', 'properties', 'title']
+      if (
+        !owner ||
+        !owner.webContents ||
+        typeof owner.webContents.executeJavaScript !== 'function' ||
+        (typeof owner.isDestroyed === 'function' && owner.isDestroyed()) ||
+        (typeof owner.webContents.isDestroyed === 'function' && owner.webContents.isDestroyed()) ||
+        (typeof owner.webContents.getURL === 'function' &&
+          owner.webContents.getURL() !== PACKAGED_APP_URL) ||
+        !options ||
+        typeof options !== 'object' ||
+        Array.isArray(options) ||
+        Object.keys(options).sort().join(',') !== expectedKeys.join(',') ||
+        options.title !== 'Open Karaoke Project' ||
+        options.buttonLabel !== 'Open Project' ||
+        JSON.stringify(options.properties) !== JSON.stringify(['openFile']) ||
+        JSON.stringify(options.filters) !== JSON.stringify(PROJECT_OPEN_FILTERS)
+      ) {
+        throw smokeError('VISUAL_SMOKE_DIALOG_INVALID')
+      }
+      let trusted = false
+      try {
+        trusted =
+          (await owner.webContents.executeJavaScript(
+            TIMELINE_DENSITY_DIALOG_ACTIVATION_SCRIPT,
+            false,
+          )) === true
+      } catch {
+        throw smokeError('VISUAL_SMOKE_DIALOG_INVALID')
+      }
+      if (!trusted) throw smokeError('VISUAL_SMOKE_DIALOG_INVALID')
+      return Object.freeze({
+        canceled: false,
+        filePaths: Object.freeze([fixturePath]),
+      })
+    },
+  })
 }
 
 module.exports = {
@@ -270,11 +422,23 @@ module.exports = {
   STYLE_DESTINATION_SCROLL_TOPS,
   STYLE_TEMPLATE_NAME,
   STYLE_TARGET_SCRIPT,
+  TIMELINE_DENSITY_DIALOG_ACTIVATION_SCRIPT,
+  TIMELINE_DENSITY_DOM_CAP_PER_TRACK,
+  TIMELINE_DENSITY_FIXTURE_NAME,
+  TIMELINE_DENSITY_OPEN_TARGET_SCRIPT,
+  TIMELINE_DENSITY_TIMING_TARGET_SCRIPT,
+  TIMELINE_DENSITY_SCENARIO,
+  TIMELINE_DENSITY_TITLE,
+  TIMELINE_DENSITY_TRACK_COUNT,
+  TIMELINE_DENSITY_WORD_COUNT,
+  TIMELINE_DENSITY_WORDS_PER_TRACK,
   TRIGGER,
   VIEWPORT,
   captureBaseline,
   captureStyleSession,
+  captureTimelineDensity,
   configureVisualSmokeBeforeReady,
+  createVisualSmokeDialogAdapter,
   executeBeforeDeadline,
   installVisualSmokeFatalObserver,
   parseVisualSmokeArguments,
@@ -282,13 +446,21 @@ module.exports = {
   runVisualSmoke,
   sendTrustedStyleActivation,
   sendTrustedStyleText,
+  sendTrustedTimelineDensityOpen,
+  sendTrustedTimelineDensityTiming,
   styleDestinationLayoutScript,
   styleTemplateFormReadinessScript,
   styleTemplateReadinessScript,
+  timelineDensityCaptureStateScript,
+  timelineDensityReadinessScript,
   validProjectLyricsState,
   validStyleDestinationLayout,
   validStyleTemplateFormState,
   validStyleTemplateState,
   validStyleTarget,
+  validTimelineDensityCaptureState,
+  validTimelineDensityOpenTarget,
+  validTimelineDensityState,
+  validTimelineDensityTimingTarget,
   layoutSmokeProfile,
 }

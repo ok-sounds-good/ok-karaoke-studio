@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import * as fileSystem from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, posix, win32 } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -47,14 +47,16 @@ async function freshResult(scenario = results.BASELINE_SCENARIO, profile = undef
   const created =
     scenario === results.BASELINE_SCENARIO
       ? results.createResultArtifacts(validPng(1280, 720), profile)
-      : results.createScenarioResultArtifacts(
-          scenario,
-          results.STYLE_SESSION_VIEWPORTS.map(
-            ({ width, height }: { width: number; height: number }, index: number) =>
-              validPng(width, height, index + 1),
-          ),
-          profile,
-        )
+      : scenario === results.TIMELINE_DENSITY_SCENARIO
+        ? results.createScenarioResultArtifacts(scenario, [validPng(1280, 720)], profile)
+        : results.createScenarioResultArtifacts(
+            scenario,
+            results.STYLE_SESSION_VIEWPORTS.map(
+              ({ width, height }: { width: number; height: number }, index: number) =>
+                validPng(width, height, index + 1),
+            ),
+            profile,
+          )
   await publishArtifactBuffers(output, created.artifacts)
   return { output, root }
 }
@@ -96,6 +98,55 @@ describe('visual result validation', () => {
       schemaVersion: 1,
     })
   }, 20000)
+
+  it('accepts only the exact profiled Timeline-density artifact contract', async () => {
+    const profile = profileObservation('125')
+    const { output } = await freshResult(results.TIMELINE_DENSITY_SCENARIO, profile)
+    await expect(
+      results.validateVisualResultDirectory(output, {
+        expectedProfile: layoutProfiles.layoutSmokeProfile('125'),
+        scenario: results.TIMELINE_DENSITY_SCENARIO,
+      }),
+    ).resolves.toMatchObject({
+      artifacts: [
+        {
+          height: 720,
+          name: '01-timeline-density-5000.png',
+          width: 1280,
+        },
+      ],
+      ok: true,
+      profile,
+      schemaVersion: 1,
+    })
+    expect((await readdir(output)).sort()).toEqual(['01-timeline-density-5000.png', 'result.json'])
+  })
+
+  it('rejects Timeline-density evidence without its exact selected profile', async () => {
+    expect(() =>
+      results.createScenarioResultArtifacts(results.TIMELINE_DENSITY_SCENARIO, [
+        validPng(1280, 720),
+      ]),
+    ).toThrow('VISUAL_SMOKE_RESULT_INVALID')
+
+    const { output } = await freshResult(
+      results.TIMELINE_DENSITY_SCENARIO,
+      profileObservation('125'),
+    )
+    await expect(
+      results.validateVisualResultDirectory(output, {
+        expectedProfile: layoutProfiles.layoutSmokeProfile('150'),
+        scenario: results.TIMELINE_DENSITY_SCENARIO,
+      }),
+    ).rejects.toThrow('VISUAL_SMOKE_RESULT_INVALID')
+    await writeFile(join(output, 'stale.png'), validPng(1280, 720))
+    await expect(
+      results.validateVisualResultDirectory(output, {
+        expectedProfile: layoutProfiles.layoutSmokeProfile('125'),
+        scenario: results.TIMELINE_DENSITY_SCENARIO,
+      }),
+    ).rejects.toThrow('VISUAL_SMOKE_RESULT_INVALID')
+  })
 
   it.each([
     ['missing profile observation', undefined],
