@@ -23,8 +23,13 @@ import {
   constrainWordResizeTiming,
   constrainWordShiftDelta,
   patchWord,
+  type ProjectTimingDraft,
   shiftWords,
 } from '../src/utils'
+import {
+  DENSITY_WORD_COUNT,
+  createOneTrackMaximumDensityProject,
+} from './support/timeline-density-fixture'
 
 describe('live timeline timing drafts', () => {
   function timedProject() {
@@ -499,5 +504,175 @@ describe('live timeline timing drafts', () => {
     ).toBe(true)
     expect(session.finish(12, captureTarget)).toBe(true)
     expect(resizeCommits).toEqual([])
+  })
+
+  it('plans exact 5,000-word single anchor drags and both resize edges before repeated moves', () => {
+    const project = createOneTrackMaximumDensityProject()
+    expect(hasValidationErrors(validateProject(project))).toBe(false)
+    const words = project.tracks[0]!.lines.flatMap((line) => line.words)
+    const anchors = [words[0]!, words[Math.floor(words.length / 2)]!, words.at(-1)!]
+
+    for (const anchor of anchors) {
+      for (const mode of ['move', 'start', 'end'] as const) {
+        const drafts: ProjectTimingDraft[] = []
+        const shifts: number[] = []
+        const resizes: Array<{ startMs: number; endMs: number }> = []
+        const session = createTimelineGestureSession(() => ({
+          project,
+          pixelsPerSecond: 1_000,
+          onTimingDraftChange: (draft) => {
+            if (draft) drafts.push(draft)
+          },
+          onShiftWords: (_ids, deltaMs) => shifts.push(deltaMs),
+          onResizeWord: (_id, startMs, endMs) => resizes.push({ startMs, endMs }),
+        }))
+        const captureTarget = new EventTarget()
+        const originalEnd = anchor.endMs!
+        const gesture = {
+          wordId: anchor.id,
+          mode,
+          originalStart: anchor.startMs!,
+          originalEnd,
+          ids: new Set([anchor.id]),
+          deltaMs: 0,
+          clientX: 100,
+          pointerId: 1,
+          captureTarget,
+        }
+
+        expect(session.begin(gesture)).toBe(true)
+        expect(session.move(1, captureTarget, 112)).toBe(true)
+        expect(drafts).toHaveLength(1)
+        expect(drafts[0]).toEqual(timingDraftForGesture(project, { ...gesture, deltaMs: 12 }))
+        expect(session.finish(1, captureTarget)).toBe(true)
+        expect(shifts.length + resizes.length).toBe(1)
+      }
+    }
+  })
+
+  it.each([
+    { label: 'zero-duration end', wordEndMs: 1_000, originalEnd: 1_000, deltaMs: 1 },
+    { label: 'null end', wordEndMs: null, originalEnd: 1_360, deltaMs: 100 },
+    { label: 'backwards end', wordEndMs: 900, originalEnd: 900, deltaMs: 100 },
+  ])(
+    'keeps the end-resize draft equal to the final commit for a defensive $label state',
+    ({ wordEndMs, originalEnd, deltaMs }) => {
+      const word = createLyricWord('Defensive', {
+        id: 'defensive-word',
+        startMs: 1_000,
+        endMs: wordEndMs,
+      })
+      const project = createProject({
+        durationMs: 5_000,
+        tracks: [
+          createVocalTrack({
+            id: 'defensive-lead',
+            lines: [
+              createLyricLine('Defensive', {
+                id: 'defensive-line',
+                startMs: word.startMs,
+                endMs: word.endMs,
+                words: [word],
+              }),
+            ],
+          }),
+        ],
+      })
+      const drafts: ProjectTimingDraft[] = []
+      const commits: Array<{ startMs: number; endMs: number }> = []
+      const session = createTimelineGestureSession(() => ({
+        project,
+        pixelsPerSecond: 1_000,
+        onTimingDraftChange: (draft) => {
+          if (draft) drafts.push(draft)
+        },
+        onShiftWords: () => undefined,
+        onResizeWord: (_wordId, startMs, endMs) => commits.push({ startMs, endMs }),
+      }))
+      const captureTarget = new EventTarget()
+      expect(
+        session.begin({
+          wordId: word.id,
+          mode: 'end',
+          originalStart: word.startMs!,
+          originalEnd,
+          ids: new Set([word.id]),
+          deltaMs: 0,
+          clientX: 100,
+          pointerId: 77,
+          captureTarget,
+        }),
+      ).toBe(true)
+      expect(session.move(77, captureTarget, 100 + deltaMs)).toBe(true)
+      expect(session.finish(77, captureTarget)).toBe(true)
+      expect(commits).toHaveLength(1)
+      expect(drafts.at(-1)?.get(word.id)).toEqual(commits[0])
+    },
+  )
+
+  it('keeps repeated exact 5,000-word drafts bounded, ordered, and out of the project walk', () => {
+    const project = createOneTrackMaximumDensityProject()
+    const ids = new Set(
+      project.tracks[0]!.lines.flatMap((line) => line.words.map((word) => word.id)),
+    )
+    expect(ids).toHaveLength(DENSITY_WORD_COUNT)
+    const first = project.tracks[0]!.lines[0]!.words[0]!
+    const drafts: ProjectTimingDraft[] = []
+    const shifts: number[] = []
+    const session = createTimelineGestureSession(() => ({
+      project,
+      pixelsPerSecond: 1_000,
+      onTimingDraftChange: (draft) => {
+        if (draft) drafts.push(draft)
+      },
+      onShiftWords: (_ids, deltaMs) => shifts.push(deltaMs),
+      onResizeWord: () => undefined,
+    }))
+    const captureTarget = new EventTarget()
+    expect(
+      session.begin({
+        wordId: first.id,
+        mode: 'move',
+        originalStart: first.startMs!,
+        originalEnd: first.endMs!,
+        ids,
+        deltaMs: 0,
+        clientX: 100,
+        pointerId: 5_000,
+        captureTarget,
+      }),
+    ).toBe(true)
+
+    const samples: number[] = []
+    for (let index = 0; index < 48; index += 1) {
+      const startedAt = performance.now()
+      expect(session.move(5_000, captureTarget, 101 + (index % 7))).toBe(true)
+      samples.push(performance.now() - startedAt)
+    }
+    const ordered = [...samples].sort((left, right) => left - right)
+    const p95 = ordered[Math.ceil(ordered.length * 0.95) - 1]!
+    const max = Math.max(...samples)
+    expect(p95).toBeLessThan(16.667)
+    expect(max).toBeLessThan(16.667)
+    expect(drafts).toHaveLength(48)
+    expect(drafts.at(-1)).toHaveLength(DENSITY_WORD_COUNT)
+    expect([...drafts.at(-1)!.keys()].slice(0, 3)).toEqual([
+      'one-track-density-0',
+      'one-track-density-1',
+      'one-track-density-2',
+    ])
+
+    const originalTracks = project.tracks
+    Object.defineProperty(project, 'tracks', {
+      configurable: true,
+      get: () => {
+        throw new Error('repeated move must not walk project words')
+      },
+    })
+    expect(session.move(5_000, captureTarget, 108)).toBe(true)
+    Object.defineProperty(project, 'tracks', { configurable: true, value: originalTracks })
+
+    expect(session.finish(5_000, captureTarget)).toBe(true)
+    expect(shifts).toEqual([8])
   })
 })
