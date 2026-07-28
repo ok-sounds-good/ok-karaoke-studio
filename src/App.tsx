@@ -35,6 +35,7 @@ import {
 import { TopBar } from './components/TopBar'
 import { InspectorPanel } from './components/InspectorPanel'
 import { KaraokePreview } from './components/KaraokePreview'
+import { OpeningTimingAdvisory } from './components/OpeningTimingAdvisory'
 import { ProjectActionDecisionDialog } from './components/ProjectActionDecisionDialog'
 import { ProjectStyleEditor } from './components/ProjectStyleEditor'
 import { SyncCueStrip } from './components/SyncCueStrip'
@@ -65,7 +66,9 @@ import {
 } from './hooks/useProjectStyleSession'
 import type { ProjectActionKind, ProjectActionRequest } from './lib/project-action-arbiter'
 import { SyncSession } from './lib/sync-session'
+import { openingTimingAdvisoryForProject, previewTitleEndMs } from './lib/stage-frame-state'
 import {
+  authoritativeOutputDuration,
   downloadText,
   effectiveDuration,
   flattenProject,
@@ -618,9 +621,18 @@ export default function App() {
     () => project.tracks.some((track) => track.lines.some((line) => line.words.length > 0)),
     [project.tracks],
   )
-  const durationMs = useMemo(() => effectiveDuration(project), [project])
+  const outputDurationMs = useMemo(() => {
+    const titleEndMs = previewTitleEndMs(project)
+    return authoritativeOutputDuration(project, titleEndMs)
+  }, [project])
+  const timelineDurationMs = useMemo(
+    () => Math.max(effectiveDuration(project), outputDurationMs),
+    [outputDurationMs, project],
+  )
+  const allowPostAudioPlayback = outputDurationMs > authoritativeOutputDuration(project)
   const playback = usePlayback({
-    durationMs,
+    allowPostAudioPlayback,
+    durationMs: outputDurationMs,
     leadInMs: project.opening.leadInMs,
     audioUrl,
     onDuration: persistAudioDuration,
@@ -631,6 +643,8 @@ export default function App() {
     () => projectForTimingPreview(project, history.revision, timingDraft),
     [history.revision, project, timingDraft],
   )
+  const openingTimingAdvisory = useMemo(() => openingTimingAdvisoryForProject(project), [project])
+  const openingTimingAdvisorySessionKey = `${project.id}:${projectLifecycleSequenceRef.current}`
   const backgroundImages = useProjectBackgroundImage({
     acceptedProjectPath: acceptedProjectBackgroundPathRef.current,
     background: project.stageStyle.background,
@@ -695,6 +709,7 @@ export default function App() {
         current.lyricDisplay.lineCount === draft.lyricDisplay.lineCount &&
         current.lyricDisplay.advanceMode === draft.lyricDisplay.advanceMode &&
         current.opening.leadInMs === draft.opening.leadInMs &&
+        JSON.stringify(current.opening.titleTiming) === JSON.stringify(draft.opening.titleTiming) &&
         current.tracks.every((track) =>
           sameVocalStyle(track.vocalStyle, acceptedSingerStyles.get(track.id)!),
         )
@@ -718,7 +733,9 @@ export default function App() {
         const lyricDisplayChanged =
           latest.lyricDisplay.lineCount !== draft.lyricDisplay.lineCount ||
           latest.lyricDisplay.advanceMode !== draft.lyricDisplay.advanceMode
-        const openingChanged = latest.opening.leadInMs !== draft.opening.leadInMs
+        const openingChanged =
+          latest.opening.leadInMs !== draft.opening.leadInMs ||
+          JSON.stringify(latest.opening.titleTiming) !== JSON.stringify(draft.opening.titleTiming)
         const singersChanged = latest.tracks.some(
           (track) => !sameVocalStyle(track.vocalStyle, acceptedSingerStyles.get(track.id)!),
         )
@@ -728,9 +745,7 @@ export default function App() {
           ...latest,
           stageStyle: stageChanged ? cloneStageStyle(acceptedStageStyle) : latest.stageStyle,
           lyricDisplay: lyricDisplayChanged ? { ...draft.lyricDisplay } : latest.lyricDisplay,
-          opening: openingChanged
-            ? { leadInMs: draft.opening.leadInMs, titleTiming: { mode: 'until-lyrics' } }
-            : latest.opening,
+          opening: openingChanged ? structuredClone(draft.opening) : latest.opening,
           tracks: singersChanged
             ? latest.tracks.map((track) => ({
                 ...track,
@@ -1534,7 +1549,15 @@ export default function App() {
           suggestedName: `${slugify(`${exportProjectSnapshot.artist}-${exportProjectSnapshot.title}`)}.mp4`,
           projectJson: serializeProject(exportProjectSnapshot),
           audioPath: exportProjectSnapshot.audioPath,
-          durationMs: Math.max(1_000, Math.round(playback.durationMs)),
+          durationMs: Math.max(
+            1_000,
+            Math.round(
+              authoritativeOutputDuration(
+                exportProjectSnapshot,
+                previewTitleEndMs(exportProjectSnapshot),
+              ),
+            ),
+          ),
           resolution,
           fps,
           background,
@@ -1571,7 +1594,6 @@ export default function App() {
       blockProjectSideEffect,
       backgroundImages,
       materializeSyncSession,
-      playback.durationMs,
       playback.hasAudio,
       playback.pause,
       showToast,
@@ -2295,72 +2317,84 @@ export default function App() {
           applyBlockedReason={styleApplyBlockedReason}
         />
       ) : (
-        <main className="studio-main">
-          <InspectorPanel
-            project={project}
-            activeTrackId={activeTrackId}
-            onSelectTrack={handleSelectTrack}
-            onAddTrack={handleAddTrack}
-            onRemoveTrack={handleRemoveTrack}
-            canAddTrack={trackCanBeAdded}
-            onUpdateProject={updateProject}
-            onUpdateTrack={updateTrack}
-            onImportAudio={() => requestProjectAction('import-audio')}
-            onImportLrc={() => requestProjectAction('import-lrc')}
+        <section className="studio-main-shell">
+          <OpeningTimingAdvisory
+            deferred={syncMode}
+            intervals={openingTimingAdvisory}
+            sessionKey={openingTimingAdvisorySessionKey}
+            onReview={() =>
+              document
+                .querySelector<HTMLInputElement>('[aria-label="Opening lead-in seconds"]')
+                ?.focus()
+            }
           />
+          <main className="studio-main">
+            <InspectorPanel
+              project={project}
+              activeTrackId={activeTrackId}
+              onSelectTrack={handleSelectTrack}
+              onAddTrack={handleAddTrack}
+              onRemoveTrack={handleRemoveTrack}
+              canAddTrack={trackCanBeAdded}
+              onUpdateProject={updateProject}
+              onUpdateTrack={updateTrack}
+              onImportAudio={() => requestProjectAction('import-audio')}
+              onImportLrc={() => requestProjectAction('import-lrc')}
+            />
 
-          <WorkspaceDivider
-            isSyncing={syncMode}
-            stage={
-              syncMode && activeTrack && activeSyncSession ? (
-                <SyncCueStrip session={activeSyncSession} onEditLyrics={openLyricsEditor} />
-              ) : (
-                <KaraokePreview
-                  activeVocalTrackId={activeTrack?.id}
-                  project={previewProject}
+            <WorkspaceDivider
+              isSyncing={syncMode}
+              stage={
+                syncMode && activeTrack && activeSyncSession ? (
+                  <SyncCueStrip session={activeSyncSession} onEditLyrics={openLyricsEditor} />
+                ) : (
+                  <KaraokePreview
+                    activeVocalTrackId={activeTrack?.id}
+                    project={previewProject}
+                    clock={playback.clock}
+                    selectedWordIds={selectedWordIds}
+                    onVocalPositionChange={updateVocalPosition}
+                    onTitlePositionChange={updateTitlePosition}
+                    backgroundImage={backgroundImages.preview}
+                    onUpdateLyricDisplay={updateLyricDisplay}
+                    onEditLyrics={openLyricsEditor}
+                  />
+                )
+              }
+              timing={
+                <Timeline
+                  project={project}
+                  peaks={waveform.peaks}
+                  isAnalyzing={waveform.isAnalyzing}
+                  durationMs={timelineDurationMs}
                   clock={playback.clock}
+                  zoom={zoom}
+                  activeTrackId={activeTrackId}
                   selectedWordIds={selectedWordIds}
-                  onVocalPositionChange={updateVocalPosition}
-                  onTitlePositionChange={updateTitlePosition}
-                  backgroundImage={backgroundImages.preview}
-                  onUpdateLyricDisplay={updateLyricDisplay}
-                  onEditLyrics={openLyricsEditor}
+                  syncWordId={syncWordId}
+                  syncSession={activeSyncSession}
+                  syncOwnerScope={syncOwnerScope}
+                  syncMode={syncMode}
+                  onSeek={playback.seek}
+                  onZoom={setZoom}
+                  onSelectWord={handleSelectWordId}
+                  onSelectWords={setSelectedWordIds}
+                  onShiftWords={(ids, deltaMs) =>
+                    commit((current) => shiftWords(current, ids, deltaMs))
+                  }
+                  onResizeWord={(wordId, startMs, endMs) =>
+                    commit((current) => patchWord(current, wordId, { startMs, endMs }))
+                  }
+                  onTimingDraftChange={updateTimingDraft}
+                  onGestureActiveChange={handleTimelineGestureActiveChange}
+                  onToggleSync={toggleSyncMode}
+                  onClearTiming={handleClearTiming}
+                  onClearTimingAfterCursor={handleClearTimingAfterCursor}
                 />
-              )
-            }
-            timing={
-              <Timeline
-                project={project}
-                peaks={waveform.peaks}
-                isAnalyzing={waveform.isAnalyzing}
-                durationMs={playback.durationMs}
-                clock={playback.clock}
-                zoom={zoom}
-                activeTrackId={activeTrackId}
-                selectedWordIds={selectedWordIds}
-                syncWordId={syncWordId}
-                syncSession={activeSyncSession}
-                syncOwnerScope={syncOwnerScope}
-                syncMode={syncMode}
-                onSeek={playback.seek}
-                onZoom={setZoom}
-                onSelectWord={handleSelectWordId}
-                onSelectWords={setSelectedWordIds}
-                onShiftWords={(ids, deltaMs) =>
-                  commit((current) => shiftWords(current, ids, deltaMs))
-                }
-                onResizeWord={(wordId, startMs, endMs) =>
-                  commit((current) => patchWord(current, wordId, { startMs, endMs }))
-                }
-                onTimingDraftChange={updateTimingDraft}
-                onGestureActiveChange={handleTimelineGestureActiveChange}
-                onToggleSync={toggleSyncMode}
-                onClearTiming={handleClearTiming}
-                onClearTimingAfterCursor={handleClearTimingAfterCursor}
-              />
-            }
-          />
-        </main>
+              }
+            />
+          </main>
+        </section>
       )}
 
       <TransportBar

@@ -167,6 +167,26 @@ describe('current project schema parity', () => {
     )
   })
 
+  it('round-trips fixed title timing and rejects malformed fixed schedules at every boundary', () => {
+    const fixed = clone()
+    objectAt(fixed, ['opening']).titleTiming = { mode: 'fixed', durationMs: 5_000 }
+    const outcomes = parity(JSON.stringify(fixed), true)
+    outcomes.forEach(({ value }) => expect(value).toStrictEqual(fixed))
+    expect(JSON.parse(serializeProject(outcomes[0].value as KaraokeProject))).toStrictEqual(fixed)
+
+    for (const titleTiming of [
+      { mode: 'fixed' },
+      { mode: 'fixed', durationMs: -1 },
+      { mode: 'fixed', durationMs: 1.5 },
+      { mode: 'fixed', durationMs: 5_000, unexpected: true },
+      { mode: 'unknown', durationMs: 5_000 },
+    ]) {
+      const malformed = clone()
+      objectAt(malformed, ['opening']).titleTiming = titleTiming
+      parity(JSON.stringify(malformed), false)
+    }
+  })
+
   it('requires exact keys at every persisted project boundary', () => {
     const boundaries: Array<Array<string | number>> = [
       [],

@@ -42,14 +42,19 @@ describe('authoritative playback clock', () => {
   let playback: ReturnType<typeof usePlayback>
 
   function Harness({
+    allowPostAudioPlayback = false,
     audioUrl = 'blob:synthetic-audio',
+    durationMs = 30_000,
     leadInMs = 0,
   }: {
+    allowPostAudioPlayback?: boolean
     audioUrl?: string | null
+    durationMs?: number
     leadInMs?: number
   }) {
     playback = usePlayback({
-      durationMs: 30_000,
+      allowPostAudioPlayback,
+      durationMs,
       audioUrl,
       leadInMs,
       refreshIntervalMs: 50,
@@ -133,8 +138,8 @@ describe('authoritative playback clock', () => {
     await act(async () => root.render(<Harness leadInMs={100} />))
     const audio = FakeAudio.instances[0]!
     await act(async () => playback.play())
-    await act(async () => frames.shift()!(0))
-    await act(async () => frames.shift()!(100))
+    await act(async () => frames.at(-1)!(0))
+    await act(async () => frames.at(-1)!(100))
 
     expect(playback.getCurrentMs()).toBe(100)
     expect(audio.play).toHaveBeenCalledOnce()
@@ -197,6 +202,37 @@ describe('authoritative playback clock', () => {
     expect(playback.getCurrentMs()).toBe(125)
     await act(async () => playback.play())
     expect(audio.play).toHaveBeenCalledTimes(3)
+  })
+
+  it('stops at the exact fixed-title video end and replays from zero through the opening', async () => {
+    const frames: FrameRequestCallback[] = []
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    await act(async () =>
+      root.render(<Harness allowPostAudioPlayback durationMs={7_000} leadInMs={1_000} />),
+    )
+    const audio = FakeAudio.instances.at(-1)!
+    audio.duration = 5
+    await act(async () => playback.seek(5_999))
+    await act(async () => playback.play())
+    await act(async () => audio.dispatchEvent(new Event('ended')))
+    expect(playback.isPlaying).toBe(true)
+    await act(async () => frames.pop()!(0))
+    await act(async () => frames.pop()!(1_001))
+    expect(playback.currentMs).toBe(7_000)
+    expect(playback.getCurrentMs()).toBe(7_000)
+    expect(playback.isPlaying).toBe(false)
+
+    await act(async () => playback.toggle())
+    expect(playback.currentMs).toBe(0)
+    expect(audio.currentTime).toBe(0)
+    expect(playback.isPlaying).toBe(true)
+    await act(async () => frames.pop()!(2_000))
+    await act(async () => frames.pop()!(3_000))
+    expect(playback.getCurrentMs()).toBe(1_000)
+    expect(audio.play).toHaveBeenCalledTimes(2)
   })
 
   it('remaps a paused or playing clock immediately when the opening moves across it', async () => {

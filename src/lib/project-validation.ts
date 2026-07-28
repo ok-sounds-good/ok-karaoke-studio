@@ -184,16 +184,21 @@ export function validateProject(project: KaraokeProject): ValidationIssue[] {
       'opening.leadInMs',
     )
   }
+  const titleTiming = project.opening?.titleTiming
   if (
-    !isRecord(project.opening?.titleTiming) ||
-    project.opening.titleTiming.mode !== 'until-lyrics'
+    !isRecord(titleTiming) ||
+    (titleTiming.mode !== 'until-lyrics' &&
+      (titleTiming.mode !== 'fixed' ||
+        !Number.isSafeInteger(titleTiming.durationMs) ||
+        titleTiming.durationMs < 0 ||
+        titleTiming.durationMs > MAX_OPENING_LEAD_IN_MS))
   ) {
     issue(
       issues,
       'error',
       'opening-title-timing-invalid',
-      'Opening title timing mode must be until-lyrics.',
-      'opening.titleTiming.mode',
+      'Opening title timing must be until-lyrics or a non-negative fixed duration up to four hours.',
+      'opening.titleTiming',
     )
   }
   if (
@@ -219,9 +224,14 @@ export function validateProject(project: KaraokeProject): ValidationIssue[] {
     project.durationMs !== null &&
     (!Number.isSafeInteger(project.durationMs) ||
       project.durationMs < 0 ||
-      project.durationMs +
-        (Number.isSafeInteger(project.opening?.leadInMs) ? project.opening.leadInMs : 0) >
-        MAX_PROJECT_DURATION_MS)
+      Math.max(
+        project.durationMs +
+          (Number.isSafeInteger(project.opening?.leadInMs) ? project.opening.leadInMs : 0),
+        project.opening?.titleTiming?.mode === 'fixed' &&
+          Number.isSafeInteger(project.opening.titleTiming.durationMs)
+          ? project.opening.titleTiming.durationMs
+          : 0,
+      ) > MAX_PROJECT_DURATION_MS)
   ) {
     issue(
       issues,

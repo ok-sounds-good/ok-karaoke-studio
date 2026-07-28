@@ -15,6 +15,7 @@ import { openingLeadInMaximum } from '../lib/project-validation'
 import { resolveVocalSungColor } from '../lib/video-style'
 import { effectiveDuration, flattenProject, flattenTrack } from '../utils'
 import { OpeningTimingControl } from './OpeningTimingControl'
+import { openingTimingFactsForProject } from '../lib/stage-frame-state'
 import { MAX_PROJECT_TRACKS } from '../lib/project-validation'
 import { Button } from './ui'
 
@@ -67,6 +68,7 @@ export const InspectorPanel = memo(function InspectorPanel({
   )
   const untimed = allWords.filter(({ word }) => word.startMs === null).length
   const openingMaximumMs = useMemo(() => openingLeadInMaximum(project), [project])
+  const openingFacts = useMemo(() => openingTimingFactsForProject(project), [project])
   return (
     <aside className="inspector panel" aria-label="Project inspector">
       <div className="inspector__scroll">
@@ -106,6 +108,7 @@ export const InspectorPanel = memo(function InspectorPanel({
           <OpeningTimingControl
             maximumMs={openingMaximumMs}
             opening={project.opening}
+            facts={openingFacts}
             onChange={(opening) => onUpdateProject({ opening })}
           />
         </section>

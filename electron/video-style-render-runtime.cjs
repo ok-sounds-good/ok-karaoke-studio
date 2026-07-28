@@ -402,20 +402,17 @@ function installKaraokeRuntime() {
   }
 
   const nextLayoutKey = (state) =>
-    state.showTitle
-      ? `title:${state.title}|${state.artist}|${JSON.stringify(state.stageStyle.titleCard)}`
-      : `lines:${JSON.stringify([
-          state.lyricLineCount,
-          state.lines.map((line) => [
-            line.id,
-            line.trackId,
-            line.text,
-            line.style,
-            line.words.map((word) => word.text),
-          ]),
-        ])}|sync:${JSON.stringify(
-          state.syncAids.map((aid) => [aid.trackId, aid.lineId, aid.style]),
-        )}`
+    `title:${state.showTitle ? `${state.title}|${state.artist}|${JSON.stringify(state.stageStyle.titleCard)}` : ''}` +
+    `|lines:${JSON.stringify([
+      state.lyricLineCount,
+      state.lines.map((line) => [
+        line.id,
+        line.trackId,
+        line.text,
+        line.style,
+        line.words.map((word) => word.text),
+      ]),
+    ])}|sync:${JSON.stringify(state.syncAids.map((aid) => [aid.trackId, aid.lineId, aid.style]))}`
 
   const rebuildLayout = (state) => {
     const content = byId('content')
@@ -426,7 +423,7 @@ function installKaraokeRuntime() {
     content.replaceChildren()
     syncLayer.replaceChildren()
     if (state.showTitle) appendTitleCard(content, state)
-    else if (state.lines.length) appendLyrics(content, state)
+    if (state.lines.length) appendLyrics(content, state)
     appendSyncAids(syncLayer, state.syncAids)
   }
 

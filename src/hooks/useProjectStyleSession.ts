@@ -153,7 +153,7 @@ export function cloneProjectStyleDraft(draft: ProjectStyleDraft): ProjectStyleDr
   return {
     stageStyle: cloneStageStyle(draft.stageStyle),
     lyricDisplay: { ...draft.lyricDisplay },
-    opening: { leadInMs: draft.opening.leadInMs, titleTiming: { mode: 'until-lyrics' } },
+    opening: structuredClone(draft.opening),
     singers: draft.singers.map((singer) => ({
       ...singer,
       vocalStyle: cloneVocalStyle(singer.vocalStyle),
@@ -173,7 +173,7 @@ export function createProjectStyleDraft(
   return {
     stageStyle,
     lyricDisplay,
-    opening: { leadInMs: opening.leadInMs, titleTiming: { mode: 'until-lyrics' } },
+    opening: structuredClone(opening),
     singers: tracks.map((track) => {
       const vocalStyle = cloneVocalStyle(track.vocalStyle)
       return {
@@ -214,6 +214,7 @@ export function sameProjectStyleDraft(left: ProjectStyleDraft, right: ProjectSty
     left.lyricDisplay.lineCount === right.lyricDisplay.lineCount &&
     left.lyricDisplay.advanceMode === right.lyricDisplay.advanceMode &&
     left.opening.leadInMs === right.opening.leadInMs &&
+    JSON.stringify(left.opening.titleTiming) === JSON.stringify(right.opening.titleTiming) &&
     left.singers.length === right.singers.length &&
     left.singers.every((singer, index) => {
       const other = right.singers[index]

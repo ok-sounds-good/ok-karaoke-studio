@@ -28,6 +28,7 @@ import type { PlaybackClock } from '../hooks/usePlayback'
 import type { SyncSession } from '../lib/sync-session'
 import { formatTime } from '../lib/model'
 import { resolveVocalSungColor } from '../lib/video-style'
+import { previewTitleEndMs } from '../lib/stage-frame-state'
 import { flattenTrack, motionAwareScrollBehavior, type ProjectTimingDraft } from '../utils'
 import {
   buildTimelineTrackLayout,
@@ -842,9 +843,15 @@ export function Timeline({
     () => activeLayout?.lineBySourceIndex ?? indexTimelineLinesBySourceIndex(activeLayout),
     [activeLayout],
   )
+  const titleEndMs = useMemo(() => previewTitleEndMs(project), [project])
+  const scheduledDurationMs = Math.max(
+    durationMs,
+    Number.isFinite(titleEndMs) ? titleEndMs : durationMs,
+  )
+  const titleBandEndMs = Number.isFinite(titleEndMs) ? titleEndMs : scheduledDurationMs
   const width = Math.max(
     1040,
-    (durationMs / 1000) * pixelsPerSecond,
+    (scheduledDurationMs / 1000) * pixelsPerSecond,
     ...trackLayouts.map((layout) => layout.maxRight + 24),
   )
   const waveformLeft = (project.opening.leadInMs / 1000) * pixelsPerSecond
@@ -993,10 +1000,10 @@ export function Timeline({
   const ticks = useMemo(
     () =>
       Array.from(
-        { length: Math.ceil(durationMs / 1000 / tickStepSeconds) + 1 },
+        { length: Math.ceil(scheduledDurationMs / 1000 / tickStepSeconds) + 1 },
         (_, index) => index * tickStepSeconds,
       ),
-    [durationMs, tickStepSeconds],
+    [scheduledDurationMs, tickStepSeconds],
   )
   const waveformPath = useMemo(() => {
     const mid = 38
@@ -1374,6 +1381,15 @@ export function Timeline({
           }
         >
           <div className="timeline-canvas" style={{ width }}>
+            {titleBandEndMs > 0 && (
+              <div
+                className="timeline-title-interval"
+                aria-label={`Title, 0:00 to ${formatTime(titleBandEndMs)}`}
+                style={{ width: (titleBandEndMs / 1_000) * pixelsPerSecond }}
+              >
+                Title
+              </div>
+            )}
             {project.opening.leadInMs > 0 && (
               <div
                 className="timeline-lead-in"

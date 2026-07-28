@@ -94,7 +94,7 @@ export interface LyricDisplaySettings {
 
 export interface OpeningTiming {
   leadInMs: number
-  titleTiming: { mode: 'until-lyrics' }
+  titleTiming: { mode: 'until-lyrics' } | { mode: 'fixed'; durationMs: number }
 }
 
 export const DEFAULT_OPENING_TIMING: OpeningTiming = {
@@ -279,7 +279,10 @@ export function createProject(options: CreateProjectOptions = {}): KaraokeProjec
     },
     opening: {
       leadInMs: options.opening?.leadInMs ?? DEFAULT_OPENING_TIMING.leadInMs,
-      titleTiming: { mode: 'until-lyrics' },
+      titleTiming:
+        options.opening?.titleTiming.mode === 'fixed'
+          ? { mode: 'fixed', durationMs: options.opening.titleTiming.durationMs }
+          : { mode: 'until-lyrics' },
     },
     stageStyle: cloneStageStyle(options.stageStyle ?? DEFAULT_STAGE_STYLE),
     tracks: options.tracks?.map(cloneTrack) ?? [
