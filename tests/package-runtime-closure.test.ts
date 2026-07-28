@@ -78,5 +78,6 @@ describe('packaged main-process runtime closure', () => {
 
     expect(files).toContain('scripts/visual-result-validation.cjs')
     expect(files).not.toContain('scripts/**/*')
+    expect(isPackaged('tests/support/native-sync-trace-fixture.cjs', files)).toBe(false)
   })
 })
