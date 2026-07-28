@@ -214,10 +214,22 @@
   opacity: 0.62;
 }
 
+.sync-cue__token.is-active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(215, 250, 74, 0.07);
+}
+
+.sync-cue__status {
+  margin: 0;
+  padding: 5px 12px;
+  border-top: 1px solid var(--line-soft);
+  color: var(--text-secondary);
+  font-size: 9px;
+}
+
 .sync-cue__help {
   gap: 7px;
   padding: 6px 12px;
-  border-top: 1px solid var(--line-soft);
   color: #738078;
   font-size: 8px;
 }

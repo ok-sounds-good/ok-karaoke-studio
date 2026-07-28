@@ -11,9 +11,26 @@ interface SyncCueStripProps {
 export function SyncCueStrip({ session, onEditLyrics }: SyncCueStripProps) {
   const presentation = useSyncExternalStore(session.subscribe.bind(session), session.getSnapshot)
   const targetElementRef = useRef<HTMLSpanElement | null>(null)
-  const visibleLines = [presentation.currentLine, presentation.nextLine].filter(
-    (line): line is NonNullable<typeof line> => line !== null,
-  )
+  const visibleLines = [
+    presentation.activeLine && {
+      label: 'Active',
+      line: presentation.activeLine,
+      timedWordIds: presentation.activeTimedWordIds,
+      state: 'is-active-line',
+    },
+    presentation.currentLine && {
+      label: 'Target',
+      line: presentation.currentLine,
+      timedWordIds: presentation.currentTimedWordIds,
+      state: 'is-current is-target-line',
+    },
+    presentation.nextLine && {
+      label: 'Next line',
+      line: presentation.nextLine,
+      timedWordIds: presentation.nextTimedWordIds,
+      state: 'is-next is-next-line',
+    },
+  ].filter((entry): entry is NonNullable<typeof entry> => entry !== null)
 
   return (
     <section className="sync-cue panel" aria-label="Synchronization focus">
@@ -29,7 +46,7 @@ export function SyncCueStrip({ session, onEditLyrics }: SyncCueStripProps) {
         </div>
         <div className="sync-cue__actions">
           <span>
-            <Zap size={12} /> Word {Math.min(presentation.cursor + 1, presentation.total)} of{' '}
+            <Zap size={12} /> Target {Math.min(presentation.cursor + 1, presentation.total)} of{' '}
             {presentation.total}
           </span>
           <Button
@@ -44,62 +61,81 @@ export function SyncCueStrip({ session, onEditLyrics }: SyncCueStripProps) {
       </header>
 
       <div className="sync-cue__lines">
-        {visibleLines.map((line, lineOffset) => (
-          <div
-            key={line.id}
-            className={`sync-cue__line ${lineOffset === 0 ? 'is-current' : 'is-next'}`}
-          >
-            <span>{lineOffset === 0 ? 'Now' : 'Next'}</span>
-            <p>
-              {line.beforeCount > 0 && (
-                <span
-                  className="sync-cue__ellipsis"
-                  aria-label={`${line.beforeCount} earlier words`}
-                >
-                  …
-                </span>
-              )}
-              {line.tokens.map((token, tokenIndex) => (
-                <Fragment key={token.id}>
+        {visibleLines.map(({ label, line, timedWordIds, state }) => {
+          const isActiveLine = state === 'is-active-line'
+          const isTargetLine = state.includes('is-target-line')
+          return (
+            <div key={`${state}-${line.id}`} className={`sync-cue__line ${state}`}>
+              <span>{label}</span>
+              <p>
+                {line.beforeCount > 0 && (
                   <span
-                    ref={token.id === presentation.targetWordId ? targetElementRef : undefined}
-                    data-sync-word-id={token.id}
-                    className={[
-                      'sync-cue__token',
-                      (lineOffset === 0
-                        ? presentation.currentTimedWordIds
-                        : presentation.nextTimedWordIds
-                      ).includes(token.id)
-                        ? 'is-timed'
-                        : 'is-untimed',
-                      token.id === presentation.targetWordId ? 'is-target is-live' : '',
-                    ]
-                      .filter(Boolean)
-                      .join(' ')}
+                    className="sync-cue__ellipsis"
+                    aria-label={`${line.beforeCount} earlier words`}
                   >
-                    {token.text}
+                    …
                   </span>
-                  {tokenIndex < line.tokens.length - 1 ? ' ' : null}
-                </Fragment>
-              ))}
-              {line.afterCount > 0 && (
-                <span className="sync-cue__ellipsis" aria-label={`${line.afterCount} later words`}>
-                  {' '}
-                  …
-                </span>
-              )}
-            </p>
-          </div>
-        ))}
+                )}
+                {line.tokens.map((token, tokenIndex) => {
+                  const isActiveWord = isActiveLine && token.id === presentation.activeWordId
+                  const isTargetWord = isTargetLine && token.id === presentation.targetWordId
+                  return (
+                    <Fragment key={token.id}>
+                      <span
+                        ref={isTargetWord ? targetElementRef : undefined}
+                        data-sync-word-id={token.id}
+                        aria-current={isTargetWord ? 'step' : undefined}
+                        aria-label={
+                          isActiveWord
+                            ? `Active word: ${token.text}`
+                            : isTargetWord
+                              ? `Next target: ${token.text}`
+                              : undefined
+                        }
+                        className={[
+                          'sync-cue__token',
+                          timedWordIds.includes(token.id) ? 'is-timed' : 'is-untimed',
+                          isTargetWord ? 'is-target is-live' : '',
+                          isActiveWord ? 'is-active' : '',
+                        ]
+                          .filter(Boolean)
+                          .join(' ')}
+                      >
+                        {token.text}
+                      </span>
+                      {tokenIndex < line.tokens.length - 1 ? ' ' : null}
+                    </Fragment>
+                  )
+                })}
+                {line.afterCount > 0 && (
+                  <span
+                    className="sync-cue__ellipsis"
+                    aria-label={`${line.afterCount} later words`}
+                  >
+                    {' '}
+                    …
+                  </span>
+                )}
+              </p>
+            </div>
+          )
+        })}
       </div>
+
+      <p className="sync-cue__status" aria-live="polite" aria-atomic="true">
+        {presentation.feedback ||
+          (presentation.targetText
+            ? `Next target: ${presentation.targetText}. Press Right to start it.`
+            : 'No target remains.')}
+      </p>
 
       <footer className="sync-cue__help">
         <KeyboardKey>Space</KeyboardKey>
         <span>Tap or hold to time naturally.</span>
         <KeyboardKey>→</KeyboardKey>
-        <span>Start the target word.</span>
+        <span>Start the displayed target.</span>
         <KeyboardKey>↓</KeyboardKey>
-        <span>End the active word.</span>
+        <span>Explicitly end the active word.</span>
       </footer>
     </section>
   )

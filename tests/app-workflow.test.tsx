@@ -1089,7 +1089,7 @@ describe('mounted first-time workflow', () => {
     expect(document.querySelectorAll('.timeline-word, .timeline-sync-pending')).toHaveLength(0)
   })
 
-  it('times a complete line with Right and undoes the armed session once', async () => {
+  it('keeps a final Right-activated word armed for Down, then materializes one undoable session', async () => {
     await clickButton('Edit text')
     await replaceTextarea('One two')
     await clickButton('Apply lyrics')
@@ -1103,14 +1103,68 @@ describe('mounted first-time workflow', () => {
     expect(document.querySelector('.sync-cue__line.is-current')?.textContent).toContain('two')
     await pressKey('ArrowRight')
 
+    expect(document.querySelector('.transport')?.classList.contains('is-syncing')).toBe(true)
+    expect(document.querySelector('.sync-cue__token.is-active')?.textContent).toBe('two')
+    expect(document.querySelector('.sync-cue__status')?.textContent).toContain(
+      'No next target remains; press Down',
+    )
+    await pressKey('ArrowRight', { shiftKey: true })
+    await pressKey('ArrowDown')
+
     expect(timelineTimingLabels()).toEqual([
       'One timing block, 0:00.000–0:00.100',
-      'two timing block, 0:00.100–0:00.200',
+      'two timing block, 0:00.100–0:01.000',
     ])
     await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
     expect(document.querySelector('.transport')?.classList.contains('is-syncing')).toBe(false)
+    await act(async () => harness.sendMenuAction('save'))
+    expect(
+      parseProject(harness.saveProject.mock.calls.at(-1)?.[0].contents).tracks[0].lines[0].words,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ startMs: 0, endMs: 100 }),
+        expect.objectContaining({ startMs: 100, endMs: 1_000 }),
+      ]),
+    )
     await act(async () => harness.sendMenuAction('undo'))
     expect(document.querySelectorAll('.timeline-word, .timeline-sync-pending')).toHaveLength(0)
+  })
+
+  it('clears the active cue on blur without clearing its timing or target', async () => {
+    await clickButton('Edit text')
+    await replaceTextarea('One two')
+    await clickButton('Apply lyrics')
+    await clickButton('Start sync')
+    await pressKey('ArrowRight')
+
+    expect(document.querySelector('.sync-cue__token.is-active')?.textContent).toBe('One')
+    expect(document.querySelector('.sync-cue__status')?.textContent).toContain('Started One')
+    await act(async () => window.dispatchEvent(new Event('blur')))
+
+    expect(document.querySelector('.sync-cue__token.is-active')).toBeNull()
+    expect(document.querySelector('.sync-cue__status')?.textContent).toContain('Next target: two')
+    expect(document.querySelector('.sync-cue .is-target')?.textContent).toBe('two')
+    expect(timelineTimingLabels()).toContain('One timing block, 0:00.000–0:00.100')
+    await pressKey('ArrowRight')
+    expect(document.querySelector('.sync-cue__token.is-active')?.textContent).toBe('two')
+  })
+
+  it('clears the active cue after Edit text is canceled without clearing its timing or target', async () => {
+    await clickButton('Edit text')
+    await replaceTextarea('One two')
+    await clickButton('Apply lyrics')
+    await clickButton('Start sync')
+    await pressKey('ArrowRight')
+
+    await clickButton('Edit text')
+    await clickButton('Cancel')
+
+    expect(document.querySelector('.sync-cue__token.is-active')).toBeNull()
+    expect(document.querySelector('.sync-cue__status')?.textContent).toContain('Next target: two')
+    expect(document.querySelector('.sync-cue .is-target')?.textContent).toBe('two')
+    expect(timelineTimingLabels()).toContain('One timing block, 0:00.000–0:00.100')
+    await pressKey('ArrowRight')
+    expect(document.querySelector('.sync-cue__token.is-active')?.textContent).toBe('two')
   })
 
   it('preserves Down-ended gaps before later Right and Space onsets', async () => {

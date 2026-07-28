@@ -27,6 +27,10 @@ export interface SyncPresentation {
   readonly targetEndMs: number | null
   readonly targetText: string | null
   readonly targetTimed: boolean
+  readonly activeWordId: string | null
+  readonly activeLine: SyncCueLine | null
+  readonly activeTimedWordIds: readonly string[]
+  readonly feedback: string
   readonly currentTimedWordIds: readonly string[]
   readonly nextTimedWordIds: readonly string[]
   readonly currentLine: SyncCueLine | null
@@ -159,6 +163,7 @@ export class SyncSession {
   } | null = null
   private explicitlyEnded = new Set<string>()
   private presentation: SyncPresentation
+  private feedback = ''
   private closed = false
 
   constructor(track: VocalTrack, cursor: number, epoch: number) {
@@ -242,6 +247,7 @@ export class SyncSession {
     if (index < 0) return false
     this.cursor = index
     this.held = null
+    this.feedback = ''
     this.publish()
     return true
   }
@@ -273,7 +279,7 @@ export class SyncSession {
       previous.startMs !== null &&
       !this.explicitlyEnded.has(previous.id)
     ) {
-      this.patch(previous, { endMs: startMs })
+      this.patch(previous, { endMs: startMs }, false)
     }
     this.patch(
       item,
@@ -282,6 +288,7 @@ export class SyncSession {
         maxMs: nextStart ?? Number.POSITIVE_INFINITY,
         minimumDurationMs: DEFAULT_DURATION_MS,
       }),
+      false,
     )
     this.held = {
       wordIndex: this.cursor,
@@ -289,8 +296,16 @@ export class SyncSession {
       finalInLine: item.wordIndex === this.lines[item.lineIndex].wordIndexes.length - 1,
       advanceOnRelease,
     }
-    if (!advanceOnRelease) this.advance(false)
-    else this.publish()
+    if (!advanceOnRelease) {
+      this.cursor += 1
+      const next = this.words[this.cursor]
+      this.feedback = next
+        ? `Started ${item.cueToken.text}. Next target: ${next.cueToken.text}.`
+        : `Started ${item.cueToken.text}. No next target remains; press Down to end the active word.`
+    } else {
+      this.feedback = `Started ${item.cueToken.text}. Release Space to finish it.`
+    }
+    this.publish()
     return { wordId: item.id, started: true }
   }
 
@@ -307,11 +322,16 @@ export class SyncSession {
         maxMs: nextTimed?.startMs ?? Number.POSITIVE_INFINITY,
         minimumDurationMs: 1,
       }),
+      false,
     )
     this.explicitlyEnded.add(item.id)
     this.held = null
-    if (held.advanceOnRelease) this.advance()
-    else this.publish()
+    if (held.advanceOnRelease) this.cursor += 1
+    const next = this.words[this.cursor]
+    this.feedback = next
+      ? `Ended ${item.cueToken.text}. Next target: ${next.cueToken.text}.`
+      : `Ended ${item.cueToken.text}. No next target remains.`
+    this.publish()
     return true
   }
 
@@ -329,15 +349,25 @@ export class SyncSession {
           maxMs: nextTimed?.startMs ?? Number.POSITIVE_INFINITY,
           minimumDurationMs: DEFAULT_DURATION_MS,
         }),
+        false,
       )
     }
     this.held = null
-    this.advance()
+    this.cursor += 1
+    const next = this.words[this.cursor]
+    this.feedback = next
+      ? `Finished ${item.cueToken.text}. Next target: ${next.cueToken.text}.`
+      : `Finished ${item.cueToken.text}. No next target remains.`
+    this.publish()
     return true
   }
 
   abandonHeld() {
+    if (!this.held) return false
     this.held = null
+    this.feedback = ''
+    this.publish()
+    return true
   }
 
   drainPatches() {
@@ -371,9 +401,13 @@ export class SyncSession {
 
   closeInput() {
     if (this.closed) return
+    const hadActiveWord = this.held !== null
     this.closed = true
     this.held = null
-    this.publish()
+    if (hadActiveWord) {
+      this.feedback = ''
+      this.publish()
+    }
   }
 
   close() {
@@ -405,6 +439,7 @@ export class SyncSession {
 
   private makePresentation(): SyncPresentation {
     const item = this.words[this.cursor] ?? null
+    const active = this.held === null ? null : this.words[this.held.wordIndex]
     const currentLine = item ? this.lines[item.lineIndex] : null
     const nextLine = currentLine?.nextNonEmptyLineIndex
     const currentCue = currentLine ? this.cueLine(item!.lineIndex, this.cursor) : null
@@ -412,6 +447,7 @@ export class SyncSession {
       nextLine === null || nextLine === undefined
         ? null
         : this.cueLine(nextLine, this.lines[nextLine].wordIndexes[0])
+    const activeCue = active ? this.cueLine(active.lineIndex, this.held!.wordIndex) : null
     return {
       epoch: this.epoch,
       cursor: this.cursor,
@@ -423,6 +459,10 @@ export class SyncSession {
       targetEndMs: item?.endMs ?? null,
       targetText: item?.text.replaceAll('/', '·') ?? null,
       targetTimed: item?.startMs !== null,
+      activeWordId: active?.id ?? null,
+      activeLine: activeCue?.line ?? null,
+      activeTimedWordIds: activeCue?.timedWordIds ?? [],
+      feedback: this.feedback,
       currentTimedWordIds: currentCue?.timedWordIds ?? [],
       nextTimedWordIds: nextCue?.timedWordIds ?? [],
       currentLine: currentCue?.line ?? null,
