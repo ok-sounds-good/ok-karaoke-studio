@@ -24,7 +24,12 @@ import {
   type KaraokeProject,
 } from '../src/lib/karaoke'
 import { DEFAULT_STAGE_STYLE, DEFAULT_VOCAL_STYLE } from '../src/lib/video-style'
-import { effectiveDuration, motionAwareScrollBehavior, recalculateLine } from '../src/utils'
+import {
+  authoritativeOutputDuration,
+  effectiveDuration,
+  motionAwareScrollBehavior,
+  recalculateLine,
+} from '../src/utils'
 
 describe('karaoke project model', () => {
   it('assigns deterministic distinct colors to new singers by track order', () => {
@@ -565,6 +570,17 @@ describe('timing helpers', () => {
     })
 
     expect(effectiveDuration(project)).toBe(44_000)
+  })
+
+  it('keeps a metadata-backed output clock exact instead of using the editor padding', () => {
+    const project = createProject({
+      durationMs: 5_000,
+      opening: { leadInMs: 1_000, titleTiming: { mode: 'until-lyrics' } },
+    })
+
+    expect(effectiveDuration(project)).toBe(30_000)
+    expect(authoritativeOutputDuration(project)).toBe(6_000)
+    expect(authoritativeOutputDuration(project, 7_000)).toBe(7_000)
   })
 
   it('recalculates a maximum-size line without spreading timing arrays', () => {

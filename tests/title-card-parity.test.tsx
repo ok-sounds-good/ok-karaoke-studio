@@ -81,6 +81,27 @@ describe('Live Preview and MP4 title-card parity', () => {
     expect(frameStateAt(project, 0).showTitle).toBe(true)
   })
 
+  it('keeps a fixed title through its independent end while lyrics remain visible', () => {
+    const project = projectWithLineLeadIn()
+    project.opening = { leadInMs: 0, titleTiming: { mode: 'fixed', durationMs: 5_000 } }
+
+    const during = frameStateAt(project, 2_300)
+    const after = frameStateAt(project, 5_000)
+    expect(during.showTitle).toBe(true)
+    expect(during.lines).not.toEqual([])
+    expect(after.showTitle).toBe(false)
+  })
+
+  it('does not schedule a title card when every title element is hidden', () => {
+    const project = projectWithLineLeadIn()
+    project.opening = { leadInMs: 0, titleTiming: { mode: 'fixed', durationMs: 5_000 } }
+    project.stageStyle.titleCard.eyebrow.visible = false
+    project.stageStyle.titleCard.title.visible = false
+    project.stageStyle.titleCard.artist.visible = false
+
+    expect(frameStateAt(project, 2_300).showTitle).toBe(false)
+  })
+
   it('gates lyrics and preserves the title at the opening boundary', () => {
     const project = projectWithLineLeadIn()
     project.opening = { leadInMs: 2_000, titleTiming: { mode: 'until-lyrics' } }

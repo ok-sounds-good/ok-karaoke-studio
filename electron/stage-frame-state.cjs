@@ -176,13 +176,18 @@ function syncAidFor(track, firstSectionLineIds, active, lyricMs) {
   }
 }
 
-function createStageFramePlanner(project) {
-  const tracks = visibleTracks(project).map((track) => ({
-    ...displayWindows(track, project.lyricDisplay),
-    style: resolveVocalStyle(project.stageStyle.lyrics, track.vocalStyle),
-    track,
-  }))
-  const titleHandoffMs = tracks.reduce((handoff, { windows }) => {
+function titleEndMsForProject(project, tracks) {
+  if (
+    !project.stageStyle.titleCard.eyebrow.visible &&
+    !project.stageStyle.titleCard.title.visible &&
+    !project.stageStyle.titleCard.artist.visible
+  ) {
+    return 0
+  }
+  if (project.opening.titleTiming.mode === 'fixed') {
+    return Math.max(project.opening.leadInMs, project.opening.titleTiming.durationMs)
+  }
+  return tracks.reduce((handoff, { windows }) => {
     // Completion is exclusive, so a window ending exactly at the opening has
     // no post-opening display interval and must not dismiss the title card.
     const eligible = windows.find((window) => window.completionMs + project.offsetMs > 0)
@@ -197,6 +202,15 @@ function createStageFramePlanner(project) {
           ),
         )
   }, Number.POSITIVE_INFINITY)
+}
+
+function createStageFramePlanner(project) {
+  const tracks = visibleTracks(project).map((track) => ({
+    ...displayWindows(track, project.lyricDisplay),
+    style: resolveVocalStyle(project.stageStyle.lyrics, track.vocalStyle),
+    track,
+  }))
+  const titleEndMs = titleEndMsForProject(project, tracks)
 
   return (playbackMs) => {
     if (playbackMs < project.opening.leadInMs) {
@@ -204,7 +218,7 @@ function createStageFramePlanner(project) {
         title: project.title || 'Untitled song',
         artist: project.artist || 'Unknown artist',
         playbackMs,
-        showTitle: true,
+        showTitle: playbackMs < titleEndMs,
         lyricLineCount: project.lyricDisplay.lineCount,
         stageStyle: project.stageStyle,
         lines: [],
@@ -242,7 +256,7 @@ function createStageFramePlanner(project) {
       title: project.title || 'Untitled song',
       artist: project.artist || 'Unknown artist',
       playbackMs,
-      showTitle: playbackMs < titleHandoffMs,
+      showTitle: playbackMs < titleEndMs,
       lyricLineCount: project.lyricDisplay.lineCount,
       stageStyle: project.stageStyle,
       lines,
@@ -255,12 +269,111 @@ function frameStateAt(project, playbackMs) {
   return createStageFramePlanner(project)(playbackMs)
 }
 
+function titleEndForProject(project) {
+  const tracks = visibleTracks(project).map((track) => displayWindows(track, project.lyricDisplay))
+  return titleEndMsForProject(project, tracks)
+}
+
+function openingTimingFactsForProject(project) {
+  const tracks = visibleTracks(project).map((track) => displayWindows(track, project.lyricDisplay))
+  const titleEndMs = titleEndMsForProject(project, tracks)
+  const lyricStartMs = tracks.reduce((earliest, { windows }) => {
+    const eligible = windows.find((window) => window.completionMs + project.offsetMs > 0)
+    if (!eligible) return earliest
+    const startMs = Math.max(
+      project.opening.leadInMs,
+      project.opening.leadInMs + eligible.activationMs + project.offsetMs,
+    )
+    const endMs = project.opening.leadInMs + eligible.completionMs + project.offsetMs
+    return endMs > startMs ? Math.min(earliest, startMs) : earliest
+  }, Number.POSITIVE_INFINITY)
+  return {
+    lyricStartMs: Number.isFinite(lyricStartMs) ? lyricStartMs : null,
+    titleEndMs,
+  }
+}
+
+function openingTimingAdvisoryForProject(project) {
+  const tracks = visibleTracks(project).map((track) => ({
+    ...displayWindows(track, project.lyricDisplay),
+    track,
+  }))
+  const titleEndMs = titleEndMsForProject(project, tracks)
+  if (!Number.isFinite(titleEndMs) || titleEndMs <= 0) return []
+  const intervals = []
+  const add = (startMs, endMs, type) => {
+    const start = Math.max(project.opening.leadInMs, startMs)
+    const end = Math.min(titleEndMs, endMs)
+    if (end > start) intervals.push({ startMs: start, endMs: end, types: [type] })
+  }
+  for (const { firstSectionLineIds, track, windows } of tracks) {
+    for (const window of windows) {
+      add(
+        project.opening.leadInMs + window.activationMs + project.offsetMs,
+        project.opening.leadInMs + window.completionMs + project.offsetMs,
+        'lyrics',
+      )
+      const entry = window.entries.find(({ line }) => firstSectionLineIds.has(line.id))
+      const firstWord = entry?.line.words[0]
+      const config = track.vocalStyle.syncAid
+      if (
+        !config.enabled ||
+        !entry ||
+        !firstWord ||
+        firstWord.startMs === null ||
+        firstWord.endMs === null ||
+        firstWord.endMs <= firstWord.startMs
+      )
+        continue
+      const availableMs = Math.max(0, firstWord.startMs - window.activationMs)
+      const durationMs = Math.min(availableMs, config.maxLeadMs, track.vocalStyle.previewMs)
+      if (durationMs >= config.minLeadMs) {
+        add(
+          project.opening.leadInMs + firstWord.startMs - durationMs + project.offsetMs,
+          project.opening.leadInMs + firstWord.startMs + project.offsetMs,
+          'sync aids',
+        )
+      }
+    }
+  }
+  const boundaries = [...new Set(intervals.flatMap(({ startMs, endMs }) => [startMs, endMs]))].sort(
+    (left, right) => left - right,
+  )
+  const exact = []
+  for (let index = 0; index < boundaries.length - 1; index += 1) {
+    const startMs = boundaries[index]
+    const endMs = boundaries[index + 1]
+    const types = [
+      ...new Set(
+        intervals
+          .filter((interval) => interval.startMs <= startMs && interval.endMs >= endMs)
+          .flatMap((interval) => interval.types),
+      ),
+    ]
+    if (!types.length || endMs <= startMs) continue
+    const previous = exact.at(-1)
+    if (
+      previous &&
+      previous.endMs === startMs &&
+      JSON.stringify(previous.types) === JSON.stringify(types)
+    ) {
+      previous.endMs = endMs
+    } else {
+      exact.push({ startMs, endMs, types })
+    }
+  }
+  return exact
+}
+
 const apiKey = Symbol.for('studio.okay-karaoke.stage-frame-state')
 const localApi = Object.freeze({
   adjustedLineRange,
   createStageFramePlanner,
   frameStateAt,
   resolveVocalStyle,
+  openingTimingAdvisoryForProject,
+  openingTimingFactsForProject,
+  titleEndForProject,
   visibleTracks,
 })
 const sharedApi = globalThis[apiKey] ?? localApi

@@ -97,6 +97,45 @@ describe('Opening Timing control in the Inspector', () => {
     })
   })
 
+  it('uses tenth-second fixed title timing and describes a zero-length title truthfully', () => {
+    const fixed = container.querySelector<HTMLSelectElement>('[aria-label="Title timing mode"]')!
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set
+      setter?.call(fixed, 'fixed')
+      fixed.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    expect(onUpdateProject).toHaveBeenLastCalledWith({
+      opening: { leadInMs: 0, titleTiming: { mode: 'fixed', durationMs: 0 } },
+    })
+  })
+
+  it('does not describe a hidden fixed title as a zero-second interval', () => {
+    const project = createProject({
+      id: 'hidden-fixed-title',
+      opening: { leadInMs: 1_000, titleTiming: { mode: 'fixed', durationMs: 7_000 } },
+    })
+    project.stageStyle.titleCard.eyebrow.visible = false
+    project.stageStyle.titleCard.title.visible = false
+    project.stageStyle.titleCard.artist.visible = false
+    act(() =>
+      root.render(
+        <InspectorPanel
+          project={project}
+          activeTrackId="lead"
+          onSelectTrack={() => undefined}
+          onUpdateProject={onUpdateProject}
+          onUpdateTrack={() => undefined}
+          onImportAudio={() => undefined}
+          onImportLrc={() => undefined}
+        />,
+      ),
+    )
+
+    const summary = container.querySelector('.opening-timing-control__summary')?.textContent
+    expect(summary).toBe('Title is not visible in output.')
+    expect(summary).not.toContain('Title 0:00–0.0')
+  })
+
   it('cancels Escape without committing or bubbling and restores the accepted text', () => {
     const input = container.querySelector<HTMLInputElement>(
       '[aria-label="Opening lead-in seconds"]',

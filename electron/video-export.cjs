@@ -11,6 +11,7 @@ const {
   createStageFramePlanner,
   frameStateAt: styleFrameStateAt,
   resolveVocalStyle,
+  titleEndForProject,
 } = require('./stage-frame-state.cjs')
 const {
   FRAME_MARKER_BITS,
@@ -107,8 +108,10 @@ function effectiveVideoDurationForProject(project, requestedDurationMs) {
     return Math.max(latestTrack, latestLine)
   }, 0)
   const requested = finiteInteger(requestedDurationMs)
+  const titleEndMs = titleEndForProject(project)
   const durationMs = Math.max(
     (project.durationMs ?? 0) + project.opening.leadInMs,
+    Number.isFinite(titleEndMs) ? titleEndMs : 0,
     requested,
     latestLyricMs,
     1_000,

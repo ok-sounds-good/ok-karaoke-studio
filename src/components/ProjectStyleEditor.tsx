@@ -13,6 +13,7 @@ import type {
 import { canonicalSingerStyle } from '../hooks/useProjectStyleSession'
 import type { KaraokeProject } from '../lib/model'
 import { openingLeadInMaximum } from '../lib/project-validation'
+import { openingTimingFactsForProject } from '../lib/stage-frame-state'
 import {
   FONT_SIZE_OPTIONS,
   cloneFontFace,
@@ -132,7 +133,7 @@ export function ProjectStyleEditor({
   const previewProject = {
     ...project,
     lyricDisplay: { ...draft.lyricDisplay },
-    opening: { leadInMs: draft.opening.leadInMs, titleTiming: { mode: 'until-lyrics' as const } },
+    opening: structuredClone(draft.opening),
     stageStyle,
     tracks: project.tracks.map((track) => {
       const singer = draft.singers.find(({ trackId }) => trackId === track.id)
@@ -427,6 +428,7 @@ export function ProjectStyleEditor({
             onDraftChange={changeStageStyle}
             openingMaximumMs={openingLeadInMaximum(project)}
             opening={draft.opening}
+            openingFacts={openingTimingFactsForProject(previewProject)}
             onOpeningChange={(opening) => onDraftChange((current) => ({ ...current, opening }))}
             onRetryFonts={onRetryFonts}
             onSelectedRoleChange={setTitleCardPreviewRole}

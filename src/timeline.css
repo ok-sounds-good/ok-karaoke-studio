@@ -176,6 +176,23 @@
   cursor: crosshair;
 }
 
+.timeline-title-interval {
+  position: absolute;
+  z-index: 1;
+  top: 2px;
+  left: 0;
+  height: calc(var(--timeline-ruler-height) - 4px);
+  overflow: hidden;
+  border-right: 1px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--text);
+  font-size: 8px;
+  line-height: calc(var(--timeline-ruler-height) - 4px);
+  pointer-events: none;
+  text-indent: 5px;
+  white-space: nowrap;
+}
+
 .timeline-tick {
   position: absolute;
   bottom: 0;

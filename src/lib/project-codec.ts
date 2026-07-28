@@ -171,11 +171,26 @@ function decodeCurrentOpening(value: unknown): OpeningTiming {
     throw new TypeError('project.opening.leadInMs must be between zero and four hours.')
   }
   const titleTiming = requireCurrentRecord(record.titleTiming, 'project.opening.titleTiming')
-  requireExactKeys(titleTiming, ['mode'], 'project.opening.titleTiming')
-  if (requireCurrentString(titleTiming, 'mode', 'project.opening.titleTiming') !== 'until-lyrics') {
-    throw new TypeError('project.opening.titleTiming.mode must be until-lyrics.')
+  const mode = requireCurrentString(titleTiming, 'mode', 'project.opening.titleTiming')
+  if (mode === 'until-lyrics') {
+    requireExactKeys(titleTiming, ['mode'], 'project.opening.titleTiming')
+    return { leadInMs, titleTiming: { mode } }
   }
-  return { leadInMs, titleTiming: { mode: 'until-lyrics' } }
+  if (mode === 'fixed') {
+    requireExactKeys(titleTiming, ['mode', 'durationMs'], 'project.opening.titleTiming')
+    const durationMs = requireCurrentInteger(
+      titleTiming,
+      'durationMs',
+      'project.opening.titleTiming',
+    )
+    if (durationMs < 0 || durationMs > MAX_OPENING_LEAD_IN_MS) {
+      throw new TypeError(
+        'project.opening.titleTiming.durationMs must be between zero and four hours.',
+      )
+    }
+    return { leadInMs, titleTiming: { mode, durationMs } }
+  }
+  throw new TypeError('project.opening.titleTiming.mode must be until-lyrics or fixed.')
 }
 
 function decodeCurrentProject(value: Record<string, unknown>): KaraokeProject {

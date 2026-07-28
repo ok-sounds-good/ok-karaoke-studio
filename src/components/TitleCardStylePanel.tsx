@@ -2,6 +2,7 @@ import { useId, useState } from 'react'
 import type { InstalledFontState } from '../hooks/useInstalledFonts'
 import type { StageStyleDraftChange } from '../hooks/useProjectStyleSession'
 import type { OpeningTiming } from '../lib/model'
+import type { OpeningTimingFacts } from '../lib/stage-frame-state'
 import type { StageStyle, VisibleTextStyle } from '../lib/video-style'
 import { OpeningTimingControl } from './OpeningTimingControl'
 import { VisibleTextRoleEditor } from './VisibleTextRoleEditor'
@@ -24,6 +25,7 @@ interface TitleCardStylePanelProps {
   onDraftChange: (change: StageStyleDraftChange) => void
   openingMaximumMs: number
   opening: OpeningTiming
+  openingFacts: OpeningTimingFacts
   onOpeningChange: (opening: OpeningTiming) => void
   onRetryFonts: () => void
   onSelectedRoleChange: (role: TitleCardRole) => void
@@ -39,6 +41,7 @@ export function TitleCardStylePanel({
   onDraftChange,
   openingMaximumMs,
   opening,
+  openingFacts,
   onOpeningChange,
   onRetryFonts,
   onSelectedRoleChange,
@@ -67,6 +70,7 @@ export function TitleCardStylePanel({
       <OpeningTimingControl
         maximumMs={openingMaximumMs}
         opening={opening}
+        facts={openingFacts}
         onChange={onOpeningChange}
       />
       <fieldset className="title-card-role-selector">

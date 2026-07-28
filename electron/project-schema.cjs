@@ -131,11 +131,22 @@ function decodeOpening(value) {
     throw new TypeError('project.opening.leadInMs must be between zero and four hours.')
   }
   const titleTiming = record(source.titleTiming, 'project.opening.titleTiming')
-  exactKeys(titleTiming, ['mode'], 'project.opening.titleTiming')
-  if (string(titleTiming, 'mode', 'project.opening.titleTiming') !== 'until-lyrics') {
-    throw new TypeError('project.opening.titleTiming.mode must be until-lyrics.')
+  const mode = string(titleTiming, 'mode', 'project.opening.titleTiming')
+  if (mode === 'until-lyrics') {
+    exactKeys(titleTiming, ['mode'], 'project.opening.titleTiming')
+    return { leadInMs, titleTiming: { mode } }
   }
-  return { leadInMs, titleTiming: { mode: 'until-lyrics' } }
+  if (mode === 'fixed') {
+    exactKeys(titleTiming, ['mode', 'durationMs'], 'project.opening.titleTiming')
+    const durationMs = integer(titleTiming, 'durationMs', 'project.opening.titleTiming')
+    if (durationMs < 0 || durationMs > MAX_OPENING_LEAD_IN_MS) {
+      throw new TypeError(
+        'project.opening.titleTiming.durationMs must be between zero and four hours.',
+      )
+    }
+    return { leadInMs, titleTiming: { mode, durationMs } }
+  }
+  throw new TypeError('project.opening.titleTiming.mode must be until-lyrics or fixed.')
 }
 
 function validateTiming(startMs, endMs, label) {
@@ -192,12 +203,21 @@ function validateProject(project) {
       'Invalid karaoke project: Opening lead-in must be a safe integer between zero and four hours.',
     )
   }
-  if (project.opening.titleTiming.mode !== 'until-lyrics') {
-    throw new Error('Invalid karaoke project: Opening title timing mode must be until-lyrics.')
+  if (
+    project.opening.titleTiming.mode !== 'until-lyrics' &&
+    (project.opening.titleTiming.mode !== 'fixed' ||
+      !Number.isSafeInteger(project.opening.titleTiming.durationMs) ||
+      project.opening.titleTiming.durationMs < 0 ||
+      project.opening.titleTiming.durationMs > MAX_OPENING_LEAD_IN_MS)
+  ) {
+    throw new Error('Invalid karaoke project: Opening title timing must be until-lyrics or fixed.')
   }
   if (
     project.durationMs !== null &&
-    project.durationMs + project.opening.leadInMs > MAX_PROJECT_DURATION_MS
+    Math.max(
+      project.durationMs + project.opening.leadInMs,
+      project.opening.titleTiming.mode === 'fixed' ? project.opening.titleTiming.durationMs : 0,
+    ) > MAX_PROJECT_DURATION_MS
   ) {
     throw new Error(
       'Invalid karaoke project: Project duration including opening cannot exceed four hours.',

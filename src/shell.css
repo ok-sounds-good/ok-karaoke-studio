@@ -180,6 +180,12 @@
   overflow-y: auto;
 }
 
+.studio-main-shell {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+}
+
 @media (max-width: 1240px) {
   .topbar {
     grid-template-columns: minmax(170px, 1fr) minmax(0, 1fr) minmax(180px, 1fr);

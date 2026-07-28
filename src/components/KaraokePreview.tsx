@@ -875,7 +875,16 @@ export function KaraokePreview({
           }
         : null
   const activeVocalTrack = project.tracks.find((track) => track.id === activeVocalTrackId) ?? null
-  const previewContent = viewMode === 'auto' ? (frame.showTitle ? 'title' : 'song') : viewMode
+  const previewContent =
+    viewMode === 'auto'
+      ? frame.showTitle && frame.lines.length
+        ? 'title + song'
+        : frame.showTitle
+          ? 'title'
+          : frame.lines.length
+            ? 'song'
+            : 'blank'
+      : viewMode
   const visibleTitleRoles = TITLE_CARD_ROLES.filter(
     ({ value }) => stageStyle.titleCard[value].visible,
   )
@@ -931,14 +940,16 @@ export function KaraokePreview({
       : selectedOutputTrackId
   const trackNames = new Map(project.tracks.map((track) => [track.id, track.name]))
   const showTitleCard =
-    isTitleCardDesign || (isDesigning ? frame.showTitle : previewContent === 'title')
+    isTitleCardDesign ||
+    (isDesigning
+      ? frame.showTitle
+      : viewMode === 'title' || (viewMode === 'auto' && frame.showTitle))
   const showOutputLyrics =
-    !isTitleCardDesign && (isDesigning ? !frame.showTitle : previewContent === 'song')
-  const syncAids = isDesigning
-    ? cueFrame.syncAids
-    : viewMode === 'auto' && previewContent === 'song'
-      ? frame.syncAids
-      : []
+    !isTitleCardDesign &&
+    (isDesigning
+      ? frame.lines.length > 0
+      : viewMode === 'song' || (viewMode === 'auto' && frame.lines.length > 0))
+  const syncAids = isDesigning ? cueFrame.syncAids : viewMode === 'auto' ? frame.syncAids : []
 
   return (
     <section
@@ -995,7 +1006,7 @@ export function KaraokePreview({
                 <option value="song">Song</option>
               </select>
             </label>
-            {previewContent === 'title' ? (
+            {showTitleCard ? (
               <label className="preview-setting">
                 <span>Element</span>
                 <select
@@ -1204,7 +1215,11 @@ export function KaraokePreview({
                 lineCount={lyricLineCount}
                 lines={trackLines}
                 onCenterSnapChange={updateCenterSnapAxes}
-                selected={trackId === selectedLyricTrackId && Boolean(onVocalPositionChange)}
+                selected={
+                  trackId === selectedLyricTrackId &&
+                  Boolean(onVocalPositionChange) &&
+                  !showTitleCard
+                }
                 selectedWordIds={selectedWordIds}
                 stageRef={stageRef}
                 style={style}

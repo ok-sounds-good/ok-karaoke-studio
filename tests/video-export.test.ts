@@ -306,6 +306,19 @@ describe('karaoke video frame planning', () => {
     )
   })
 
+  it('extends fixed title exports once and preserves 30/60 fps scheduling', () => {
+    const project = videoProject()
+    project.durationMs = 5_000
+    project.opening = { leadInMs: 1_000, titleTiming: { mode: 'fixed', durationMs: 7_000 } }
+
+    expect(videoExport.effectiveVideoDuration(project, 0)).toBe(7_000)
+    for (const fps of [30, 60]) {
+      const timeline = videoExport.buildFrameTimeline(project, 0, { fps })
+      expect(timeline.durationMs).toBe(7_000)
+      expect(timeline.times).toHaveLength(7 * fps)
+    }
+  })
+
   it('renders title and per-word progress aligned to word starts and ends', () => {
     expect(videoExport.frameStateAt(videoProject(), 0).showTitle).toBe(false)
 

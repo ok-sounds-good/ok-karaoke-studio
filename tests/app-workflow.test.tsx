@@ -2243,6 +2243,51 @@ describe('mounted first-time workflow', () => {
     )
   })
 
+  it('exports the exact short-audio output duration, extending only for a fixed title', async () => {
+    MetadataAudio.instances = []
+    vi.stubGlobal('Audio', MetadataAudio)
+    const project = createProject({
+      title: 'Short Title',
+      artist: 'Test Singer',
+      durationMs: 5_000,
+      opening: { leadInMs: 1_000, titleTiming: { mode: 'fixed', durationMs: 7_000 } },
+      tracks: [
+        createVocalTrack({
+          id: 'lead',
+          lines: [
+            createLyricLine('Short title', {
+              startMs: 0,
+              endMs: 1_000,
+              words: [createLyricWord('Short', { startMs: 0, endMs: 1_000 })],
+            }),
+          ],
+        }),
+      ],
+    })
+    project.audioPath = '/music/short-title.mp3'
+    harness.openProject.mockResolvedValueOnce({
+      requestId: 'short-fixed-title-open',
+      path: '/opened/short-fixed-title.oks',
+      contents: serializeProject(project),
+    })
+    vi.mocked(harness.studio.resolveProjectAudio).mockResolvedValueOnce({
+      path: project.audioPath,
+      name: 'short-title.mp3',
+      url: 'studio-media://asset/short-title.mp3',
+    })
+
+    await clickButton('Workflow')
+    await clickButton('Open .oks')
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+    await clickButton('Workflow')
+    await clickButton('Choose export')
+    await clickButton('Karaoke video')
+
+    expect(harness.exportVideo).toHaveBeenLastCalledWith(
+      expect.objectContaining({ durationMs: 7_000 }),
+    )
+  })
+
   it('rejects linked-image video export before IPC or progress starts', async () => {
     const project = createDemoProject()
     Object.assign(project.stageStyle.background, {

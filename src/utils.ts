@@ -65,6 +65,19 @@ export function effectiveDuration(project: KaraokeProject): number {
   return Math.max((project.durationMs ?? 0) + openingMs, paddedLatest, 30_000)
 }
 
+/**
+ * The playback/export clock is exact once audio metadata is available. The
+ * editor's padded duration remains a viewport aid only.
+ */
+export function authoritativeOutputDuration(project: KaraokeProject, scheduledEndMs = 0): number {
+  const audioEndMs =
+    project.durationMs === null
+      ? effectiveDuration(project)
+      : project.durationMs + project.opening.leadInMs
+  const finiteScheduledEndMs = Number.isFinite(scheduledEndMs) ? Math.max(0, scheduledEndMs) : 0
+  return Math.max(audioEndMs, finiteScheduledEndMs)
+}
+
 export function getActiveLine(track: VocalTrack, timeMs: number): LyricLine | null {
   const timed = track.lines.filter((line) => line.startMs !== null)
   const direct = timed.find(

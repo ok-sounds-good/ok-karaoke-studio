@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 interface PlaybackOptions {
+  allowPostAudioPlayback?: boolean
   durationMs: number
   leadInMs?: number
   audioUrl?: string | null
@@ -15,6 +16,7 @@ export interface PlaybackClock {
 }
 
 export function usePlayback({
+  allowPostAudioPlayback = false,
   durationMs,
   leadInMs = 0,
   audioUrl,
@@ -30,6 +32,7 @@ export function usePlayback({
   const listenersRef = useRef(new Set<() => void>())
   const clockConfigRef = useRef({ leadInMs, playableDurationMs: durationMs })
   const audioStartedRef = useRef(false)
+  const audioEndedRef = useRef(false)
   const playAttemptRef = useRef(0)
   const startAudioRef = useRef<() => void>(() => undefined)
   const [, setClockRevision] = useState(0)
@@ -37,7 +40,7 @@ export function usePlayback({
   const [rate, setRateState] = useState(1)
   const [volume, setVolumeState] = useState(0.86)
   const [audioDurationMs, setAudioDurationMs] = useState<number | null>(null)
-  const playableDurationMs = audioDurationMs === null ? durationMs : audioDurationMs + leadInMs
+  const playableDurationMs = Math.max(durationMs, (audioDurationMs ?? 0) + leadInMs)
   clockConfigRef.current = { leadInMs, playableDurationMs }
 
   const clockRef = useRef<PlaybackClock | null>(null)
@@ -53,7 +56,10 @@ export function usePlayback({
           clockConfigRef.current
         const audio = audioRef.current
         const liveMs =
-          currentMsRef.current >= currentLeadInMs && audio && Number.isFinite(audio.currentTime)
+          currentMsRef.current >= currentLeadInMs &&
+          !audioEndedRef.current &&
+          audio &&
+          Number.isFinite(audio.currentTime)
             ? Math.round(audio.currentTime * 1000) + currentLeadInMs
             : currentMsRef.current
         return Math.max(0, Math.min(currentPlayableDurationMs, liveMs))
@@ -75,6 +81,7 @@ export function usePlayback({
     lastPublishedMsRef.current = 0
     lastFrameRef.current = null
     audioStartedRef.current = false
+    audioEndedRef.current = false
     playAttemptRef.current += 1
     setClockRevision((revision) => revision + 1)
     setIsPlaying(false)
@@ -98,8 +105,9 @@ export function usePlayback({
     }
     const handleEnded = () => {
       audioStartedRef.current = false
+      audioEndedRef.current = true
       playAttemptRef.current += 1
-      setIsPlaying(false)
+      if (!allowPostAudioPlayback) setIsPlaying(false)
     }
     audio.addEventListener('loadedmetadata', handleLoadedMetadata)
     audio.addEventListener('ended', handleEnded)
@@ -114,7 +122,7 @@ export function usePlayback({
       audio.load()
       if (audioRef.current === audio) audioRef.current = null
     }
-  }, [audioUrl, onDuration, publishClock])
+  }, [allowPostAudioPlayback, audioUrl, onDuration, publishClock])
 
   useEffect(() => {
     const audio = audioRef.current
@@ -144,6 +152,7 @@ export function usePlayback({
       frameRef.current = null
       audioRef.current?.pause()
       audioStartedRef.current = false
+      audioEndedRef.current = false
       playAttemptRef.current += 1
       startAudioRef.current = () => undefined
       return
@@ -153,7 +162,14 @@ export function usePlayback({
     const startAudio = () => {
       const activeAudio = audioRef.current
       if (!activeAudio || audioStartedRef.current) return
-      activeAudio.currentTime = Math.max(0, (currentMsRef.current - leadInMs) / 1000)
+      const sourceMs = Math.max(0, currentMsRef.current - leadInMs)
+      if (Number.isFinite(activeAudio.duration) && sourceMs >= activeAudio.duration * 1_000) {
+        activeAudio.pause()
+        audioEndedRef.current = true
+        return
+      }
+      activeAudio.currentTime = sourceMs / 1_000
+      audioEndedRef.current = false
       audioStartedRef.current = true
       const attempt = playAttemptRef.current + 1
       playAttemptRef.current = attempt
@@ -178,6 +194,7 @@ export function usePlayback({
       let nextMs: number
       if (
         activeAudio &&
+        !audioEndedRef.current &&
         currentMsRef.current >= leadInMs &&
         Number.isFinite(activeAudio.currentTime)
       ) {
@@ -188,12 +205,13 @@ export function usePlayback({
       } else {
         const previous = lastFrameRef.current ?? timestamp
         const elapsed = (timestamp - previous) * rate
-        nextMs = Math.min(activeAudio ? leadInMs : durationMs, currentMsRef.current + elapsed)
+        nextMs = Math.min(durationMs, currentMsRef.current + elapsed)
         if (nextMs >= durationMs) setIsPlaying(false)
         lastFrameRef.current = timestamp
       }
       if (activeAudio && nextMs >= leadInMs && currentMsRef.current < leadInMs) {
         currentMsRef.current = leadInMs
+        audioEndedRef.current = false
         startAudio()
         nextMs = leadInMs
       }
@@ -205,6 +223,10 @@ export function usePlayback({
       ) {
         lastPublishedMsRef.current = nextMs
         publishClock(nextMs)
+      }
+      if (nextMs >= durationMs) {
+        frameRef.current = null
+        return
       }
       frameRef.current = requestAnimationFrame(tick)
     }
@@ -228,6 +250,7 @@ export function usePlayback({
         audio.currentTime = Math.max(0, next - leadInMs) / 1000
         playAttemptRef.current += 1
         audioStartedRef.current = false
+        audioEndedRef.current = false
         if (next < leadInMs) {
           audio.pause()
         } else if (isPlaying) {
@@ -238,9 +261,26 @@ export function usePlayback({
     [isPlaying, leadInMs, playableDurationMs, publishClock],
   )
 
-  const play = useCallback(() => setIsPlaying(true), [])
+  const play = useCallback(() => {
+    if (currentMsRef.current >= clockConfigRef.current.playableDurationMs) {
+      lastFrameRef.current = null
+      lastPublishedMsRef.current = 0
+      audioStartedRef.current = false
+      audioEndedRef.current = false
+      audioRef.current?.pause()
+      if (audioRef.current) audioRef.current.currentTime = 0
+      publishClock(0)
+    }
+    setIsPlaying(true)
+  }, [publishClock])
   const pause = useCallback(() => setIsPlaying(false), [])
-  const toggle = useCallback(() => setIsPlaying((value) => !value), [])
+  const toggle = useCallback(() => {
+    if (isPlaying) {
+      setIsPlaying(false)
+      return
+    }
+    play()
+  }, [isPlaying, play])
   const setRate = useCallback(
     (value: number) => setRateState(Math.max(0.5, Math.min(1.5, value))),
     [],
