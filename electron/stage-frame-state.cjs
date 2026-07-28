@@ -1,5 +1,7 @@
 'use strict'
 
+const SCROLL_TRANSITION_MS = 300
+
 function compareOrdinal(left, right) {
   if (left < right) return -1
   if (left > right) return 1
@@ -84,18 +86,21 @@ function displayWindows(track, settings) {
   const windows = []
   const firstSectionLineIds = new Set()
   let previousCompletion = Number.NEGATIVE_INFINITY
+  let previousSection = null
   for (const section of sectionsForTrack(track)) {
+    let previousTransitionEndMs = Number.NEGATIVE_INFINITY
     if (section[0]) firstSectionLineIds.add(section[0].id)
     const timed = section.flatMap((line) => {
       const range = rawLineRange(line)
       return range ? [{ line, range }] : []
     })
     if (!timed.length) continue
+    const sectionWindows = []
     if (settings.advanceMode === 'clear') {
       for (let start = 0; start < timed.length; start += settings.lineCount) {
         const entries = timed.slice(start, start + settings.lineCount)
         const completionMs = Math.max(...entries.map(({ range }) => range.endMs))
-        windows.push({
+        sectionWindows.push({
           entries,
           activationMs: Math.max(
             entries[0].range.startMs - track.vocalStyle.previewMs,
@@ -112,19 +117,53 @@ function displayWindows(track, settings) {
         const entering = start === 0 ? timed[0] : timed[start + settings.lineCount - 1]
         const removed = start > 0 ? timed[start - 1] : null
         const completionMs = Math.max(...entries.map(({ range }) => range.endMs))
-        windows.push({
+        const requestedActivationMs = Math.max(
+          entering.range.startMs - track.vocalStyle.previewMs,
+          removed?.range.endMs ?? previousCompletion,
+        )
+        const activationMs = removed
+          ? Math.max(requestedActivationMs, previousTransitionEndMs)
+          : requestedActivationMs
+        sectionWindows.push({
           entries,
-          activationMs: Math.max(
-            entering.range.startMs - track.vocalStyle.previewMs,
-            removed?.range.endMs ?? previousCompletion,
-          ),
+          activationMs,
           completionMs,
+          outgoing: removed?.line ?? null,
         })
+        if (removed) previousTransitionEndMs = activationMs + SCROLL_TRANSITION_MS
         if (start === maximumStart) previousCompletion = completionMs
       }
+      const finalWindow = sectionWindows.at(-1)
+      if (finalWindow?.outgoing) {
+        finalWindow.visibleUntilMs = Math.max(
+          finalWindow.completionMs,
+          finalWindow.activationMs + SCROLL_TRANSITION_MS,
+        )
+      }
     }
+    const resetAtMs = sectionWindows[0].activationMs
+    if (previousSection) {
+      const retained = previousSection.windows.filter(
+        ({ activationMs }) => activationMs < resetAtMs,
+      )
+      windows.splice(previousSection.startIndex, previousSection.windows.length, ...retained)
+    }
+    const startIndex = windows.length
+    windows.push(...sectionWindows)
+    previousSection = { startIndex, windows: sectionWindows }
   }
   return { firstSectionLineIds, windows }
+}
+
+function scrollEntries(active, lyricMs) {
+  if (!active?.outgoing) return active?.entries ?? []
+  const elapsedMs = lyricMs - active.activationMs
+  if (elapsedMs < 0 || elapsedMs >= SCROLL_TRANSITION_MS) return active.entries
+  const progress = Math.max(0, Math.min(1, elapsedMs / SCROLL_TRANSITION_MS))
+  return [
+    { line: active.outgoing, slot: progress === 0 ? 0 : -progress },
+    ...active.entries.map((entry, index) => ({ line: entry.line, slot: index + 1 - progress })),
+  ]
 }
 function activeWindow(windows, lyricMs) {
   let low = 0
@@ -139,7 +178,14 @@ function activeWindow(windows, lyricMs) {
       high = middle - 1
     }
   }
-  if (!active || (active === windows.at(-1) && lyricMs >= active.completionMs)) return null
+  if (
+    !active ||
+    (active === windows.at(-1) &&
+      (active.visibleUntilMs === undefined
+        ? lyricMs >= active.completionMs
+        : lyricMs > active.visibleUntilMs))
+  )
+    return null
   return active
 }
 function wordProgress(word, lyricMs) {
@@ -231,9 +277,10 @@ function createStageFramePlanner(project) {
       active: activeWindow(entry.windows, lyricMs),
     }))
     const lines = planned.flatMap(({ active, style, track }) =>
-      (active?.entries ?? []).map(({ line }) => ({
+      scrollEntries(active, lyricMs).map(({ line, slot }, index) => ({
         id: line.id,
         trackId: track.id,
+        slot: slot ?? index,
         text: line.text.replaceAll('/', '·'),
         style,
         words: line.words
@@ -307,10 +354,13 @@ function openingTimingAdvisoryForProject(project) {
     if (end > start) intervals.push({ startMs: start, endMs: end, types: [type] })
   }
   for (const { firstSectionLineIds, track, windows } of tracks) {
-    for (const window of windows) {
+    for (let index = 0; index < windows.length; index += 1) {
+      const window = windows[index]
+      const visibleEndMs =
+        windows[index + 1]?.activationMs ?? window.visibleUntilMs ?? window.completionMs
       add(
         project.opening.leadInMs + window.activationMs + project.offsetMs,
-        project.opening.leadInMs + window.completionMs + project.offsetMs,
+        project.opening.leadInMs + visibleEndMs + project.offsetMs,
         'lyrics',
       )
       const entry = window.entries.find(({ line }) => firstSectionLineIds.has(line.id))
@@ -367,6 +417,7 @@ function openingTimingAdvisoryForProject(project) {
 
 const apiKey = Symbol.for('studio.okay-karaoke.stage-frame-state')
 const localApi = Object.freeze({
+  SCROLL_TRANSITION_MS,
   adjustedLineRange,
   createStageFramePlanner,
   frameStateAt,

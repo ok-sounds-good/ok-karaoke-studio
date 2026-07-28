@@ -12,7 +12,7 @@ import {
   createVocalTrack,
 } from '../src/lib/karaoke'
 import { cloneVocalStyle } from '../src/lib/video-style'
-import { previewFrameStateAt } from '../src/lib/stage-frame-state'
+import { SCROLL_TRANSITION_MS, previewFrameStateAt } from '../src/lib/stage-frame-state'
 
 const require = createRequire(import.meta.url)
 const videoExport = require('../electron/video-export.cjs') as {
@@ -42,6 +42,7 @@ const videoExport = require('../electron/video-export.cjs') as {
     showTitle: boolean
     lines: Array<{
       trackId: string
+      slot?: number
       style: { sungColor: string }
       text: string
       words: Array<{ text: string; progress: number }>
@@ -437,7 +438,7 @@ describe('karaoke video frame planning', () => {
           1_000,
         )
         .lines.map((line) => line.text),
-    ).toEqual(['Two', 'Three', 'Four'])
+    ).toEqual(['One', 'Two', 'Three', 'Four'])
     expect(
       videoExport
         .frameStateAt(
@@ -449,6 +450,215 @@ describe('karaoke video frame planning', () => {
         )
         .lines.map((line) => line.text),
     ).toEqual(['Two', 'Three', 'Four'])
+  })
+
+  it('plans a time-based clipped Scroll handoff without changing Clear or crossing sections', () => {
+    const base = videoProject()
+    const project = {
+      ...base,
+      offsetMs: 0,
+      durationMs: 6_000,
+      lyricDisplay: { lineCount: 2 as const, advanceMode: 'scroll' as const },
+      tracks: [
+        {
+          ...base.tracks[0],
+          vocalStyle: {
+            ...base.tracks[0].vocalStyle,
+            previewMs: 0,
+            syncAid: { enabled: false, minLeadMs: 0, maxLeadMs: 0 },
+          },
+          lines: [
+            timedVideoLine('One', 0, 1_000),
+            timedVideoLine('Two', 1_000, 2_000),
+            timedVideoLine('Three', 2_000, 3_000),
+            blankVideoLine(),
+            timedVideoLine('Four', 4_000, 5_000),
+            timedVideoLine('Five', 5_000, 6_000),
+          ],
+        },
+      ],
+    }
+    const at = (time: number) => videoExport.frameStateAt(project, time).lines
+
+    expect(at(1_999).map(({ text, slot }) => [text, slot])).toEqual([
+      ['One', 0],
+      ['Two', 1],
+    ])
+    expect(at(2_000).map(({ text, slot }) => [text, slot])).toEqual([
+      ['One', 0],
+      ['Two', 1],
+      ['Three', 2],
+    ])
+    expect(at(2_000 + SCROLL_TRANSITION_MS / 2).map(({ text, slot }) => [text, slot])).toEqual([
+      ['One', -0.5],
+      ['Two', 0.5],
+      ['Three', 1.5],
+    ])
+    expect(at(2_000 + SCROLL_TRANSITION_MS).map(({ text, slot }) => [text, slot])).toEqual([
+      ['Two', 0],
+      ['Three', 1],
+    ])
+    expect(at(4_000).map(({ text, slot }) => [text, slot])).toEqual([
+      ['Four', 0],
+      ['Five', 1],
+    ])
+
+    const clear = {
+      ...project,
+      lyricDisplay: { lineCount: 2 as const, advanceMode: 'clear' as const },
+    }
+    expect(
+      videoExport.frameStateAt(clear, 2_000).lines.map(({ text, slot }) => [text, slot]),
+    ).toEqual([['Three', 0]])
+  })
+
+  it.each([
+    { lineCount: 1, handoffMs: 100, nextHandoffMs: 400, finalMs: 1_000 },
+    { lineCount: 2, handoffMs: 200, nextHandoffMs: 500, finalMs: 800 },
+  ])(
+    'queues rapid valid Scroll handoffs for $lineCount visible line(s) without slot snaps',
+    ({ lineCount, handoffMs, nextHandoffMs, finalMs }) => {
+      const base = videoProject()
+      const project = {
+        ...base,
+        durationMs: 1_300,
+        offsetMs: 0,
+        lyricDisplay: { lineCount, advanceMode: 'scroll' as const },
+        tracks: [
+          {
+            ...base.tracks[0],
+            vocalStyle: {
+              ...base.tracks[0].vocalStyle,
+              previewMs: 0,
+              syncAid: { enabled: false, minLeadMs: 0, maxLeadMs: 0 },
+            },
+            lines: [
+              timedVideoLine('One', 0, 100),
+              timedVideoLine('Two', 100, 200),
+              timedVideoLine('Three', 200, 300),
+              timedVideoLine('Four', 300, 400),
+            ],
+          },
+        ],
+      }
+      const stateAt = (time: number) => videoExport.frameStateAt(project, time)
+      const beforeSecondActivation = stateAt(handoffMs + 99)
+      const atSecondActivation = stateAt(handoffMs + 100)
+      const queuedIncoming = lineCount === 1 ? 'Three' : 'Four'
+
+      expect(previewFrameStateAt(project, handoffMs + 100)).toEqual(atSecondActivation)
+      expect(atSecondActivation.lines.map(({ text }) => text)).not.toContain(queuedIncoming)
+      expect(atSecondActivation.lines.map(({ slot }) => slot)).toHaveLength(
+        beforeSecondActivation.lines.length,
+      )
+      atSecondActivation.lines.forEach((line, index) => {
+        expect(line.slot).toBeLessThanOrEqual(beforeSecondActivation.lines[index]!.slot!)
+      })
+
+      const secondTransition = stateAt(nextHandoffMs)
+      expect(secondTransition.lines.map(({ slot }) => slot)).toEqual(
+        Array.from({ length: lineCount + 1 }, (_unused, index) => index),
+      )
+      expect(stateAt(finalMs).lines.map(({ slot }) => slot)).toEqual(
+        Array.from({ length: lineCount }, (_unused, index) => index),
+      )
+      expect(stateAt(finalMs + 1).lines).toEqual([])
+    },
+  )
+
+  it('resets a rapid Scroll queue at a blank-row section boundary without reviving old rows', () => {
+    const base = videoProject()
+    const project = {
+      ...base,
+      durationMs: 1_000,
+      offsetMs: 0,
+      lyricDisplay: { lineCount: 1 as const, advanceMode: 'scroll' as const },
+      tracks: [
+        {
+          ...base.tracks[0],
+          vocalStyle: {
+            ...base.tracks[0].vocalStyle,
+            previewMs: 0,
+            syncAid: { enabled: false, minLeadMs: 0, maxLeadMs: 0 },
+          },
+          lines: [
+            timedVideoLine('One', 0, 100),
+            timedVideoLine('Two', 100, 200),
+            timedVideoLine('Three', 200, 300),
+            timedVideoLine('Four', 300, 400),
+            blankVideoLine(),
+            timedVideoLine('Fresh section', 400, 500),
+          ],
+        },
+      ],
+    }
+
+    expect(videoExport.frameStateAt(project, 399).lines.map(({ text }) => text)).toEqual([
+      'One',
+      'Two',
+    ])
+    expect(
+      videoExport.frameStateAt(project, 400).lines.map(({ text, slot }) => [text, slot]),
+    ).toEqual([['Fresh section', 0]])
+    expect(videoExport.frameStateAt(project, 450).lines.map(({ text }) => text)).toEqual([
+      'Fresh section',
+    ])
+    expect(videoExport.frameStateAt(project, 700).lines).toEqual([])
+  })
+
+  it('keeps overlapping singers independent at a Scroll handoff and matches 30/60 fps by time', () => {
+    const base = videoProject()
+    const track = (id: string, prefix: string, shiftMs: number) => ({
+      ...base.tracks[0],
+      id,
+      vocalStyle: {
+        ...base.tracks[0].vocalStyle,
+        position: { x: 960, y: 540 },
+        previewMs: 0,
+        syncAid: { enabled: false, minLeadMs: 0, maxLeadMs: 0 },
+      },
+      lines: [
+        timedVideoLine(`${prefix} one`, shiftMs, shiftMs + 1_000),
+        timedVideoLine(`${prefix} two`, shiftMs + 1_000, shiftMs + 2_000),
+        timedVideoLine(`${prefix} three`, shiftMs + 2_000, shiftMs + 3_000),
+      ],
+    })
+    const project = {
+      ...base,
+      offsetMs: 0,
+      lyricDisplay: { lineCount: 2 as const, advanceMode: 'scroll' as const },
+      tracks: [track('lead', 'Lead', 0), track('harmony', 'Harmony', 100)],
+    }
+    const sampleMs = 2_100
+    const state = videoExport.frameStateAt(project, sampleMs)
+    expect(state.lines.map(({ trackId, text }) => [trackId, text])).toEqual([
+      ['lead', 'Lead one'],
+      ['lead', 'Lead two'],
+      ['lead', 'Lead three'],
+      ['harmony', 'Harmony one'],
+      ['harmony', 'Harmony two'],
+      ['harmony', 'Harmony three'],
+    ])
+    expect(state.lines.map(({ slot }) => slot)).toEqual([
+      expect.any(Number),
+      expect.any(Number),
+      expect.any(Number),
+      0,
+      1,
+      2,
+    ])
+    expect(state.lines.slice(0, 3).map(({ slot }) => slot)).toEqual([
+      expect.closeTo(-1 / 3, 12),
+      expect.closeTo(2 / 3, 12),
+      expect.closeTo(5 / 3, 12),
+    ])
+    expect(previewFrameStateAt(project, sampleMs)).toEqual(state)
+    for (const fps of [30, 60] as const) {
+      expect(videoExport.buildFrameTimeline(project, 4_000, { fps }).times).toContain(sampleMs)
+      expect(previewFrameStateAt(project, sampleMs)).toEqual(
+        videoExport.frameStateAt(project, sampleMs),
+      )
+    }
   })
 
   it('gives every visible singer an independent Clear and Scroll window in track order', () => {
@@ -530,8 +740,10 @@ describe('karaoke video frame planning', () => {
     project.lyricDisplay.advanceMode = 'scroll'
     const scrollAtTwoSeconds = videoExport.frameStateAt(project, 2_000)
     expect(scrollAtTwoSeconds.lines.map(({ trackId, text }) => [trackId, text])).toEqual([
+      ['video-lead', 'Lead one'],
       ['video-lead', 'Lead two'],
       ['video-lead', 'Lead three'],
+      ['video-harmony', 'Harmony one'],
       ['video-harmony', 'Harmony two'],
       ['video-harmony', 'Harmony three'],
     ])
@@ -821,7 +1033,11 @@ describe('karaoke video frame planning', () => {
     expect(previewFrameStateAt(project, 6_000).lines.map(({ text }) => text)).toEqual(['D', 'E'])
 
     project.lyricDisplay.advanceMode = 'scroll'
-    expect(previewFrameStateAt(project, 4_000).lines.map(({ text }) => text)).toEqual(['B', 'C'])
+    expect(previewFrameStateAt(project, 4_000).lines.map(({ text }) => text)).toEqual([
+      'A',
+      'B',
+      'C',
+    ])
     expect(previewFrameStateAt(project, 6_000)).toEqual(videoExport.frameStateAt(project, 6_000))
   })
 

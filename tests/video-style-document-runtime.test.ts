@@ -176,6 +176,78 @@ describe('browser render runtime', () => {
     expect(document.querySelector<HTMLElement>('.lines')?.style.height).toBe('412px')
   })
 
+  it('clips a shared fractional Scroll slot plan while preserving each word fill identity', async () => {
+    stageDom()
+    installDisplayPlacement(window)
+    window.eval(`(${installKaraokeRuntime.toString()})()`)
+    const runtime = window as unknown as {
+      prepareKaraokeAssets(value: object): Promise<unknown>
+      renderKaraokeFrame(state: object, sequence: number): boolean
+    }
+    const stageStyle = cloneStageStyle()
+    stageStyle.lyrics.sizePx = 100
+    const style = {
+      ...stageStyle.lyrics,
+      alignment: 'center',
+      position: { x: 960, y: 540 },
+      sungColor: '#FF8A2B',
+      unsungColor: '#72687D',
+    }
+    await runtime.prepareKaraokeAssets({
+      backgroundDataUrl: '',
+      fonts: [],
+      stageLayout: structuredClone(STAGE_LAYOUT),
+      syncAidGeometry: structuredClone(SYNC_AID_GEOMETRY),
+    })
+    const line = (id: string, slot: number, progress: number) => ({
+      id,
+      trackId: 'lead',
+      slot,
+      text: id,
+      style,
+      words: [{ id: `${id}-word`, text: id, progress }],
+    })
+    const frame = (lines: object[]) => ({
+      artist: 'Artist',
+      title: 'Title',
+      playbackMs: 0,
+      showTitle: false,
+      lyricLineCount: 2,
+      stageStyle,
+      lines,
+      syncAids: [],
+    })
+    const slotPx = style.sizePx * STAGE_LAYOUT.lyric.lineBoxEm + STAGE_LAYOUT.lyric.gapsPx[2]
+
+    expect(
+      runtime.renderKaraokeFrame(
+        frame([line('outgoing', -0.5, 1), line('retained', 0.5, 0.5), line('incoming', 1.5, 0)]),
+        1,
+      ),
+    ).toBe(true)
+    expect(document.querySelector<HTMLElement>('.line-content')?.style.overflow).toBe('hidden')
+    expect(
+      [...document.querySelectorAll<HTMLElement>('.lyric')].map((item) => item.style.transform),
+    ).toEqual([
+      `translateY(${-0.5 * slotPx}px)`,
+      `translateY(${0.5 * slotPx}px)`,
+      `translateY(${1.5 * slotPx}px)`,
+    ])
+    expect(
+      [...document.querySelectorAll<HTMLElement>('.word-fill')].map((item) => item.style.width),
+    ).toEqual(['100.000%', '50.000%', '0.000%'])
+
+    expect(
+      runtime.renderKaraokeFrame(frame([line('retained', 0, 1), line('incoming', 1, 0.25)]), 2),
+    ).toBe(true)
+    expect(
+      [...document.querySelectorAll<HTMLElement>('.lyric')].map((item) => item.style.transform),
+    ).toEqual([`translateY(0px)`, `translateY(${slotPx}px)`])
+    expect(
+      [...document.querySelectorAll<HTMLElement>('.word-fill')].map((item) => item.style.width),
+    ).toEqual(['100.000%', '25.000%'])
+  })
+
   it('matches fonts, text safety, tuple line identities, progress, and asset reloads', async () => {
     stageDom()
     const loadedFaces: Array<{ family: string; source: string }> = []

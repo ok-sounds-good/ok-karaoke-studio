@@ -168,6 +168,13 @@ body {
   inset: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+}
+
+.line-content .lyric {
+  position: absolute;
+  right: 0;
+  left: 0;
 }
 
 .line-footprint__line,

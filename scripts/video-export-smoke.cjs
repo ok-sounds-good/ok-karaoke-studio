@@ -25,6 +25,7 @@ const MATRIX = Object.freeze(
     )
     .map((entry, index) => Object.freeze({ ...entry, ordinal: index + 1 })),
 )
+const SCROLL_CASES = Object.freeze([30, 60])
 
 function silentWav(durationSeconds, sampleRate = 48_000) {
   const channels = 2
@@ -173,6 +174,68 @@ function lyricEvidence({ ffmpegPath, videoPath, fps, startMs, root }) {
   return { boundaryFrame, observedFrame: boundaryFrame + 1, ...difference }
 }
 
+function decodeFullFrame(ffmpegPath, videoPath, frameIndex, width, height, root) {
+  const frameBytes = width * height * 3
+  const decoded = checkedSpawn(
+    ffmpegPath,
+    [
+      '-v',
+      'error',
+      '-i',
+      videoPath,
+      '-an',
+      '-vf',
+      `select=eq(n\\,${frameIndex}),scale=${width}:${height}`,
+      '-frames:v',
+      '1',
+      '-pix_fmt',
+      'rgb24',
+      '-f',
+      'rawvideo',
+      'pipe:1',
+    ],
+    { maxBuffer: frameBytes + 1_024 },
+    `decode full frame ${frameIndex}`,
+    root,
+  )
+  if (!Buffer.isBuffer(decoded.stdout) || decoded.stdout.length !== frameBytes) {
+    throw new Error(`decode full frame ${frameIndex}: expected ${frameBytes} bytes`)
+  }
+  return decoded.stdout
+}
+
+function magentaBands(decoded, width, height) {
+  const rows = Array.from({ length: height }, () => 0)
+  for (let pixel = 0; pixel < decoded.length; pixel += 3) {
+    const [red, green, blue] = decoded.subarray(pixel, pixel + 3)
+    if (red >= 100 && blue >= 100 && red - green >= 10 && blue - green >= 10) {
+      rows[Math.floor(pixel / 3 / width)] += 1
+    }
+  }
+  const bands = []
+  let start = null
+  for (let row = 0; row <= height; row += 1) {
+    if (row < height && rows[row] > 0) {
+      if (start === null) start = row
+      continue
+    }
+    if (start === null) continue
+    let pixels = 0
+    let weightedRows = 0
+    for (let index = start; index < row; index += 1) {
+      pixels += rows[index]
+      weightedRows += index * rows[index]
+    }
+    bands.push({ bottom: row - 1, center: weightedRows / pixels, pixels, top: start })
+    start = null
+  }
+  return bands
+}
+
+function sameWithin(left, right, tolerance = 2) {
+  return Number.isFinite(left) && Number.isFinite(right) && Math.abs(left - right) <= tolerance
+}
+
 function lyricPresenceEvidence({ ffmpegPath, videoPath, fps, root }) {
   const blank = decodeLyricCrop(ffmpegPath, videoPath, (300 * fps) / 1_000, 960, 540, root)
   const before = decodeLyricCrop(ffmpegPath, videoPath, (400 * fps) / 1_000, 960, 540, root)
@@ -262,6 +325,58 @@ function projectFixture(project, audioPath) {
       },
     ],
   })
+  return project
+}
+
+function scrollProjectFixture(project, audioPath) {
+  Object.assign(project, {
+    id: 'video-export-scroll-smoke',
+    title: 'Video export Scroll smoke test',
+    artist: 'Okay Karaoke Studio',
+    audioPath,
+    durationMs: FIXTURE_DURATION_MS,
+    lyricDisplay: { lineCount: 2, advanceMode: 'scroll' },
+    offsetMs: 0,
+  })
+  Object.assign(project.stageStyle.background, {
+    mode: 'solid',
+    imagePath: null,
+    solidColor: '#000000',
+  })
+  project.stageStyle.stageFrame.enabled = false
+  project.stageStyle.lyrics.sizePx = 180
+  Object.assign(project.tracks[0], {
+    id: 'scroll-smoke-track',
+    vocalStyle: {
+      ...project.tracks[0].vocalStyle,
+      previewMs: 0,
+      syncAid: { enabled: false, minLeadMs: 0, maxLeadMs: 0 },
+    },
+    lines: [
+      {
+        id: 'scroll-smoke-a',
+        text: 'MMMM',
+        startMs: 0,
+        endMs: 150,
+        words: [{ id: 'scroll-smoke-a-word', text: 'MMMM', startMs: 0, endMs: 50 }],
+      },
+      {
+        id: 'scroll-smoke-b',
+        text: 'MMMM',
+        startMs: 150,
+        endMs: 300,
+        words: [{ id: 'scroll-smoke-b-word', text: 'MMMM', startMs: 150, endMs: 200 }],
+      },
+      {
+        id: 'scroll-smoke-c',
+        text: 'MMMM',
+        startMs: 350,
+        endMs: 900,
+        words: [{ id: 'scroll-smoke-c-word', text: 'MMMM', startMs: 350, endMs: 400 }],
+      },
+    ],
+  })
+  project.tracks[0].vocalStyle.sungColor = '#FF00FF'
   return project
 }
 
@@ -400,6 +515,81 @@ async function exportCase(entry, context) {
   }
 }
 
+function scrollFrameEvidence({ entry, ffmpegPath, root, videoPath }) {
+  const samples = [300, 500, 700].map((timeMs) => {
+    const frameIndex = (timeMs * entry.fps) / 1_000
+    if (!Number.isInteger(frameIndex)) throw new Error('Scroll sample is not frame-aligned')
+    return {
+      bands: magentaBands(
+        decodeFullFrame(ffmpegPath, videoPath, frameIndex, entry.width, entry.height, root),
+        entry.width,
+        entry.height,
+      ),
+      frameIndex,
+      timeMs,
+    }
+  })
+  const [before, during, after] = samples
+  if (before.bands.length !== 2 || during.bands.length !== 3 || after.bands.length !== 2) {
+    throw new Error('Scroll row evidence is incomplete')
+  }
+  const slotPx = before.bands[1].center - before.bands[0].center
+  if (
+    !sameWithin(after.bands[1].center - after.bands[0].center, slotPx) ||
+    !sameWithin(before.bands[1].center - during.bands[1].center, slotPx / 2) ||
+    !sameWithin(after.bands[0].center, before.bands[0].center) ||
+    !sameWithin(after.bands[1].center, before.bands[1].center) ||
+    during.bands[0].center >= during.bands[1].center ||
+    during.bands[1].center >= during.bands[2].center ||
+    during.bands[0].pixels >= before.bands[0].pixels ||
+    during.bands[2].pixels >= before.bands[0].pixels
+  ) {
+    throw new Error('Scroll slot or clipping geometry is invalid')
+  }
+  return { samples, slotPx }
+}
+
+async function exportScrollCase(fps, context) {
+  const entry = { fps, height: 240, value: '240p', width: 426 }
+  const outputPath = path.join(context.root, `scroll-${fps}.mp4`)
+  let exported
+  try {
+    exported = await exportKaraokeVideo({
+      BrowserWindow,
+      projectJson: context.scrollProjectJson,
+      durationMs: FIXTURE_DURATION_MS,
+      audioPath: context.audioPath,
+      outputPath,
+      ffmpegPath: context.ffmpegPath,
+      resolution: entry.value,
+      fps,
+    })
+  } catch (error) {
+    throw failCase(null, 'scroll-export', error)
+  }
+  const probe = await probeCase(entry, context.ffmpegPath, outputPath, context.root).catch(
+    (error) => {
+      throw failCase(null, 'scroll-probe', error)
+    },
+  )
+  const evidence = (() => {
+    try {
+      return scrollFrameEvidence({
+        entry,
+        ffmpegPath: context.ffmpegPath,
+        root: context.root,
+        videoPath: outputPath,
+      })
+    } catch (error) {
+      throw failCase(null, 'scroll-decode', error)
+    }
+  })()
+  if (exported.frameCount !== fps || exported.durationMs !== FIXTURE_DURATION_MS) {
+    throw failCase(null, 'scroll-validate', new Error('Scroll export duration is invalid'))
+  }
+  return { ...probe, evidence, fps }
+}
+
 async function verifyCancellation(context) {
   const outputPath = path.join(context.root, 'canceled.mp4')
   const controller = new AbortController()
@@ -506,15 +696,28 @@ app.whenReady().then(async () => {
       toneAudioPath,
       ffmpegPath,
       projectJson: JSON.stringify(projectFixture(fixture, audioPath)),
+      scrollProjectJson: JSON.stringify(
+        scrollProjectFixture(
+          JSON.parse(
+            await fs.readFile(
+              path.join(__dirname, '..', 'tests', 'fixtures', 'current-project-v0.json'),
+            ),
+          ),
+          audioPath,
+        ),
+      ),
     }
     const cases = []
     for (const entry of MATRIX) cases.push(await exportCase(entry, context))
+    const scrollEvidence = []
+    for (const fps of SCROLL_CASES) scrollEvidence.push(await exportScrollCase(fps, context))
     const cancellation = await verifyCancellation(context)
     const openingAudioEvidence = await verifyOpeningAudio(context)
     await writeJson(root, 'result.json', {
       ok: true,
       fixture: { audioSeconds: AUDIO_DURATION_SECONDS, videoSeconds: FIXTURE_DURATION_MS / 1_000 },
       cases,
+      scrollEvidence,
       openingAudioEvidence,
       ...cancellation,
     })

@@ -6,10 +6,28 @@ import { describe, expect, it, vi } from 'vitest'
 const require = createRequire(import.meta.url)
 const launcher = require('../scripts/video-export-smoke-launcher.cjs') as {
   EXPECTED_MATRIX: Array<{ value: string; width: number; height: number; fps: number }>
+  EXPECTED_SCROLL_CASES: number[]
   runLauncher(options: Record<string, unknown>, supplied: Record<string, unknown>): Promise<unknown>
   validateManifest(value: unknown): unknown
 }
 const { countSungPixels } = require('../scripts/video-export-smoke-evidence.cjs')
+function scrollEvidence(fps: number) {
+  const bands = (count: number) =>
+    Array.from({ length: count }, (_unused, index) => ({
+      bottom: index * 30 + 12,
+      center: index * 30 + 6,
+      pixels: 40,
+      top: index * 30,
+    }))
+  return {
+    slotPx: 30,
+    samples: [300, 500, 700].map((timeMs, index) => ({
+      bands: bands([2, 3, 2][index]!),
+      frameIndex: (timeMs * fps) / 1_000,
+      timeMs,
+    })),
+  }
+}
 function manifest() {
   return {
     ok: true,
@@ -44,6 +62,14 @@ function manifest() {
       bytes: 1_024,
       sha256: 'a'.repeat(64),
     })),
+    scrollEvidence: launcher.EXPECTED_SCROLL_CASES.map((fps) => ({
+      codecs: { audio: 'aac', video: 'h264' },
+      durationSeconds: 1,
+      evidence: scrollEvidence(fps),
+      fps,
+      observedDimensions: { height: 240, width: 426 },
+      rationalRate: { frames: fps, rendered: `${fps}/1` },
+    })),
   }
 }
 describe('video export smoke launcher', () => {
@@ -70,6 +96,7 @@ describe('video export smoke launcher', () => {
       '2160p/60',
     ])
     expect(launcher.validateManifest(manifest())).toEqual(manifest())
+    expect(launcher.EXPECTED_SCROLL_CASES).toEqual([30, 60])
   })
   it('rejects a partial or reordered manifest', () => {
     const partial = manifest()
@@ -88,6 +115,9 @@ describe('video export smoke launcher', () => {
     const delayedStarts = manifest()
     delayedStarts.cases[0].streamStarts = { audioSeconds: 0.25, videoSeconds: 0.25 }
     expect(() => launcher.validateManifest(delayedStarts)).toThrow('invalid case 1')
+    const scrollMismatch = manifest()
+    scrollMismatch.scrollEvidence[1].evidence.slotPx = 40
+    expect(() => launcher.validateManifest(scrollMismatch)).toThrow('Scroll slot parity mismatch')
   })
   it('cleans its owned root after a child timeout without publishing a manifest', async () => {
     const root = await mkdtemp(join(tmpdir(), 'oks-video-launcher-test-'))

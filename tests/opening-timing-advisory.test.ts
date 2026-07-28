@@ -82,6 +82,74 @@ describe('opening timing advisory schedule', () => {
     ])
   })
 
+  it('reports the full queued Scroll overlap against a fixed title', () => {
+    const line = (text: string, startMs: number, endMs: number) =>
+      createLyricLine(text, {
+        startMs,
+        endMs,
+        words: [createLyricWord(text, { startMs, endMs })],
+      })
+    const project = createProject({
+      opening: { leadInMs: 0, titleTiming: { mode: 'fixed', durationMs: 1_000 } },
+      lyricDisplay: { lineCount: 1, advanceMode: 'scroll' },
+      tracks: [
+        createVocalTrack({
+          id: 'lead',
+          vocalStyle: {
+            ...createVocalTrack({ id: 'style' }).vocalStyle,
+            previewMs: 0,
+            syncAid: { enabled: false, minLeadMs: 0, maxLeadMs: 0 },
+          },
+          lines: [
+            line('One', 0, 100),
+            line('Two', 100, 200),
+            line('Three', 200, 300),
+            line('Four', 300, 400),
+          ],
+        }),
+      ],
+    })
+
+    expect(openingTimingAdvisoryForProject(project)).toEqual([
+      { startMs: 0, endMs: 1_000, types: ['lyrics'] },
+    ])
+  })
+
+  it('does not let a blank-section reset retain discarded Scroll windows in the advisory', () => {
+    const line = (text: string, startMs: number, endMs: number) =>
+      createLyricLine(text, {
+        startMs,
+        endMs,
+        words: [createLyricWord(text, { startMs, endMs })],
+      })
+    const project = createProject({
+      opening: { leadInMs: 0, titleTiming: { mode: 'fixed', durationMs: 1_000 } },
+      lyricDisplay: { lineCount: 1, advanceMode: 'scroll' },
+      tracks: [
+        createVocalTrack({
+          id: 'lead',
+          vocalStyle: {
+            ...createVocalTrack({ id: 'style' }).vocalStyle,
+            previewMs: 0,
+            syncAid: { enabled: false, minLeadMs: 0, maxLeadMs: 0 },
+          },
+          lines: [
+            line('One', 0, 100),
+            line('Two', 100, 200),
+            line('Three', 200, 900),
+            line('Discarded', 300, 400),
+            createLyricLine('', { words: [] }),
+            line('Reset', 500, 600),
+          ],
+        }),
+      ],
+    })
+
+    expect(openingTimingAdvisoryForProject(project)).toEqual([
+      { startMs: 0, endMs: 600, types: ['lyrics'] },
+    ])
+  })
+
   it('retains the last settled advisory during sync defer and resets dismissal on replacement', () => {
     const rootNode = document.createElement('div')
     const root = createRoot(rootNode)
