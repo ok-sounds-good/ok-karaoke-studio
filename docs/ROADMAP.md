@@ -21,10 +21,6 @@ no such integration is currently planned.
 
 - Crash-safe autosave snapshots and project recovery.
 - Ripple timing, range retime, quantize, and nudge presets.
-- Additional independently timed singer-track authoring, including track naming,
-  styling, synchronization, and editing. Separate tracks are the mechanism for
-  intentional overlapping vocals; timing within each track remains ordered and
-  non-overlapping.
 - Line, phrase, and arbitrary group dragging with magnetic snapping.
 - Loop ranges, markers, count-in, metronome, and configurable keyboard shortcuts.
 - Separate **reference audio** for lyric synchronization from **export audio**
@@ -36,6 +32,11 @@ no such integration is currently planned.
   before applying any inferred mapping. Prototype this before scheduling it.
 - Multiple lyric revisions and side-by-side source and synchronized lyrics.
 - Command-based editing history with named operations and a visual history panel.
+
+Additional independently timed singer-track authoring has moved into the active
+MVP contract because the current v0 execution plan makes duet authoring and
+export a user-held acceptance need. Advanced singer assignment, track
+reordering, and audio-stem workflows remain future scope.
 
 ## Next: reusable visual production
 
@@ -50,6 +51,11 @@ Named creator-preference templates are now part of the active MVP contract. The
 MVP stage-style model is the shared foundation, so every later extension must
 keep the editor preview and exported result aligned. Curated theme packs remain
 a high-priority post-MVP product milestone.
+
+Fixed title scheduling, title/song coexistence, and the deterministic Scroll
+lyric transition are also active MVP refinements. General keyframe editing,
+scheduled scenes, and background/title animation remain later visual-production
+work rather than prerequisites for those bounded behaviors.
 
 ## Next: CD+G and MP3+G interoperability
 
