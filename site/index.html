@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Okay Karaoke Studio is an okay desktop app for turning a backing track and plain lyrics into a karaoke video."
+    />
+    <meta name="theme-color" content="#f8f6fb" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Okay Karaoke Studio" />
+    <meta property="og:description" content="An okay way to make a karaoke video." />
+    <meta property="og:url" content="https://ok-sounds-good.github.io/ok-karaoke-studio/" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="Okay Karaoke Studio" />
+    <meta name="twitter:description" content="An okay way to make a karaoke video." />
+    <link rel="icon" href="./assets/app-icon.png" />
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./script.js" type="module"></script>
+    <title>Okay Karaoke Studio</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="Okay Karaoke Studio home">
+        <img src="./assets/app-icon.png" alt="" width="44" height="44" />
+        <span><strong>Okay</strong> Karaoke Studio</span>
+      </a>
+      <nav aria-label="Main navigation">
+        <a href="#get-started">Get started</a>
+        <a href="#how-it-works">How it works</a>
+        <a href="#features">Features</a>
+      </nav>
+      <a
+        class="button button--quiet header-github"
+        href="https://github.com/ok-sounds-good/ok-karaoke-studio"
+      >
+        View on GitHub
+      </a>
+    </header>
+
+    <main id="main">
+      <section class="hero" id="top">
+        <div class="hero__copy">
+          <p class="eyebrow">Okay Karaoke Studio</p>
+          <h1>An <em>okay</em> way to make a karaoke video.</h1>
+          <p class="hero__lede">
+            Bring a backing track and some lyrics. Tap along, tidy the timing, choose a look, and
+            export a video people can sing along with.
+          </p>
+          <div class="button-row">
+            <a class="button button--primary" href="#get-started">Get the app</a>
+            <a class="button button--secondary" href="#how-it-works">See how it works</a>
+          </div>
+          <p class="hero__aside">
+            It will not write the song, remove the vocals, or make you a better singer. It handles
+            the karaoke-video part.
+          </p>
+        </div>
+        <figure class="app-window app-window--hero">
+          <div class="app-window__bar" aria-hidden="true">
+            <span></span><span></span><span></span>
+            <small>Okay Karaoke Studio</small>
+          </div>
+          <img
+            src="./assets/studio-overview.png"
+            alt="Okay Karaoke Studio showing song details, a live preview, a waveform timing editor, and playback controls in one window."
+            width="1280"
+            height="720"
+          />
+        </figure>
+      </section>
+
+      <section class="section get-started" id="get-started">
+        <div class="section-heading">
+          <p class="eyebrow">Download and run</p>
+          <h2>A small setup. Then it is just an app.</h2>
+          <p>
+            A published Windows installer is the easiest route when one is available. If GitHub
+            Releases has none, the current version runs from the project files. No programming
+            knowledge is required, but you will paste two commands into a terminal.
+          </p>
+        </div>
+
+        <div class="release-card" id="release-card" data-release-state="unknown">
+          <div>
+            <span class="status-dot" aria-hidden="true"></span>
+            <p class="release-card__status" id="release-status" aria-live="polite">
+              Installer check
+            </p>
+            <h3 id="release-title">Check GitHub Releases</h3>
+            <p id="release-copy">
+              If a Windows installer is listed, use it. Otherwise, follow the four short steps
+              below.
+            </p>
+          </div>
+          <a
+            class="button button--secondary"
+            id="release-link"
+            href="https://github.com/ok-sounds-good/ok-karaoke-studio/releases"
+          >
+            View releases
+          </a>
+        </div>
+
+        <ol class="install-steps">
+          <li>
+            <span class="step-number">1</span>
+            <div>
+              <h3>Install the two helpers</h3>
+              <p>
+                Install <a href="https://nodejs.org/en/download">Node.js 24 or newer</a>, then
+                install <a href="https://bun.sh/docs/installation">Bun 1.3.14 or newer</a>. They let
+                your computer start the current build.
+              </p>
+            </div>
+          </li>
+          <li>
+            <span class="step-number">2</span>
+            <div>
+              <h3>Download and unzip the project</h3>
+              <p>
+                <a
+                  href="https://github.com/ok-sounds-good/ok-karaoke-studio/archive/refs/heads/main.zip"
+                  >Download the ZIP</a
+                >, open your Downloads folder, and unzip it.
+              </p>
+            </div>
+          </li>
+          <li>
+            <span class="step-number">3</span>
+            <div>
+              <h3>Open a terminal in that folder</h3>
+              <p>
+                On Windows, right-click the unzipped folder and choose
+                <strong>Open in Terminal</strong>. On macOS, open Terminal and drag the folder onto
+                its window after typing <kbd>cd</kbd> and a space, then press Return.
+              </p>
+            </div>
+          </li>
+          <li>
+            <span class="step-number">4</span>
+            <div>
+              <h3>Paste these two lines</h3>
+              <p>The first line prepares the app. The second opens it.</p>
+              <div class="command">
+                <code>bun install --frozen-lockfile<br />bun run dev</code>
+                <button type="button" data-copy-command aria-label="Copy setup commands">
+                  Copy
+                </button>
+              </div>
+            </div>
+          </li>
+        </ol>
+
+        <aside class="soft-note">
+          <strong>Exporting an MP4?</strong>
+          The first time you export video, the Studio checks for FFmpeg. If it is missing, the app
+          can guide you through setup on Windows or macOS and asks before installing anything.
+        </aside>
+      </section>
+
+      <section class="section workflow" id="how-it-works">
+        <div class="section-heading section-heading--center">
+          <p class="eyebrow">Your first video</p>
+          <h2>From a song to something singable</h2>
+          <p>
+            The whole job stays in one window. There is also a <strong>Workflow</strong>
+            guide inside the app if you forget what comes next.
+          </p>
+        </div>
+
+        <div class="workflow-grid">
+          <article>
+            <span>01</span>
+            <h3>Add the song</h3>
+            <p>Type the title and artist, then attach your backing track.</p>
+          </article>
+          <article>
+            <span>02</span>
+            <h3>Paste the lyrics</h3>
+            <p>Use one lyric line per row. Blank rows keep sections separate.</p>
+          </article>
+          <article>
+            <span>03</span>
+            <h3>Tap the words</h3>
+            <p>Play the track and press Space as each word begins.</p>
+          </article>
+          <article>
+            <span>04</span>
+            <h3>Fix the fussy bits</h3>
+            <p>Drag words and their edges against the waveform until they feel right.</p>
+          </article>
+          <article>
+            <span>05</span>
+            <h3>Choose a look</h3>
+            <p>Adjust the lyrics, background, title card, frame, and reusable styles.</p>
+          </article>
+          <article>
+            <span>06</span>
+            <h3>Save and export</h3>
+            <p>Keep an editable project, or export LRC, ASS, or an MP4 video.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section screenshot-story" aria-labelledby="screenshots-title">
+        <div class="section-heading">
+          <p class="eyebrow">Inside the Studio</p>
+          <h2 id="screenshots-title">Practical controls. A reasonably nice preview.</h2>
+          <p>
+            These are current screenshots of the app, captured at its supported desktop sizes with
+            synthetic content.
+          </p>
+        </div>
+
+        <figure class="screenshot screenshot--wide">
+          <img
+            src="./assets/background-style.png"
+            alt="The Style editor with background controls on the left and a large karaoke design preview on the right."
+            width="1280"
+            height="720"
+            loading="lazy"
+          />
+          <figcaption>
+            <strong>See the change where it matters.</strong>
+            Adjust the background beside the same 16:9 stage used for the video.
+          </figcaption>
+        </figure>
+
+        <figure class="screenshot screenshot--wide">
+          <img
+            src="./assets/lead-vocal-style.png"
+            alt="The Lead Vocal style view with preview-time and sync-aid controls on the left and a karaoke stage preview on the right."
+            width="1280"
+            height="720"
+            loading="lazy"
+          />
+          <figcaption>
+            <strong>Give the singer a useful cue.</strong>
+            Choose how early a line appears and add a simple section-start sync aid when enough lead
+            time is available.
+          </figcaption>
+        </figure>
+      </section>
+
+      <section class="section features" id="features">
+        <div class="section-heading section-heading--center">
+          <p class="eyebrow">What you get</p>
+          <h2>The useful karaoke-video bits</h2>
+        </div>
+        <div class="feature-grid">
+          <article>
+            <span aria-hidden="true">⌁</span>
+            <h3>Word-by-word timing</h3>
+            <p>Tap in time, then move or resize individual words against a waveform.</p>
+          </article>
+          <article>
+            <span aria-hidden="true">◐</span>
+            <h3>Live karaoke preview</h3>
+            <p>Watch words fill as they are sung, with clear or scrolling line changes.</p>
+          </article>
+          <article>
+            <span aria-hidden="true">T</span>
+            <h3>Style controls</h3>
+            <p>Choose fonts, colors, alignment, title-card details, and stage elements.</p>
+          </article>
+          <article>
+            <span aria-hidden="true">▧</span>
+            <h3>Background choices</h3>
+            <p>Use a solid color, gradient, or a linked PNG or JPEG image.</p>
+          </article>
+          <article>
+            <span aria-hidden="true">↗</span>
+            <h3>Useful exports</h3>
+            <p>Create Enhanced LRC, ASS subtitles, an editable project, or an MP4.</p>
+          </article>
+          <article>
+            <span aria-hidden="true">↶</span>
+            <h3>Undo when needed</h3>
+            <p>Timing and lyric edits can be undone. A small mercy, but a real one.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section good-to-know">
+        <div>
+          <p class="eyebrow">Good to know</p>
+          <h2>A few honest edges</h2>
+        </div>
+        <div class="good-to-know__list">
+          <details>
+            <summary>What audio can I use?</summary>
+            <p>The Studio links MP3, WAV, M4A, FLAC, AAC, and OGG backing tracks.</p>
+          </details>
+          <details>
+            <summary>Does it find lyrics or remove vocals?</summary>
+            <p>
+              No. Bring your own backing track and lyrics. The Studio starts once you have those.
+            </p>
+          </details>
+          <details>
+            <summary>Are my song and image copied into the project?</summary>
+            <p>
+              No. They stay linked to their original files, so keep them where the Studio can find
+              them.
+            </p>
+          </details>
+          <details>
+            <summary>Will old project files always open?</summary>
+            <p>
+              Not necessarily. This is an early pre-1.0 app, and the editable project format can
+              still change between builds.
+            </p>
+          </details>
+          <details>
+            <summary>What systems are supported?</summary>
+            <p>
+              Packaging targets an unsigned Windows x64 installer. When a public download is
+              available, it is listed on GitHub Releases. Source setup works on Windows and macOS;
+              there is no Linux package today.
+            </p>
+          </details>
+        </div>
+      </section>
+
+      <section class="closing">
+        <img src="./assets/app-icon.png" alt="" width="76" height="76" loading="lazy" />
+        <div>
+          <p class="eyebrow">Okay Karaoke Studio</p>
+          <h2>Make a karaoke video. It might even be pretty good.</h2>
+        </div>
+        <a class="button button--primary" href="#get-started">Get started</a>
+      </section>
+    </main>
+
+    <footer>
+      <p>
+        Okay Karaoke Studio is free software, licensed under
+        <a href="https://github.com/ok-sounds-good/ok-karaoke-studio/blob/main/LICENSE"
+          >GPL-3.0-or-later</a
+        >.
+      </p>
+      <p>Built for karaoke videos. Singing ability not included (or required!).</p>
+    </footer>
+  </body>
+</html>
